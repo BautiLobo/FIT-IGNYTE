@@ -1,4 +1,4 @@
-# 💪 Fit Ignite
+#  Fit Ignite
 
 Plataforma de gestión para negocio de comida saludable por suscripción.
 

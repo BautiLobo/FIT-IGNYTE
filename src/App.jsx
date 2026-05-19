@@ -847,26 +847,42 @@ export default function App() {
 
             {/* ═══ KITCHEN ════════════════════════════ */}
             {tab==="kitchen"&&<>
-              <div className="alert-bar" style={{background:"#0d1a0d",borderColor:"#14532d",color:"#86efac"}}>
-                🍳 Numbers = portions to cook. Set your cook start time below.
-              </div>
-
-              {/* Cook time bar */}
-              <div className="cook-time-bar">
-                <span className="cook-time-lbl">🕐 {kitDay} — Start cooking at:</span>
-                <input
-                  className="cook-time-inp"
-                  type="time"
-                  value={cookTimes[kitDay]||""}
-                  onChange={e=>setCookTimes(p=>({...p,[kitDay]:e.target.value}))}
-                  placeholder="--:--"
-                />
-                {cookTimes[kitDay]&&(
-                  <span style={{fontSize:12,color:"var(--green)",fontWeight:600}}>
-                    ✓ Saved
-                  </span>
-                )}
-              </div>
+              {/* Summary bar */}
+              {(()=>{
+                const totalPortions = kitchen[kitDay]?.reduce((s,r)=>s+r.count,0)||0;
+                const clientsToday  = active.filter(c=>(meals[c.id]?.[kitDay]||[]).length>0).length;
+                const alertCount    = active.filter(c=>c.customizations||c.allergies).length;
+                return (
+                  <div style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:"14px 18px",marginBottom:14,display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
+                    <div>
+                      <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Start Cooking At</div>
+                      <input
+                        className="cook-time-inp"
+                        type="time"
+                        value={cookTimes[kitDay]||""}
+                        onChange={e=>setCookTimes(p=>({...p,[kitDay]:e.target.value}))}
+                        placeholder="--:--"
+                        style={{fontSize:20,fontFamily:"'Rajdhani',sans-serif",fontWeight:700,color:"var(--red)",background:"transparent",border:"none",outline:"none",padding:0,width:90}}
+                      />
+                    </div>
+                    <div style={{width:1,height:36,background:"var(--bdr)",flexShrink:0}}/>
+                    <div>
+                      <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Total Portions</div>
+                      <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:700,color:"var(--blue)"}}>{totalPortions}</div>
+                    </div>
+                    <div style={{width:1,height:36,background:"var(--bdr)",flexShrink:0}}/>
+                    <div>
+                      <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Clients Today</div>
+                      <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:700,color:"var(--green)"}}>{clientsToday}</div>
+                    </div>
+                    <div style={{width:1,height:36,background:"var(--bdr)",flexShrink:0}}/>
+                    <div>
+                      <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Allergy Alerts</div>
+                      <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:700,color:alertCount?"var(--amber)":"var(--dim)"}}>{alertCount}{alertCount>0?" ⚠️":""}</div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="kd-hd">
                 <span>{kitDay.toUpperCase()}</span>

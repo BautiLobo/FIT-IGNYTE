@@ -1,7 +1,5 @@
 // FitIgnyte.jsx — Full app connected to Supabase
-// Replace lib/supabase.js credentials before deploying.
-
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   getPlans, upsertPlan, deletePlan as dbDeletePlan,
   getClients, upsertClient, deleteClient as dbDeleteClient,
@@ -10,7 +8,6 @@ import {
   getChecklist, toggleChecklistItem,
 } from "./lib/supabase";
 
-// ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const PLAN_COLORS = ["#38BDF8","#A78BFA","#F472B6","#FBBF24","#FB923C","#F87171","#34D399","#60A5FA","#E879F9","#FCD34D"];
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -23,13 +20,15 @@ const BLANK_CLIENT = {
 };
 const BLANK_PLAN = { id:"", name:"", kcal:0, meals:1, price:0, tier:"", color:"#38BDF8" };
 
-// ─── UTILS ───────────────────────────────────────────────────────────────────
-const TODAY      = new Date();
-const daysUntil  = d => Math.round((new Date(d) - TODAY) / 86400000);
-const fmtDate    = d => { try { return new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}); } catch { return d||"—"; } };
-const todayIso   = () => TODAY.toISOString().split("T")[0];
+// A delivery slot for a client on a given day
+// { id, clientId, day, time, meals:[], snack:"", note:"" }
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
+const TODAY     = new Date();
+const daysUntil = d => Math.round((new Date(d) - TODAY) / 86400000);
+const fmtDate   = d => { try { return new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}); } catch { return d||"—"; } };
+const todayIso  = () => TODAY.toISOString().split("T")[0];
+
+// ─── STYLES ──────────────────────────────────────────────────────────────────
 const G = `
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
 :root{--bg:#0a0a0a;--s1:#111;--s2:#1a1a1a;--s3:#242424;--bdr:#2a2a2a;--bdr2:#333;--txt:#e8e8e8;--muted:#666;--dim:#444;--red:#E8342A;--red2:#ff4438;--green:#22c55e;--amber:#f59e0b;--blue:#38bdf8}
@@ -73,6 +72,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt)}
 .inp,.sel,.txta{background:var(--s1);border:1px solid var(--bdr2);border-radius:5px;color:var(--txt);font-family:'DM Sans',sans-serif;font-size:12px;padding:8px 10px;outline:none;transition:border-color .15s;width:100%}
 .inp:focus,.sel:focus,.txta:focus{border-color:var(--red)}
 .sel option{background:var(--s2)}
+.sel optgroup{background:var(--s2);color:var(--dim);font-size:10px}
 .txta{resize:vertical;min-height:60px}
 .srch{background:var(--s2);border:1px solid var(--bdr);border-radius:5px;color:var(--txt);font-family:'DM Sans',sans-serif;font-size:11px;padding:6px 10px;outline:none;width:180px}
 .srch:focus{border-color:var(--red)}
@@ -132,7 +132,7 @@ tbody tr:hover{background:#1e1e1e}
 .step{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #161616}
 .step:last-child{border-bottom:none}
 .step-n{background:var(--red);color:#fff;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:12px;min-width:22px;text-align:center;border-radius:4px;padding:1px 4px}
-.msel{background:var(--s1);border:1px solid var(--bdr);border-radius:4px;color:var(--txt);font-size:10px;padding:3px 6px;outline:none;cursor:pointer;width:100%;font-family:'DM Sans',sans-serif}
+.msel{background:var(--s1);border:1px solid var(--bdr);border-radius:4px;color:var(--txt);font-size:11px;padding:4px 7px;outline:none;cursor:pointer;width:100%;font-family:'DM Sans',sans-serif}
 .msel:focus{border-color:var(--red)}
 .msel:disabled{opacity:.3;cursor:default}
 .plan-card{background:var(--s2);border:1px solid var(--bdr);border-radius:8px;padding:14px;border-left:3px solid var(--pc,#555)}
@@ -141,24 +141,33 @@ tbody tr:hover{background:#1e1e1e}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .saving{position:fixed;bottom:16px;right:16px;background:var(--green);color:#fff;padding:7px 14px;border-radius:6px;font-size:11px;font-weight:600;z-index:600;animation:fadeOut 2s forwards}
 @keyframes fadeOut{0%{opacity:1}70%{opacity:1}100%{opacity:0}}
-.meal-day-card{background:var(--s2);border:1px solid var(--bdr);border-radius:8px;overflow:hidden}
-.meal-day-hd{background:var(--s3);padding:10px 14px;border-bottom:1px solid var(--bdr)}
-.meal-day-title{font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:700;color:var(--red);letter-spacing:1px}
-.meal-day-snack{font-size:10px;color:var(--dim);margin-top:2px}
-.meal-client-row{padding:10px 14px;border-bottom:1px solid #161616;display:flex;align-items:center;gap:12px}
-.meal-client-row:last-child{border-bottom:none}
-.meal-client-name{font-size:11px;font-weight:600;color:#fff;min-width:90px;flex-shrink:0}
-.meal-selects{display:flex;gap:8px;flex:1;flex-wrap:wrap}
-.meal-select-wrap{display:flex;flex-direction:column;gap:2px;flex:1;min-width:140px}
-.meal-select-lbl{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+.color-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.color-dot{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .15s;flex-shrink:0}
+.color-dot.sel{border-color:#fff;transform:scale(1.2)}
 .empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
 .empty-state-icon{font-size:40px;margin-bottom:12px}
 .empty-state-title{font-family:'Rajdhani',sans-serif;font-size:18px;color:var(--dim);margin-bottom:6px}
 .empty-state-sub{font-size:12px}
-.color-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
-.color-dot{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .15s;flex-shrink:0}
-.color-dot.sel{border-color:#fff;transform:scale(1.2)}
-.err-msg{font-size:11px;color:#f87171;padding:6px 10px;background:#450a0a;border-radius:4px;margin-top:4px}
+
+/* ── MEAL SELECTIONS ── */
+.client-card{background:var(--s2);border:1px solid var(--bdr);border-radius:8px;margin-bottom:12px;overflow:hidden}
+.client-card-hd{background:var(--s3);padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--bdr)}
+.client-card-name{font-size:13px;font-weight:600;color:#fff;flex:1}
+.slot-row{padding:10px 14px;border-bottom:1px solid #161616;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.slot-row:last-child{border-bottom:none}
+.slot-num{font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;color:var(--red);min-width:52px;padding-top:18px;flex-shrink:0}
+.slot-fields{display:flex;gap:8px;flex:1;flex-wrap:wrap}
+.slot-field{display:flex;flex-direction:column;gap:3px;flex:1;min-width:160px}
+.slot-field-sm{min-width:100px;flex:0 0 100px}
+.slot-field label{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+.slot-add-btn{margin:8px 14px 12px;display:flex;gap:8px}
+
+/* ── KITCHEN COOK TIME ── */
+.cook-time-bar{background:var(--s3);border:1px solid var(--bdr);border-radius:6px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.cook-time-lbl{font-size:11px;color:var(--muted);font-weight:500}
+.cook-time-inp{background:var(--s1);border:1px solid var(--bdr2);border-radius:5px;color:var(--txt);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:700;padding:5px 10px;outline:none;width:90px;text-align:center}
+.cook-time-inp:focus{border-color:var(--red)}
+
 @media(max-width:768px){
   .hamburger{display:flex;align-items:center;justify-content:center}
   .sb{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%);z-index:300}
@@ -175,25 +184,21 @@ tbody tr:hover{background:#1e1e1e}
   .fg-full{grid-column:1/-1}
   .mo{padding:8px}
   .mo-box{max-height:96vh}
-  .meal-client-row{flex-wrap:wrap}
-  .meal-client-name{min-width:80px}
-  .meal-selects{width:100%}
+  .slot-row{flex-direction:column}
 }
 @media(max-width:480px){
   .kpis{grid-template-columns:1fr 1fr;gap:8px}
   .kpi-val{font-size:22px}
-  .tb-right{gap:6px}
   .btn{padding:6px 10px;font-size:10px}
 }
 `;
 
-// ─── PLAN BADGE ───────────────────────────────────────────────────────────────
+// ─── BADGES ───────────────────────────────────────────────────────────────────
 function PlanBadge({ planName, plans }) {
   const p = plans?.find(x => x.name === planName);
   if (!p) return <span className="bx bx-gr">{planName||"—"}</span>;
   return <span className="bx" style={{background:p.color+"22",color:p.color}}>{planName}</span>;
 }
-
 function RenewalBadge({ c }) {
   const d = daysUntil(c.expiryDate);
   if (isNaN(d)) return <span className="bx bx-gr">—</span>;
@@ -203,13 +208,48 @@ function RenewalBadge({ c }) {
   return <span className="bx bx-g">Active {d}d</span>;
 }
 
+// ─── MEAL OPTIONS BUILDER ─────────────────────────────────────────────────────
+// Returns grouped <optgroup> options: all meals by day + all snacks + custom items
+function MealOptions({ menu, extraItems = [] }) {
+  const allSnacks = [...new Set(DAYS.map(d => menu[d]?.snack).filter(Boolean))];
+  return (
+    <>
+      <option value="">— none —</option>
+      {DAYS.map(day => {
+        const meals = menu[day]?.meals || [];
+        if (!meals.length) return null;
+        return (
+          <optgroup key={day} label={`── ${day} ──`}>
+            {meals.map(m => <option key={m} value={m}>{m}</option>)}
+          </optgroup>
+        );
+      })}
+      <optgroup label="── Snacks ──">
+        {allSnacks.map(s => <option key={s} value={s}>{s}</option>)}
+      </optgroup>
+      {extraItems.length > 0 && (
+        <optgroup label="── Custom ──">
+          {extraItems.map(i => <option key={i} value={i}>{i}</option>)}
+        </optgroup>
+      )}
+    </>
+  );
+}
+
 // ─── APP ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [clients,   setClients]   = useState([]);
-  const [meals,     setMeals]     = useState({});
-  const [menu,      setMenu]      = useState({});
-  const [plans,     setPlans]     = useState([]);
-  const [checks,    setChecks]    = useState({});
+  const [clients,    setClients]    = useState([]);
+  // meals: { [clientId]: { [day]: [ {id, time, meals:[], snack, note} ] } }
+  // Each day can have MULTIPLE delivery slots per client
+  const [meals,      setMeals]      = useState({});
+  const [menu,       setMenu]       = useState({});
+  const [plans,      setPlans]      = useState([]);
+  const [checks,     setChecks]     = useState({});
+  // cookTimes: { Monday: "10:00", Tuesday: "09:30", ... }
+  const [cookTimes,  setCookTimes]  = useState({});
+  // customMealItems: extra meals added manually
+  const [customItems, setCustomItems] = useState([]);
+
   const [tab,       setTab]       = useState("dashboard");
   const [kitDay,    setKitDay]    = useState("Monday");
   const [mealDay,   setMealDay]   = useState("Monday");
@@ -223,19 +263,21 @@ export default function App() {
   const [editClientId,    setEditClientId]    = useState(null);
   const [clientForm,      setClientForm]      = useState({...BLANK_CLIENT});
 
-  const [showPlanModal,   setShowPlanModal]   = useState(false);
-  const [editPlanId,      setEditPlanId]      = useState(null);
-  const [planForm,        setPlanForm]        = useState({...BLANK_PLAN});
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [editPlanId,    setEditPlanId]    = useState(null);
+  const [planForm,      setPlanForm]      = useState({...BLANK_PLAN});
 
-  const [showMenuModal,   setShowMenuModal]   = useState(false);
-  const [menuEditDay,     setMenuEditDay]     = useState("Monday");
-  const [menuForm,        setMenuForm]        = useState({meals:["","",""],snack:""});
+  const [showMenuModal, setShowMenuModal] = useState(false);
+  const [menuEditDay,   setMenuEditDay]   = useState("Monday");
+  const [menuForm,      setMenuForm]      = useState({meals:["","",""],snack:""});
 
-  // Filters
-  const [search,    setSearch]    = useState("");
-  const [filterSt,  setFilterSt]  = useState("all");
+  const [showCustomItemModal, setShowCustomItemModal] = useState(false);
+  const [newCustomItem,       setNewCustomItem]       = useState("");
 
-  // ── Load all data from Supabase
+  const [search,   setSearch]   = useState("");
+  const [filterSt, setFilterSt] = useState("all");
+
+  // ── Load
   useEffect(() => {
     (async () => {
       try {
@@ -245,10 +287,35 @@ export default function App() {
         setPlans(pl);
         setClients(cl);
         setMenu(mn);
-        setMeals(ms);
+        // Convert old flat meal format to new multi-slot format if needed
+        const converted = {};
+        for (const cid of Object.keys(ms)) {
+          converted[cid] = {};
+          for (const day of DAYS) {
+            const old = ms[cid]?.[day];
+            if (!old) { converted[cid][day] = []; continue; }
+            // If already array format keep it, otherwise convert
+            if (Array.isArray(old)) { converted[cid][day] = old; continue; }
+            converted[cid][day] = [{
+              id: uid(),
+              time: "",
+              meals: [old.meal1, old.meal2, old.meal3].filter(m => m && m !== "—"),
+              snack: old.snack || "",
+              note:  old.note  || "",
+            }];
+          }
+        }
+        setMeals(converted);
         setChecks(ch);
+        // Load cook times and custom items from localStorage as lightweight storage
+        try {
+          const ct = JSON.parse(localStorage.getItem("fi_cooktimes") || "{}");
+          const ci = JSON.parse(localStorage.getItem("fi_customitems") || "[]");
+          setCookTimes(ct);
+          setCustomItems(ci);
+        } catch {}
       } catch (e) {
-        setError("Could not connect to database. Check your Supabase credentials in lib/supabase.js");
+        setError("Could not connect to database. Check credentials in lib/supabase.js");
         console.error(e);
       } finally {
         setLoaded(true);
@@ -257,6 +324,13 @@ export default function App() {
   }, []);
 
   const flash = () => { setSaving(true); setTimeout(() => setSaving(false), 1800); };
+
+  // Save cook times + custom items to localStorage when they change
+  useEffect(() => {
+    if (!loaded) return;
+    localStorage.setItem("fi_cooktimes",  JSON.stringify(cookTimes));
+    localStorage.setItem("fi_customitems", JSON.stringify(customItems));
+  }, [cookTimes, customItems, loaded]);
 
   // ── Derived
   const active   = useMemo(() => clients.filter(c=>c.status==="Active"), [clients]);
@@ -277,28 +351,46 @@ export default function App() {
     return l;
   }, [clients,filterSt,search]);
 
+  // Kitchen: aggregate all meals across all slots for a given day
   const kitchen = useMemo(() => {
-    const d={};
-    DAYS.forEach(day=>{
-      const map={},who={};
-      active.forEach(c=>{
-        const s=meals[c.id]?.[day]; if(!s) return;
-        [s.meal1,s.meal2,s.meal3].forEach(m=>{
-          if(m&&m!=="—"){map[m]=(map[m]||0)+1;(who[m]=who[m]||[]).push(c.name.split(" ")[0]);}
+    const d = {};
+    DAYS.forEach(day => {
+      const map={}, who={};
+      active.forEach(c => {
+        const slots = meals[c.id]?.[day] || [];
+        slots.forEach(slot => {
+          (slot.meals||[]).forEach(m => {
+            if (m && m!=="—") { map[m]=(map[m]||0)+1; (who[m]=who[m]||[]).push(c.name.split(" ")[0]); }
+          });
+          if (slot.snack && slot.snack!=="—") {
+            map[slot.snack]=(map[slot.snack]||0)+1;
+            (who[slot.snack]=who[slot.snack]||[]).push(c.name.split(" ")[0]);
+          }
         });
-        if(s.snack&&s.snack!=="—"){map[s.snack]=(map[s.snack]||0)+1;(who[s.snack]=who[s.snack]||[]).push(c.name.split(" ")[0]);}
       });
       d[day]=Object.entries(map).sort((a,b)=>b[1]-a[1]).map(([meal,count])=>({meal,count,who:who[meal]}));
     });
     return d;
-  }, [active,meals]);
+  }, [active, meals]);
 
+  // Delivery: group by time, now can have multiple slots per client per day
   const delivery = useMemo(() => {
-    const sorted=[...active].sort((a,b)=>(a.deliveryTime||"99").localeCompare(b.deliveryTime||"99"));
-    const g={};
-    sorted.forEach(c=>{const t=c.deliveryTime||"TBD";(g[t]=g[t]||[]).push(c);});
+    const allSlots = [];
+    active.forEach(c => {
+      DAYS.forEach(day => {
+        (meals[c.id]?.[day]||[]).forEach(slot => {
+          allSlots.push({ client: c, day, slot });
+        });
+      });
+    });
+    allSlots.sort((a,b) => (a.slot.time||"99").localeCompare(b.slot.time||"99"));
+    const g = {};
+    allSlots.forEach(x => {
+      const t = x.slot.time || "TBD";
+      (g[t]=g[t]||[]).push(x);
+    });
     return g;
-  }, [active]);
+  }, [active, meals]);
 
   // ── Handlers
   const togglePaid = async id => {
@@ -315,14 +407,6 @@ export default function App() {
     try { await toggleChecklistItem(k, next); } catch(e){ console.error(e); }
   };
 
-  const updateMeal = async (cid, day, field, val) => {
-    const updated = { ...(meals[cid]?.[day]||{}), [field]: val };
-    setMeals(p=>({...p,[cid]:{...p[cid],[day]:updated}}));
-    try {
-      await upsertMealSelection(cid, day, updated);
-    } catch(e){ console.error(e); }
-  };
-
   const deleteClientHandler = async id => {
     if (!window.confirm("Delete this client?")) return;
     setClients(p=>p.filter(c=>c.id!==id));
@@ -330,6 +414,75 @@ export default function App() {
   };
 
   const navTo = t => { setTab(t); setSbOpen(false); };
+
+  // ── Meal slot handlers
+  const addSlot = (clientId, day) => {
+    const newSlot = { id: uid(), time: "", meals: [""], snack: "", note: "" };
+    setMeals(p => ({
+      ...p,
+      [clientId]: { ...p[clientId], [day]: [...(p[clientId]?.[day]||[]), newSlot] }
+    }));
+  };
+
+  const removeSlot = (clientId, day, slotId) => {
+    setMeals(p => ({
+      ...p,
+      [clientId]: { ...p[clientId], [day]: (p[clientId]?.[day]||[]).filter(s=>s.id!==slotId) }
+    }));
+  };
+
+  const updateSlot = async (clientId, day, slotId, field, value) => {
+    setMeals(p => {
+      const slots = (p[clientId]?.[day]||[]).map(s =>
+        s.id === slotId ? {...s, [field]: value} : s
+      );
+      return { ...p, [clientId]: { ...p[clientId], [day]: slots } };
+    });
+    // Persist — save the entire day's slots as JSON in the note field
+    // We use a special encoding via upsertMealSelection
+    try {
+      const updated = meals[clientId]?.[day]?.map(s =>
+        s.id === slotId ? {...s, [field]: value} : s
+      ) || [];
+      // Store serialized slots in meal1 field as JSON, meal2/3 unused
+      await upsertMealSelection(clientId, day, {
+        meal1: JSON.stringify(updated),
+        meal2: "—", meal3: "—", snack: "", note: "__multi__"
+      });
+    } catch(e){ console.error(e); }
+  };
+
+  const updateSlotMeal = async (clientId, day, slotId, mealIndex, value) => {
+    setMeals(p => {
+      const slots = (p[clientId]?.[day]||[]).map(s => {
+        if (s.id !== slotId) return s;
+        const newMeals = [...(s.meals||[])];
+        newMeals[mealIndex] = value;
+        return {...s, meals: newMeals};
+      });
+      return { ...p, [clientId]: { ...p[clientId], [day]: slots } };
+    });
+  };
+
+  const addMealToSlot = (clientId, day, slotId) => {
+    setMeals(p => {
+      const slots = (p[clientId]?.[day]||[]).map(s =>
+        s.id === slotId ? {...s, meals: [...(s.meals||[]), ""]} : s
+      );
+      return { ...p, [clientId]: { ...p[clientId], [day]: slots } };
+    });
+  };
+
+  const removeMealFromSlot = (clientId, day, slotId, mealIndex) => {
+    setMeals(p => {
+      const slots = (p[clientId]?.[day]||[]).map(s => {
+        if (s.id !== slotId) return s;
+        const newMeals = (s.meals||[]).filter((_,i)=>i!==mealIndex);
+        return {...s, meals: newMeals.length ? newMeals : [""]};
+      });
+      return { ...p, [clientId]: { ...p[clientId], [day]: slots } };
+    });
+  };
 
   // ── Client modal
   const openAddClient  = () => { setEditClientId(null); setClientForm({...BLANK_CLIENT,startDate:todayIso()}); setShowClientModal(true); };
@@ -343,13 +496,11 @@ export default function App() {
       if (editClientId) {
         setClients(p=>p.map(c=>c.id===editClientId?saved:c));
       } else {
-        setClients(p=>[...p, saved]);
-        // Init meal selections for new client
+        setClients(p=>[...p,saved]);
         const defaultMeals = {};
         for (const day of DAYS) {
-          const row = { meal1: menu[day]?.meals[0]||"", meal2:"—", meal3:"—", snack: menu[day]?.snack||"", note:"" };
-          await upsertMealSelection(saved.id, day, row);
-          defaultMeals[day] = row;
+          defaultMeals[day] = [];
+          await upsertMealSelection(saved.id, day, { meal1:"", meal2:"—", meal3:"—", snack:"", note:"" });
         }
         setMeals(p=>({...p,[saved.id]:defaultMeals}));
       }
@@ -367,13 +518,9 @@ export default function App() {
     if (!planForm.name.trim()) return;
     try {
       const saved = await upsertPlan(planForm);
-      if (editPlanId) {
-        setPlans(p=>p.map(x=>x.id===editPlanId?saved:x));
-      } else {
-        setPlans(p=>[...p,saved]);
-      }
-      setShowPlanModal(false);
-      flash();
+      if (editPlanId) setPlans(p=>p.map(x=>x.id===editPlanId?saved:x));
+      else setPlans(p=>[...p,saved]);
+      setShowPlanModal(false); flash();
     } catch(e){ console.error(e); }
   };
 
@@ -389,14 +536,14 @@ export default function App() {
     setMenuForm({meals:[...(menu[day]?.meals||["","",""])],snack:menu[day]?.snack||""});
     setShowMenuModal(true);
   };
-
   const saveMenu = async () => {
     try {
-      const [meal1,meal2,meal3] = menuForm.meals;
-      await updateMenuDay(menuEditDay, {meal1:meal1||"",meal2:meal2||"",meal3:meal3||"",snack:menuForm.snack||""});
-      setMenu(p=>({...p,[menuEditDay]:{meals:menuForm.meals,snack:menuForm.snack}}));
-      setShowMenuModal(false);
-      flash();
+      const [meal1,meal2,meal3,...rest] = menuForm.meals;
+      await updateMenuDay(menuEditDay, {
+        meal1:meal1||"", meal2:meal2||"", meal3:meal3||"", snack:menuForm.snack||""
+      });
+      setMenu(p=>({...p,[menuEditDay]:{meals:menuForm.meals.filter(Boolean),snack:menuForm.snack}}));
+      setShowMenuModal(false); flash();
     } catch(e){ console.error(e); }
   };
 
@@ -430,7 +577,6 @@ export default function App() {
     <>
       <style>{G}</style>
       {saving && <div className="saving">✓ Saved</div>}
-
       <button className="hamburger" onClick={()=>setSbOpen(v=>!v)}>☰</button>
       <div className={`sb-overlay${sbOpen?" open":""}`} onClick={()=>setSbOpen(false)}/>
 
@@ -448,12 +594,12 @@ export default function App() {
           <nav className="nav">
             {[
               {id:"dashboard",ic:"⚡",lbl:"Dashboard"},
-              {id:"clients",  ic:"👥",lbl:"Clients",       badge:active.length||null},
+              {id:"clients",  ic:"👥",lbl:"Clients",        badge:active.length||null},
               {id:"meals",    ic:"🍱",lbl:"Meal Selections"},
               {id:"kitchen",  ic:"👨‍🍳",lbl:"Kitchen Prep"},
               {id:"delivery", ic:"🛵",lbl:"Delivery Sheet"},
-              {id:"renewals", ic:"🔄",lbl:"Renewals",      badge:(renewDue.length+overdue.length)||null},
-              {id:"payments", ic:"💳",lbl:"Payments",      badge:unpaid.length||null},
+              {id:"renewals", ic:"🔄",lbl:"Renewals",       badge:(renewDue.length+overdue.length)||null},
+              {id:"payments", ic:"💳",lbl:"Payments",       badge:unpaid.length||null},
               {id:"menu",     ic:"📋",lbl:"Menu Reference"},
               {id:"workflow", ic:"✅",lbl:"Weekly Checklist"},
             ].map(n=>(
@@ -477,7 +623,7 @@ export default function App() {
             </div>
             <div className="tb-right">
               {tab==="clients"&&<>
-                <input className="srch" placeholder="Search name / district / plan…" value={search} onChange={e=>setSearch(e.target.value)}/>
+                <input className="srch" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/>
                 <select className="fltr" value={filterSt} onChange={e=>setFilterSt(e.target.value)}>
                   <option value="all">All Status</option>
                   <option value="Active">Active</option>
@@ -485,6 +631,9 @@ export default function App() {
                   <option value="Paused">Paused</option>
                 </select>
                 <button className="btn btn-r" onClick={openAddClient}>+ New Client</button>
+              </>}
+              {tab==="meals"&&<>
+                <button className="btn btn-g btn-sm" onClick={()=>setShowCustomItemModal(true)}>+ Custom Meal</button>
               </>}
               {tab==="menu"&&<button className="btn btn-r" onClick={openAddPlan}>+ New Plan</button>}
               {tab==="kitchen"&&(
@@ -496,7 +645,7 @@ export default function App() {
           </div>
 
           <div className="content">
-            {error && <div className="alert-bar" style={{marginBottom:16}}>⚠️ {error}</div>}
+            {error&&<div className="alert-bar" style={{marginBottom:16}}>⚠️ {error}</div>}
 
             {/* ═══ DASHBOARD ══════════════════════════ */}
             {tab==="dashboard"&&<>
@@ -505,15 +654,14 @@ export default function App() {
                 {overdue.length>0&&unpaid.length>0&&<span style={{margin:"0 8px"}}>·</span>}
                 {unpaid.length>0&&<strong>{unpaid.length} unpaid: {unpaid.map(c=>c.name.split(" ")[0]).join(", ")}</strong>}
               </div>:null}
-
               <div className="kpis">
                 {[
-                  {lbl:"Active Clients", val:active.length,  sub:`${clients.filter(c=>c.status!=="Active").length} inactive`,c:"var(--red)"},
-                  {lbl:"Weekly Revenue", val:`¥${revenue}`,  sub:"this week",                                                 c:"var(--green)"},
-                  {lbl:"Unpaid",         val:unpaid.length,  sub:unpaid.length?"Follow up needed":"All paid ✓",               c:unpaid.length?"var(--amber)":"var(--green)"},
-                  {lbl:"Renewals ≤7d",   val:renewDue.length+overdue.length, sub:"includes overdue",                         c:"var(--amber)"},
-                  {lbl:"Meals / Week",   val:totalMl,        sub:"total portions",                                            c:"var(--blue)"},
-                  {lbl:"Deliveries/Wk",  val:active.reduce((s,c)=>s+c.deliveries,0)*5, sub:"Mon–Fri",                        c:"#a78bfa"},
+                  {lbl:"Active Clients", val:active.length,  sub:`${clients.filter(c=>c.status!=="Active").length} inactive`, c:"var(--red)"},
+                  {lbl:"Weekly Revenue", val:`¥${revenue}`,  sub:"this week",                                                  c:"var(--green)"},
+                  {lbl:"Unpaid",         val:unpaid.length,  sub:unpaid.length?"Follow up":"All paid ✓",                      c:unpaid.length?"var(--amber)":"var(--green)"},
+                  {lbl:"Renewals ≤7d",   val:renewDue.length+overdue.length, sub:"includes overdue",                          c:"var(--amber)"},
+                  {lbl:"Meals / Week",   val:totalMl,        sub:"total portions",                                             c:"var(--blue)"},
+                  {lbl:"Deliveries/Wk",  val:active.reduce((s,c)=>s+c.deliveries,0)*5, sub:"Mon–Fri",                         c:"#a78bfa"},
                 ].map((k,i)=>(
                   <div className="kpi" key={i} style={{"--kc":k.c}}>
                     <div className="kpi-lbl">{k.lbl}</div>
@@ -522,7 +670,6 @@ export default function App() {
                   </div>
                 ))}
               </div>
-
               <div className="grid2">
                 <div className="tbl-wrap">
                   <div className="panel-hd"><div className="panel-title">Active Clients This Week</div></div>
@@ -562,26 +709,6 @@ export default function App() {
                   </div>
                 </div>
               </div>
-
-              <div className="sec-title" style={{marginTop:20}}>Monday Delivery Overview</div>
-              {active.length===0?(
-                <div className="tbl-wrap"><div style={{padding:20,textAlign:"center",color:"var(--dim)",fontSize:11}}>No active clients</div></div>
-              ):(
-                <div className="tbl-wrap"><table>
-                  <thead><tr><th>#</th><th>Time</th><th>Client</th><th>District</th><th>Address</th><th>Meals</th><th>Customizations</th></tr></thead>
-                  <tbody>{[...active].sort((a,b)=>(a.deliveryTime||"99").localeCompare(b.deliveryTime||"99")).map((c,i)=>(
-                    <tr key={c.id}>
-                      <td style={{color:"var(--dim)"}}>{i+1}</td>
-                      <td><span className="bx bx-b">{c.deliveryTime||"TBD"}</span></td>
-                      <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                      <td><span className="chip">{c.district||"—"}</span></td>
-                      <td style={{color:"var(--muted)",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis"}}>{c.address||"TBC"}</td>
-                      <td><span className="bx bx-gr">{plans.find(p=>p.name===c.plan)?.meals||1}x + snack</span></td>
-                      <td style={{color:"#fcd34d",fontSize:10}}>{c.customizations||"—"}</td>
-                    </tr>
-                  ))}</tbody>
-                </table></div>
-              )}
             </>}
 
             {/* ═══ CLIENTS ════════════════════════════ */}
@@ -621,7 +748,7 @@ export default function App() {
             {/* ═══ MEALS ══════════════════════════════ */}
             {tab==="meals"&&<>
               <div className="alert-bar" style={{background:"#0a1020",borderColor:"#1e3a5f",color:"#93c5fd"}}>
-                💡 Select each client's meals for the week. Changes auto-update Kitchen Prep totals.
+                💡 Each client can have multiple delivery slots per day. Use <strong>+ Add Slot</strong> for clients with 2 deliveries in one day.
               </div>
               <div className="tabs">
                 {DAYS.map(d=><button key={d} className={`tab${mealDay===d?" on":""}`} onClick={()=>setMealDay(d)}>{d}</button>)}
@@ -629,58 +756,106 @@ export default function App() {
               {active.length===0?(
                 <div className="empty-state"><div className="empty-state-icon">🍱</div><div className="empty-state-title">No active clients</div><div className="empty-state-sub">Add clients to manage their meals</div></div>
               ):(
-                <div className="meal-day-card">
-                  <div className="meal-day-hd">
-                    <div className="meal-day-title">{mealDay.toUpperCase()}</div>
-                    <div className="meal-day-snack">🍬 Daily snack: <strong style={{color:"#fff"}}>{menu[mealDay]?.snack||"—"}</strong></div>
-                  </div>
-                  {active.map((c,ci)=>{
-                    const mpd=plans.find(p=>p.name===c.plan)?.meals||1;
-                    const s=meals[c.id]?.[mealDay]||{};
-                    return (
-                      <div className="meal-client-row" key={c.id} style={{background:ci%2===0?"var(--s2)":"var(--s1)"}}>
-                        <div className="meal-client-name">{c.name}</div>
-                        <div style={{flexShrink:0}}><PlanBadge planName={c.plan} plans={plans}/></div>
-                        <div className="meal-selects">
-                          <div className="meal-select-wrap">
-                            <div className="meal-select-lbl">Meal 1</div>
-                            <select className="msel" value={s.meal1||""} onChange={e=>updateMeal(c.id,mealDay,"meal1",e.target.value)}>
-                              <option value="">—</option>
-                              {(menu[mealDay]?.meals||[]).map(m=><option key={m} value={m}>{m.split("(")[0].trim()}</option>)}
-                            </select>
-                          </div>
-                          {mpd>=2&&<div className="meal-select-wrap">
-                            <div className="meal-select-lbl">Meal 2</div>
-                            <select className="msel" value={s.meal2||"—"} onChange={e=>updateMeal(c.id,mealDay,"meal2",e.target.value)}>
-                              <option value="—">—</option>
-                              {(menu[mealDay]?.meals||[]).map(m=><option key={m} value={m}>{m.split("(")[0].trim()}</option>)}
-                            </select>
-                          </div>}
-                          {mpd>=3&&<div className="meal-select-wrap">
-                            <div className="meal-select-lbl">Meal 3</div>
-                            <select className="msel" value={s.meal3||"—"} onChange={e=>updateMeal(c.id,mealDay,"meal3",e.target.value)}>
-                              <option value="—">—</option>
-                              {(menu[mealDay]?.meals||[]).map(m=><option key={m} value={m}>{m.split("(")[0].trim()}</option>)}
-                            </select>
-                          </div>}
-                          <div className="meal-select-wrap" style={{flex:"0 0 auto"}}>
-                            <div className="meal-select-lbl">Note</div>
-                            <input className="msel" style={{minWidth:120}} placeholder="e.g. no onion" value={s.note||""} onChange={e=>updateMeal(c.id,mealDay,"note",e.target.value)}/>
+                active.map(c => {
+                  const slots = meals[c.id]?.[mealDay] || [];
+                  return (
+                    <div className="client-card" key={c.id}>
+                      <div className="client-card-hd">
+                        <div className="client-card-name">{c.name}</div>
+                        <PlanBadge planName={c.plan} plans={plans}/>
+                        {c.customizations&&<span style={{fontSize:10,color:"#fcd34d"}}>⚠️ {c.customizations}</span>}
+                      </div>
+
+                      {slots.length===0&&(
+                        <div style={{padding:"12px 14px",color:"var(--dim)",fontSize:11}}>No deliveries added yet for {mealDay}.</div>
+                      )}
+
+                      {slots.map((slot, si) => (
+                        <div className="slot-row" key={slot.id}>
+                          <div className="slot-num">Slot {si+1}</div>
+                          <div className="slot-fields">
+                            {/* Delivery time */}
+                            <div className="slot-field slot-field-sm">
+                              <label>Delivery Time</label>
+                              <input className="msel" type="time" value={slot.time||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"time",e.target.value)}/>
+                            </div>
+
+                            {/* Meals — one select per meal, + add more */}
+                            <div className="slot-field" style={{flex:2,minWidth:200}}>
+                              <label>Meals</label>
+                              <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                                {(slot.meals||[""]).map((meal,mi)=>(
+                                  <div key={mi} style={{display:"flex",gap:4,alignItems:"center"}}>
+                                    <select className="msel" value={meal||""} onChange={e=>updateSlotMeal(c.id,mealDay,slot.id,mi,e.target.value)} style={{flex:1}}>
+                                      <MealOptions menu={menu} extraItems={customItems}/>
+                                    </select>
+                                    {(slot.meals||[]).length>1&&(
+                                      <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none",padding:"2px 6px"}} onClick={()=>removeMealFromSlot(c.id,mealDay,slot.id,mi)}>✕</button>
+                                    )}
+                                  </div>
+                                ))}
+                                <button className="btn btn-g btn-xs" style={{alignSelf:"flex-start",marginTop:2}} onClick={()=>addMealToSlot(c.id,mealDay,slot.id)}>+ meal</button>
+                              </div>
+                            </div>
+
+                            {/* Snack */}
+                            <div className="slot-field slot-field-sm">
+                              <label>Snack</label>
+                              <select className="msel" value={slot.snack||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"snack",e.target.value)}>
+                                <option value="">— none —</option>
+                                {[...new Set(DAYS.map(d=>menu[d]?.snack).filter(Boolean))].map(s=>(
+                                  <option key={s} value={s}>{s}</option>
+                                ))}
+                                {customItems.map(i=><option key={i} value={i}>{i}</option>)}
+                              </select>
+                            </div>
+
+                            {/* Note */}
+                            <div className="slot-field">
+                              <label>Note</label>
+                              <input className="msel" placeholder="e.g. no onion" value={slot.note||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"note",e.target.value)}/>
+                            </div>
+
+                            {/* Remove slot */}
+                            <div style={{paddingTop:16}}>
+                              <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>removeSlot(c.id,mealDay,slot.id)}>Remove slot</button>
+                            </div>
                           </div>
                         </div>
-                        {c.customizations&&<div style={{fontSize:10,color:"#fcd34d",flexShrink:0,maxWidth:120}}>⚠️ {c.customizations}</div>}
+                      ))}
+
+                      <div className="slot-add-btn">
+                        <button className="btn btn-g btn-sm" onClick={()=>addSlot(c.id,mealDay)}>+ Add Delivery Slot</button>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })
               )}
             </>}
 
             {/* ═══ KITCHEN ════════════════════════════ */}
             {tab==="kitchen"&&<>
               <div className="alert-bar" style={{background:"#0d1a0d",borderColor:"#14532d",color:"#86efac"}}>
-                🍳 Numbers = portions to cook that day. Auto-calculated from Meal Selections.
+                🍳 Numbers = portions to cook. Set your cook start time below.
               </div>
+
+              {/* Cook time bar */}
+              <div className="cook-time-bar">
+                <span className="cook-time-lbl">🕐 {kitDay} — Start cooking at:</span>
+                <input
+                  className="cook-time-inp"
+                  type="time"
+                  value={cookTimes[kitDay]||""}
+                  onChange={e=>setCookTimes(p=>({...p,[kitDay]:e.target.value}))}
+                  placeholder="--:--"
+                />
+                {cookTimes[kitDay]&&(
+                  <span style={{fontSize:12,color:"var(--green)",fontWeight:600}}>
+                    ✓ Saved
+                  </span>
+                )}
+              </div>
+
               <div className="kd-hd">
                 <span>{kitDay.toUpperCase()}</span>
                 <span style={{fontSize:12,opacity:.85}}>{kitchen[kitDay]?.reduce((s,r)=>s+r.count,0)||0} total portions</span>
@@ -693,9 +868,10 @@ export default function App() {
                 </div>
               ))}
               {(!kitchen[kitDay]||kitchen[kitDay].length===0)&&<div className="kr" style={{justifyContent:"center",color:"var(--dim)"}}>No selections for this day</div>}
+
               <div className="sec-title" style={{marginTop:20}}>Allergy & Customization Alerts</div>
               {active.filter(c=>c.customizations||c.allergies).length===0?(
-                <div className="tbl-wrap"><div style={{padding:16,textAlign:"center",color:"var(--dim)",fontSize:11}}>No alerts — all clients have no restrictions</div></div>
+                <div className="tbl-wrap"><div style={{padding:16,textAlign:"center",color:"var(--dim)",fontSize:11}}>No alerts</div></div>
               ):(
                 <div className="tbl-wrap"><table>
                   <thead><tr><th>Client</th><th>Plan</th><th>Allergies</th><th>Customizations</th><th>Access</th></tr></thead>
@@ -715,26 +891,31 @@ export default function App() {
             {/* ═══ DELIVERY ═══════════════════════════ */}
             {tab==="delivery"&&<>
               <div className="alert-bar" style={{background:"#0d1a0d",borderColor:"#14532d",color:"#86efac"}}>
-                🛵 Sorted by delivery time. Tap status to mark delivered.
+                🛵 Sorted by delivery time. Each slot shown separately.
               </div>
               {Object.keys(delivery).length===0?(
-                <div className="empty-state"><div className="empty-state-icon">🛵</div><div className="empty-state-title">No deliveries scheduled</div><div className="empty-state-sub">Active clients will appear here sorted by time</div></div>
-              ):Object.entries(delivery).map(([time,cls])=>(
+                <div className="empty-state"><div className="empty-state-icon">🛵</div><div className="empty-state-title">No deliveries scheduled</div><div className="empty-state-sub">Add delivery slots in Meal Selections</div></div>
+              ):Object.entries(delivery).map(([time,entries])=>(
                 <div className="del-grp" key={time}>
-                  <div className="del-time">🕐 {time} — {cls.length} stop{cls.length>1?"s":""}</div>
+                  <div className="del-time">🕐 {time} — {entries.length} stop{entries.length>1?"s":""}</div>
                   <div className="tbl-wrap"><table>
-                    <thead><tr><th>#</th><th>Client</th><th>Phone</th><th>District</th><th>Address</th><th>Access</th><th>Meals</th><th>Notes</th><th>Done</th></tr></thead>
-                    <tbody>{cls.map((c,i)=>(
-                      <tr key={c.id}>
+                    <thead><tr><th>#</th><th>Client</th><th>Phone</th><th>District</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Note</th><th>Done</th></tr></thead>
+                    <tbody>{entries.map(({client:c, day, slot},i)=>(
+                      <tr key={slot.id}>
                         <td style={{color:"var(--dim)"}}>{i+1}</td>
                         <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
                         <td style={{color:"var(--muted)"}}>{c.phone||"—"}</td>
                         <td><span className="chip">{c.district||"—"}</span></td>
-                        <td style={{maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",color:"var(--muted)"}}>{c.address||"TBC"}</td>
+                        <td style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",color:"var(--muted)"}}>{c.address||"TBC"}</td>
                         <td style={{color:"var(--muted)",fontSize:10}}>{c.access||"—"}</td>
-                        <td><span className="bx bx-b">{plans.find(p=>p.name===c.plan)?.meals||1}x+snk</span></td>
-                        <td style={{color:"#fcd34d",fontSize:10,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis"}}>{c.customizations||"—"}</td>
-                        <td><button className={`bx bx-clk ${checks["d_"+c.id]?"bx-g":"bx-gr"}`} onClick={()=>toggleCheck("d_"+c.id)}>{checks["d_"+c.id]?"✓ Done":"Pending"}</button></td>
+                        <td style={{maxWidth:180}}>
+                          {(slot.meals||[]).filter(Boolean).map((m,i)=>(
+                            <div key={i} style={{fontSize:10,color:"#ccc"}}>{m}</div>
+                          ))}
+                        </td>
+                        <td style={{fontSize:10,color:"var(--blue)"}}>{slot.snack||"—"}</td>
+                        <td style={{color:"#fcd34d",fontSize:10}}>{slot.note||c.customizations||"—"}</td>
+                        <td><button className={`bx bx-clk ${checks["d_"+slot.id]?"bx-g":"bx-gr"}`} onClick={()=>toggleCheck("d_"+slot.id)}>{checks["d_"+slot.id]?"✓ Done":"Pending"}</button></td>
                       </tr>
                     ))}</tbody>
                   </table></div>
@@ -745,7 +926,7 @@ export default function App() {
             {/* ═══ RENEWALS ═══════════════════════════ */}
             {tab==="renewals"&&<>
               {overdue.length>0&&<>
-                <div className="sec-title" style={{color:"#f87171",marginTop:0}}>⚠️ OVERDUE — Immediate Action</div>
+                <div className="sec-title" style={{color:"#f87171",marginTop:0}}>⚠️ OVERDUE</div>
                 <div className="tbl-wrap" style={{marginBottom:20}}><table>
                   <thead><tr><th>Client</th><th>Plan</th><th>Expired</th><th>Days Overdue</th><th>Paid</th><th>Action</th></tr></thead>
                   <tbody>{overdue.map(c=>(
@@ -760,9 +941,9 @@ export default function App() {
                   ))}</tbody>
                 </table></div>
               </>}
-              <div className="sec-title" style={{marginTop:0}}>Renewing This Week (≤7 days)</div>
+              <div className="sec-title">Renewing This Week (≤7 days)</div>
               <div className="tbl-wrap" style={{marginBottom:20}}><table>
-                <thead><tr><th>Client</th><th>Plan</th><th>Expiry</th><th>Days Left</th><th>Next Week Price</th><th>Paid Next Week?</th></tr></thead>
+                <thead><tr><th>Client</th><th>Plan</th><th>Expiry</th><th>Days Left</th><th>Next Week Price</th><th>Paid?</th></tr></thead>
                 <tbody>
                   {renewDue.map(c=>(
                     <tr key={c.id}>
@@ -863,7 +1044,7 @@ export default function App() {
                     </div>
                   </div>
                 ))}
-                {plans.length===0&&<div style={{color:"var(--dim)",fontSize:11,padding:20}}>No plans yet. Click "+ New Plan" to add one.</div>}
+                {plans.length===0&&<div style={{color:"var(--dim)",fontSize:11,padding:20}}>No plans yet.</div>}
               </div>
               <div className="sec-title">This Week's Menu</div>
               <div className="tbl-wrap"><table>
@@ -894,7 +1075,7 @@ export default function App() {
             {/* ═══ WORKFLOW ════════════════════════════ */}
             {tab==="workflow"&&<>
               <div className="alert-bar" style={{background:"#0a1020",borderColor:"#1e3a5f",color:"#93c5fd"}}>
-                ✅ Click circles to check off tasks. Saved automatically. Reset each Monday morning.
+                ✅ Click circles to check off tasks. Saved automatically.
               </div>
               {["FRIDAY","SAT / SUN","MONDAY","DAILY"].map(day=>(
                 <div key={day} style={{marginBottom:20}}>
@@ -911,26 +1092,6 @@ export default function App() {
                   </div>
                 </div>
               ))}
-              <div className="sec-title">Adding a New Client — Step by Step</div>
-              <div className="tbl-wrap" style={{padding:"4px 14px"}}>
-                {[
-                  ["Get their details via WeChat","Name, phone, address, district, goal, allergies"],
-                  ["Go to Clients → click + New Client","Fill in every field — don't skip allergies or customizations"],
-                  ["Set plan, delivery time, meals/day","Check plan pricing in Menu Reference tab"],
-                  ["Go to Meal Selections","Pre-fill default meals or wait for their confirmation by Friday"],
-                  ["Confirm payment received","Mark paid in Clients or Payments tab"],
-                  ["Delivery tab auto-updates","Driver will see them sorted by time"],
-                  ["Renewals tab will auto-flag them","When expiry ≤7 days away — follow up proactively"],
-                ].map(([a,d],i)=>(
-                  <div key={i} className="step">
-                    <span className="step-n">{i+1}</span>
-                    <div>
-                      <div style={{color:"#fff",fontWeight:500,fontSize:11}}>{a}</div>
-                      <div style={{color:"var(--dim)",fontSize:10,marginTop:2}}>{d}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
             </>}
 
           </div>
@@ -948,24 +1109,24 @@ export default function App() {
             <div className="mo-body">
               <div className="fg">
                 {[
-                  ["name",         "Full Name *",                    "text",     "fg-full"],
-                  ["phone",        "Phone / WeChat",                 "text",     ""],
-                  ["language",     "Language",                       "sel:EN,CN",""],
-                  ["district",     "District / Area",                "text",     ""],
-                  ["address",      "Delivery Address",               "text",     "fg-full"],
-                  ["access",       "Building / Access Notes",        "text",     "fg-full"],
-                  ["deliveryTime", "Delivery Time(s)",               "text",     ""],
-                  ["deliveries",   "Deliveries / Day",               "number",   ""],
-                  ["plan",         "Plan",                           "sel_plans",""],
-                  ["status",       "Status",                         "sel:Active,Inactive,Paused,Trial",""],
-                  ["startDate",    "Start Date",                     "date",     ""],
-                  ["expiryDate",   "Expiry Date",                    "date",     ""],
-                  ["paid",         "Paid This Week?",                "sel_paid", ""],
-                  ["amountPaid",   "Amount Paid (¥)",                "number",   ""],
-                  ["goal",         "Goal",                           "text",     ""],
-                  ["allergies",    "Allergies / Restrictions",       "text",     ""],
-                  ["customizations","Permanent Customizations",      "text",     "fg-full"],
-                  ["acqChannel",   "Acquisition Channel",            "text",     ""],
+                  ["name",         "Full Name *",               "text",     "fg-full"],
+                  ["phone",        "Phone / WeChat",            "text",     ""],
+                  ["language",     "Language",                  "sel:EN,CN",""],
+                  ["district",     "District / Area",           "text",     ""],
+                  ["address",      "Delivery Address",          "text",     "fg-full"],
+                  ["access",       "Building / Access Notes",   "text",     "fg-full"],
+                  ["deliveryTime", "Default Delivery Time",     "text",     ""],
+                  ["deliveries",   "Deliveries / Day",          "number",   ""],
+                  ["plan",         "Plan",                      "sel_plans",""],
+                  ["status",       "Status",                    "sel:Active,Inactive,Paused,Trial",""],
+                  ["startDate",    "Start Date",                "date",     ""],
+                  ["expiryDate",   "Expiry Date",               "date",     ""],
+                  ["paid",         "Paid This Week?",           "sel_paid", ""],
+                  ["amountPaid",   "Amount Paid (¥)",           "number",   ""],
+                  ["goal",         "Goal",                      "text",     ""],
+                  ["allergies",    "Allergies / Restrictions",  "text",     ""],
+                  ["customizations","Permanent Customizations", "text",     "fg-full"],
+                  ["acqChannel",   "Acquisition Channel",       "text",     ""],
                 ].map(([k,lbl,type,cls])=>(
                   <div key={k} className={`fl ${cls}`}>
                     <label>{lbl}</label>
@@ -1049,14 +1210,18 @@ export default function App() {
             <div className="mo-body">
               <div style={{marginBottom:16}}>
                 <div className="sec-title" style={{marginBottom:8}}>Meals of the Day</div>
-                {[0,1,2].map(i=>(
+                {menuForm.meals.map((m,i)=>(
                   <div key={i} style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
                     <span style={{fontSize:10,color:"var(--dim)",minWidth:60}}>Meal {i+1}</span>
-                    <input className="inp" placeholder={`Meal ${i+1} name`} value={menuForm.meals[i]||""} onChange={e=>{
+                    <input className="inp" placeholder={`Meal ${i+1} name`} value={m||""} onChange={e=>{
                       const nm=[...menuForm.meals]; nm[i]=e.target.value; setMenuForm(p=>({...p,meals:nm}));
                     }}/>
+                    {menuForm.meals.length>1&&(
+                      <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>setMenuForm(p=>({...p,meals:p.meals.filter((_,j)=>j!==i)}))}>✕</button>
+                    )}
                   </div>
                 ))}
+                <button className="btn btn-g btn-sm" onClick={()=>setMenuForm(p=>({...p,meals:[...p.meals,""]}))}>+ Add Meal</button>
               </div>
               <div>
                 <div className="sec-title" style={{marginBottom:8}}>Daily Snack</div>
@@ -1066,6 +1231,44 @@ export default function App() {
             <div className="mo-ft">
               <button className="btn btn-g" onClick={()=>setShowMenuModal(false)}>Cancel</button>
               <button className="btn btn-r" onClick={saveMenu}>Save Menu</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ CUSTOM ITEM MODAL ═══════════════════════ */}
+      {showCustomItemModal&&(
+        <div className="mo" onClick={e=>{if(e.target===e.currentTarget)setShowCustomItemModal(false);}}>
+          <div className="mo-box" style={{maxWidth:440}}>
+            <div className="mo-hd">
+              <div className="mo-title">Custom Meal Items</div>
+              <button className="btn btn-g btn-sm" onClick={()=>setShowCustomItemModal(false)}>✕</button>
+            </div>
+            <div className="mo-body">
+              <p style={{fontSize:11,color:"var(--muted)",marginBottom:14}}>Add extra meals or items that aren't in the weekly menu (e.g. vegetarian options, special requests). They'll appear in all meal dropdowns.</p>
+              <div style={{display:"flex",gap:8,marginBottom:16}}>
+                <input className="inp" placeholder="e.g. Veggie Tofu Bowl" value={newCustomItem} onChange={e=>setNewCustomItem(e.target.value)}
+                  onKeyDown={e=>{if(e.key==="Enter"&&newCustomItem.trim()){setCustomItems(p=>[...p,newCustomItem.trim()]);setNewCustomItem("");}}}
+                />
+                <button className="btn btn-r" style={{flexShrink:0}} onClick={()=>{
+                  if(newCustomItem.trim()){setCustomItems(p=>[...p,newCustomItem.trim()]);setNewCustomItem("");}
+                }}>Add</button>
+              </div>
+              {customItems.length===0?(
+                <div style={{color:"var(--dim)",fontSize:11}}>No custom items yet.</div>
+              ):(
+                <div className="tbl-wrap">
+                  {customItems.map((item,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",padding:"8px 12px",borderBottom:"1px solid #161616",fontSize:11}}>
+                      <span style={{flex:1,color:"#ccc"}}>{item}</span>
+                      <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>setCustomItems(p=>p.filter((_,j)=>j!==i))}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="mo-ft">
+              <button className="btn btn-r" onClick={()=>setShowCustomItemModal(false)}>Done</button>
             </div>
           </div>
         </div>

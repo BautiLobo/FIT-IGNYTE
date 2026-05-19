@@ -250,9 +250,10 @@ export default function App() {
   // customMealItems: extra meals added manually
   const [customItems, setCustomItems] = useState([]);
 
-  const [tab,       setTab]       = useState("dashboard");
-  const [kitDay,    setKitDay]    = useState("Monday");
-  const [mealDay,   setMealDay]   = useState("Monday");
+  const [tab,         setTab]         = useState("dashboard");
+  const [kitDay,      setKitDay]      = useState("Monday");
+  const [mealDay,     setMealDay]     = useState("Monday");
+  const [deliveryDay, setDeliveryDay] = useState("Monday");
   const [sbOpen,    setSbOpen]    = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [loaded,    setLoaded]    = useState(false);
@@ -287,22 +288,30 @@ export default function App() {
         setPlans(pl);
         setClients(cl);
         setMenu(mn);
-        // Convert old flat meal format to new multi-slot format if needed
+        // Convert DB format to multi-slot format
         const converted = {};
         for (const cid of Object.keys(ms)) {
           converted[cid] = {};
           for (const day of DAYS) {
-            const old = ms[cid]?.[day];
-            if (!old) { converted[cid][day] = []; continue; }
-            // If already array format keep it, otherwise convert
-            if (Array.isArray(old)) { converted[cid][day] = old; continue; }
-            converted[cid][day] = [{
-              id: uid(),
-              time: "",
-              meals: [old.meal1, old.meal2, old.meal3].filter(m => m && m !== "—"),
-              snack: old.snack || "",
-              note:  old.note  || "",
-            }];
+            const row = ms[cid]?.[day];
+            if (!row) { converted[cid][day] = []; continue; }
+            if (Array.isArray(row)) { converted[cid][day] = row; continue; }
+            // Serialized multi-slot format
+            if (row.note === "__multi__") {
+              try {
+                const parsed = JSON.parse(row.meal1);
+                converted[cid][day] = Array.isArray(parsed) ? parsed : [];
+              } catch { converted[cid][day] = []; }
+              continue;
+            }
+            // Old flat format -> single slot
+            const mealsList = [row.meal1, row.meal2, row.meal3].filter(m => m && m !== "—");
+            converted[cid][day] = (mealsList.length || row.snack) ? [{
+              id: uid(), time: "",
+              meals: mealsList.length ? mealsList : [""],
+              snack: row.snack || "",
+              note: row.note || "",
+            }] : [];
           }
         }
         setMeals(converted);
@@ -373,14 +382,12 @@ export default function App() {
     return d;
   }, [active, meals]);
 
-  // Delivery: group by time, now can have multiple slots per client per day
+  // Delivery: group by time, filtered by selected day
   const delivery = useMemo(() => {
     const allSlots = [];
     active.forEach(c => {
-      DAYS.forEach(day => {
-        (meals[c.id]?.[day]||[]).forEach(slot => {
-          allSlots.push({ client: c, day, slot });
-        });
+      (meals[c.id]?.[deliveryDay]||[]).forEach(slot => {
+        allSlots.push({ client: c, day: deliveryDay, slot });
       });
     });
     allSlots.sort((a,b) => (a.slot.time||"99").localeCompare(b.slot.time||"99"));
@@ -390,7 +397,7 @@ export default function App() {
       (g[t]=g[t]||[]).push(x);
     });
     return g;
-  }, [active, meals]);
+  }, [active, meals, deliveryDay]);
 
   // ── Handlers
   const togglePaid = async id => {
@@ -639,6 +646,11 @@ export default function App() {
               {tab==="kitchen"&&(
                 <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
                   {DAYS.map(d=><button key={d} className={`tab${kitDay===d?" on":""}`} onClick={()=>setKitDay(d)}>{d.slice(0,3)}</button>)}
+                </div>
+              )}
+              {tab==="delivery"&&(
+                <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
+                  {DAYS.map(d=><button key={d} className={`tab${deliveryDay===d?" on":""}`} onClick={()=>setDeliveryDay(d)}>{d.slice(0,3)}</button>)}
                 </div>
               )}
             </div>

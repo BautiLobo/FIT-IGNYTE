@@ -899,13 +899,12 @@ export default function App() {
                 <div className="del-grp" key={time}>
                   <div className="del-time">🕐 {time} — {entries.length} stop{entries.length>1?"s":""}</div>
                   <div className="tbl-wrap"><table>
-                    <thead><tr><th>#</th><th>Client</th><th>Phone</th><th>District</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Note</th><th>Done</th></tr></thead>
+                    <thead><tr><th>#</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Note</th><th>Done</th></tr></thead>
                     <tbody>{entries.map(({client:c, day, slot},i)=>(
                       <tr key={slot.id}>
                         <td style={{color:"var(--dim)"}}>{i+1}</td>
                         <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                        <td style={{color:"var(--muted)"}}>{c.phone||"—"}</td>
-                        <td><span className="chip">{c.district||"—"}</span></td>
+                        <td><PlanBadge planName={c.plan} plans={plans}/></td>
                         <td style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",color:"var(--muted)"}}>{c.address||"TBC"}</td>
                         <td style={{color:"var(--muted)",fontSize:10}}>{c.access||"—"}</td>
                         <td style={{maxWidth:180}}>

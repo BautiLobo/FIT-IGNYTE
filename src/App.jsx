@@ -554,6 +554,74 @@ export default function App() {
     } catch(e){ console.error(e); }
   };
 
+  // ── Print / PDF delivery sheet
+  const printDelivery = () => {
+    const entries = Object.entries(delivery);
+    const dayName = deliveryDay;
+    const rows = entries.flatMap(([time, slots]) =>
+      slots.map(({client:c, slot}) => ({
+        time,
+        name: c.name,
+        plan: c.plan,
+        address: c.address || "TBC",
+        access: c.access || "—",
+        meals: (slot.meals||[]).filter(Boolean).join(" / "),
+        snack: slot.snack || "—",
+        note: slot.note || c.customizations || "—",
+      }))
+    );
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Delivery Sheet — ${dayName}</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 12px; margin: 20px; color: #111; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    h2 { font-size: 13px; color: #555; margin-bottom: 16px; font-weight: normal; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #111; color: #fff; padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+    td { padding: 8px 10px; border-bottom: 1px solid #ddd; vertical-align: top; }
+    tr:nth-child(even) td { background: #f9f9f9; }
+    .time { font-weight: bold; color: #e8342a; }
+    .note { color: #c47a00; font-style: italic; }
+    @media print { body { margin: 10px; } }
+  </style>
+</head>
+<body>
+  <h1>FIT IGNYTE — Delivery Sheet</h1>
+  <h2>${dayName} · ${new Date().toLocaleDateString("en-GB")} · ${rows.length} stop${rows.length!==1?"s":""}</h2>
+  <table>
+    <thead><tr><th>#</th><th>Time</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Notes</th><th>✓</th></tr></thead>
+    <tbody>
+      ${rows.map((r,i) => `
+        <tr>
+          <td>${i+1}</td>
+          <td class="time">${r.time}</td>
+          <td><strong>${r.name}</strong></td>
+          <td>${r.plan}</td>
+          <td>${r.address}</td>
+          <td>${r.access}</td>
+          <td>${r.meals}</td>
+          <td>${r.snack}</td>
+          <td class="note">${r.note}</td>
+          <td style="width:30px;border:1px solid #ccc;min-height:20px"></td>
+        </tr>
+      `).join("")}
+    </tbody>
+  </table>
+</body>
+</html>`;
+
+    const w = window.open("", "_blank");
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 500);
+  };
+
   const CHECKLIST = [
     {k:"f1",day:"FRIDAY",   t:"Send WeChat to all clients — confirm next week attendance"},
     {k:"f2",day:"FRIDAY",   t:"Ask clients if they want to swap meals next week"},
@@ -649,8 +717,11 @@ export default function App() {
                 </div>
               )}
               {tab==="delivery"&&(
-                <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
-                  {DAYS.map(d=><button key={d} className={`tab${deliveryDay===d?" on":""}`} onClick={()=>setDeliveryDay(d)}>{d.slice(0,3)}</button>)}
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
+                    {DAYS.map(d=><button key={d} className={`tab${deliveryDay===d?" on":""}`} onClick={()=>setDeliveryDay(d)}>{d.slice(0,3)}</button>)}
+                  </div>
+                  <button className="btn btn-g btn-sm" onClick={()=>printDelivery()}>⬇ PDF</button>
                 </div>
               )}
             </div>

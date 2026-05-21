@@ -554,72 +554,64 @@ export default function App() {
     } catch(e){ console.error(e); }
   };
 
-  // ── Print / PDF delivery sheet
-  const printDelivery = () => {
-    const entries = Object.entries(delivery);
+  // ── Download PDF delivery sheet using jsPDF
+  const printDelivery = async () => {
+    const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm");
+    const autoTable = (await import("https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/+esm")).default;
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     const dayName = deliveryDay;
-    const rows = entries.flatMap(([time, slots]) =>
-      slots.map(({client:c, slot}) => ({
+    const dateStr = new Date().toLocaleDateString("en-GB");
+
+    // Header
+    doc.setFillColor(232, 52, 42);
+    doc.rect(0, 0, 297, 18, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("FIT IGNYTE — Delivery Sheet", 10, 12);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(`${dayName}  ·  ${dateStr}`, 200, 12);
+
+    // Rows
+    const rows = Object.entries(delivery).flatMap(([time, slots]) =>
+      slots.map(({client:c, slot}, i) => [
+        i+1,
         time,
-        name: c.name,
-        plan: c.plan,
-        address: c.address || "TBC",
-        access: c.access || "—",
-        meals: (slot.meals||[]).filter(Boolean).join(" / "),
-        snack: slot.snack || "—",
-        note: slot.note || c.customizations || "—",
-      }))
+        c.name,
+        c.plan,
+        c.address || "TBC",
+        c.access || "—",
+        (slot.meals||[]).filter(Boolean).join(" / "),
+        slot.snack || "—",
+        slot.note || c.customizations || "—",
+        "",
+      ])
     );
 
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <title>Delivery Sheet — ${dayName}</title>
-  <style>
-    body { font-family: Arial, sans-serif; font-size: 12px; margin: 20px; color: #111; }
-    h1 { font-size: 20px; margin-bottom: 4px; }
-    h2 { font-size: 13px; color: #555; margin-bottom: 16px; font-weight: normal; }
-    table { width: 100%; border-collapse: collapse; }
-    th { background: #111; color: #fff; padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
-    td { padding: 8px 10px; border-bottom: 1px solid #ddd; vertical-align: top; }
-    tr:nth-child(even) td { background: #f9f9f9; }
-    .time { font-weight: bold; color: #e8342a; }
-    .note { color: #c47a00; font-style: italic; }
-    @media print { body { margin: 10px; } }
-  </style>
-</head>
-<body>
-  <h1>FIT IGNYTE — Delivery Sheet</h1>
-  <h2>${dayName} · ${new Date().toLocaleDateString("en-GB")} · ${rows.length} stop${rows.length!==1?"s":""}</h2>
-  <table>
-    <thead><tr><th>#</th><th>Time</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Notes</th><th>✓</th></tr></thead>
-    <tbody>
-      ${rows.map((r,i) => `
-        <tr>
-          <td>${i+1}</td>
-          <td class="time">${r.time}</td>
-          <td><strong>${r.name}</strong></td>
-          <td>${r.plan}</td>
-          <td>${r.address}</td>
-          <td>${r.access}</td>
-          <td>${r.meals}</td>
-          <td>${r.snack}</td>
-          <td class="note">${r.note}</td>
-          <td style="width:30px;border:1px solid #ccc;min-height:20px"></td>
-        </tr>
-      `).join("")}
-    </tbody>
-  </table>
-</body>
-</html>`;
+    autoTable(doc, {
+      startY: 22,
+      head: [["#","Time","Client","Plan","Address","Access","Meals","Snack","Notes","✓"]],
+      body: rows,
+      styles: { fontSize: 8, cellPadding: 3 },
+      headStyles: { fillColor: [20, 20, 20], textColor: 255, fontStyle: "bold" },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+      columnStyles: {
+        0: { cellWidth: 8 },
+        1: { cellWidth: 16, textColor: [232,52,42], fontStyle: "bold" },
+        2: { cellWidth: 28, fontStyle: "bold" },
+        3: { cellWidth: 24 },
+        4: { cellWidth: 45 },
+        5: { cellWidth: 25 },
+        6: { cellWidth: 50 },
+        7: { cellWidth: 20 },
+        8: { cellWidth: 40, textColor: [180,120,0] },
+        9: { cellWidth: 12 },
+      },
+    });
 
-    const w = window.open("", "_blank");
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 500);
+    doc.save(`delivery-${dayName.toLowerCase()}.pdf`);
   };
 
   const CHECKLIST = [

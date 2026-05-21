@@ -344,7 +344,7 @@ export default function App() {
   // ── Derived
   const active   = useMemo(() => clients.filter(c=>c.status==="Active"), [clients]);
   const unpaid   = useMemo(() => active.filter(c=>!c.paid), [active]);
-  const renewDue = useMemo(() => active.filter(c=>{ const d=daysUntil(c.expiryDate); return d>=0&&d<=7; }), [active]);
+  const renewDue = useMemo(() => active.filter(c=>{ const d=daysUntil(c.expiryDate); return d>=0&&d<=2; }), [active]);
   const overdue  = useMemo(() => active.filter(c=>daysUntil(c.expiryDate)<0), [active]);
   const revenue  = useMemo(() => active.reduce((s,c)=>s+(plans.find(p=>p.name===c.plan)?.price||0),0), [active,plans]);
   const totalMl  = useMemo(() => active.reduce((s,c)=>s+(plans.find(p=>p.name===c.plan)?.meals||0),0)*5, [active,plans]);
@@ -554,16 +554,14 @@ export default function App() {
     } catch(e){ console.error(e); }
   };
 
-  // ── Download PDF delivery sheet using jsPDF
+  // ── Download PDF delivery sheet
   const printDelivery = async () => {
     const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm");
-    const autoTable = (await import("https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/+esm")).default;
-
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     const dayName = deliveryDay;
     const dateStr = new Date().toLocaleDateString("en-GB");
 
-    // Header
+    // Header bar
     doc.setFillColor(232, 52, 42);
     doc.rect(0, 0, 297, 18, "F");
     doc.setTextColor(255, 255, 255);
@@ -572,46 +570,79 @@ export default function App() {
     doc.text("FIT IGNYTE — Delivery Sheet", 10, 12);
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text(`${dayName}  ·  ${dateStr}`, 200, 12);
+    doc.text(dayName + "  |  " + dateStr, 210, 12);
+
+    // Column definitions
+    const cols = [
+      { label:"#",        x:8,   w:8  },
+      { label:"Time",     x:16,  w:16 },
+      { label:"Client",   x:32,  w:30 },
+      { label:"Plan",     x:62,  w:25 },
+      { label:"Address",  x:87,  w:48 },
+      { label:"Access",   x:135, w:25 },
+      { label:"Meals",    x:160, w:68 },
+      { label:"Snack",    x:228, w:20 },
+      { label:"Notes",    x:248, w:30 },
+      { label:"DONE ✓",   x:278, w:18 },
+    ];
+
+    // Table header
+    let y = 24;
+    doc.setFillColor(20, 20, 20);
+    doc.rect(0, y, 297, 8, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(7);
+    doc.setFont("helvetica", "bold");
+    cols.forEach(c => doc.text(c.label, c.x, y + 5.5));
 
     // Rows
-    const rows = Object.entries(delivery).flatMap(([time, slots]) =>
-      slots.map(({client:c, slot}, i) => [
-        i+1,
-        time,
-        c.name,
-        c.plan,
-        c.address || "TBC",
-        c.access || "—",
-        (slot.meals||[]).filter(Boolean).join(" / "),
-        slot.snack || "—",
-        slot.note || c.customizations || "—",
-        "",
-      ])
-    );
+    y += 8;
+    let rowNum = 0;
+    Object.entries(delivery).forEach(([time, slots]) => {
+      slots.forEach(({client:cl, slot}) => {
+        rowNum++;
+        const mealsArr = (slot.meals||[]).filter(Boolean);
+        const note     = slot.note || cl.customizations || "—";
+        // Split meals into multiple lines
+        const mealLines = mealsArr.length ? mealsArr : ["—"];
+        const rowH = Math.max(10, mealLines.length * 6 + 4);
 
-    autoTable(doc, {
-      startY: 22,
-      head: [["#","Time","Client","Plan","Address","Access","Meals","Snack","Notes","✓"]],
-      body: rows,
-      styles: { fontSize: 8, cellPadding: 3 },
-      headStyles: { fillColor: [20, 20, 20], textColor: 255, fontStyle: "bold" },
-      alternateRowStyles: { fillColor: [245, 245, 245] },
-      columnStyles: {
-        0: { cellWidth: 8 },
-        1: { cellWidth: 16, textColor: [232,52,42], fontStyle: "bold" },
-        2: { cellWidth: 28, fontStyle: "bold" },
-        3: { cellWidth: 24 },
-        4: { cellWidth: 45 },
-        5: { cellWidth: 25 },
-        6: { cellWidth: 50 },
-        7: { cellWidth: 20 },
-        8: { cellWidth: 40, textColor: [180,120,0] },
-        9: { cellWidth: 12 },
-      },
+        const isEven = rowNum % 2 === 0;
+        if (isEven) { doc.setFillColor(245,245,245); doc.rect(0, y, 297, rowH, "F"); }
+
+        doc.setTextColor(50,50,50);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+
+        doc.text(String(rowNum),                                    cols[0].x, y+6);
+        doc.setTextColor(232,52,42); doc.setFont("helvetica","bold");
+        doc.text(time,                                              cols[1].x, y+6);
+        doc.setTextColor(20,20,20);
+        doc.text(cl.name,                                           cols[2].x, y+6);
+        doc.setTextColor(80,80,80); doc.setFont("helvetica","normal");
+        doc.text(cl.plan||"—",                                      cols[3].x, y+6);
+        doc.text(doc.splitTextToSize(cl.address||"TBC", 46)[0],     cols[4].x, y+6);
+        doc.text(doc.splitTextToSize(cl.access||"—", 23)[0],        cols[5].x, y+6);
+        // Meals — one per line
+        mealLines.forEach((m, mi) => {
+          doc.setTextColor(20,20,20);
+          doc.text(doc.splitTextToSize(m, 66)[0], cols[6].x, y + 6 + mi * 6);
+        });
+        doc.setTextColor(80,80,80);
+        doc.text(slot.snack||"—",                                   cols[7].x, y+6);
+        doc.setTextColor(180,120,0);
+        doc.text(doc.splitTextToSize(note, 28)[0],                  cols[8].x, y+6);
+        // Done checkbox — bigger and clearer
+        doc.setDrawColor(100,100,100);
+        doc.setLineWidth(0.5);
+        doc.rect(cols[9].x, y+2, 10, 10);
+
+        y += rowH;
+        if (y > 195) { doc.addPage(); y = 10; }
+      });
     });
 
-    doc.save(`delivery-${dayName.toLowerCase()}.pdf`);
+    doc.save("delivery-" + dayName.toLowerCase() + ".pdf");
   };
 
   const CHECKLIST = [
@@ -669,6 +700,7 @@ export default function App() {
               {id:"payments", ic:"💳",lbl:"Payments",       badge:unpaid.length||null},
               {id:"menu",     ic:"📋",lbl:"Menu Reference"},
               {id:"workflow", ic:"✅",lbl:"Weekly Checklist"},
+              {id:"wechat",   ic:"💬",lbl:"WeChat Messages"},
             ].map(n=>(
               <button key={n.id} className={`ni${tab===n.id?" on":""}`} onClick={()=>navTo(n.id)}>
                 <span className="ni-ic">{n.ic}</span>{n.lbl}
@@ -734,7 +766,7 @@ export default function App() {
                   {lbl:"Active Clients", val:active.length,  sub:`${clients.filter(c=>c.status!=="Active").length} inactive`, c:"var(--red)"},
                   {lbl:"Weekly Revenue", val:`¥${revenue}`,  sub:"this week",                                                  c:"var(--green)"},
                   {lbl:"Unpaid",         val:unpaid.length,  sub:unpaid.length?"Follow up":"All paid ✓",                      c:unpaid.length?"var(--amber)":"var(--green)"},
-                  {lbl:"Renewals ≤7d",   val:renewDue.length+overdue.length, sub:"includes overdue",                          c:"var(--amber)"},
+                  {lbl:"Renewals ≤2d",   val:renewDue.length+overdue.length, sub:"includes overdue",                          c:"var(--amber)"},
                   {lbl:"Meals / Week",   val:totalMl,        sub:"total portions",                                             c:"var(--blue)"},
                   {lbl:"Deliveries/Wk",  val:active.reduce((s,c)=>s+c.deliveries,0)*5, sub:"Mon–Fri",                         c:"#a78bfa"},
                 ].map((k,i)=>(
@@ -1031,9 +1063,9 @@ export default function App() {
                   ))}</tbody>
                 </table></div>
               </>}
-              <div className="sec-title">Renewing This Week (≤7 days)</div>
+              <div className="sec-title">Renewing Soon (≤2 days)</div>
               <div className="tbl-wrap" style={{marginBottom:20}}><table>
-                <thead><tr><th>Client</th><th>Plan</th><th>Expiry</th><th>Days Left</th><th>Next Week Price</th><th>Paid?</th></tr></thead>
+                <thead><tr><th>Client</th><th>Plan</th><th>Expiry</th><th>Days Left</th><th>Price</th><th>Paid?</th></tr></thead>
                 <tbody>
                   {renewDue.map(c=>(
                     <tr key={c.id}>
@@ -1160,6 +1192,119 @@ export default function App() {
                   ))}
                 </tbody>
               </table></div>
+            </>}
+
+            {/* ═══ WECHAT ═════════════════════════════ */}
+            {tab==="wechat"&&<>
+              {/* ── MSG 1: Weekly Menu Broadcast ── */}
+              <div className="sec-title" style={{marginTop:0}}>📋 Weekly Menu Broadcast</div>
+              <div style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:16,marginBottom:20}}>
+                <p style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>Copy this message and send it to all clients on Friday to confirm next week.</p>
+                {(()=>{
+                  const lines = ["🔥 FIT IGNYTE — This Week's Menu", ""];
+                  DAYS.forEach(day => {
+                    const meals = (menu[day]?.meals||[]).filter(Boolean);
+                    const snack = menu[day]?.snack || "";
+                    lines.push(`📅 ${day}`);
+                    meals.forEach((m,i) => lines.push(`  Meal ${i+1}: ${m}`));
+                    if (snack) lines.push(`  Snack: ${snack}`);
+                    lines.push("");
+                  });
+                  lines.push("Reply with your choices by Friday! 💪");
+                  lines.push("Any customizations? Let us know 🙏");
+                  const text = lines.join("");
+                  return (
+                    <div>
+                      <pre style={{background:"var(--s3)",border:"1px solid var(--bdr)",borderRadius:6,padding:14,fontSize:11,color:"#ccc",whiteSpace:"pre-wrap",wordBreak:"break-word",marginBottom:12,lineHeight:1.6}}>{text}</pre>
+                      <button className="btn btn-r" onClick={()=>{navigator.clipboard.writeText(text);alert("Copied to clipboard!");}}>📋 Copy Message</button>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* ── MSG 2: Payment Reminder per client ── */}
+              <div className="sec-title">💳 Payment Reminder Messages</div>
+              <div style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:16,marginBottom:20}}>
+                <p style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>One message per unpaid client. Copy and send individually on WeChat.</p>
+                {unpaid.length===0?(
+                  <div style={{color:"var(--green)",fontSize:11,fontWeight:600}}>✓ All clients have paid this week!</div>
+                ):(
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {unpaid.map(c=>{
+                      const price = plans.find(p=>p.name===c.plan)?.price||0;
+                      const lines = [
+                        `Hi ${c.name.split(" ")[0]}! 👋`,
+                        ``,
+                        `Just a reminder that your FIT IGNYTE payment is due.`,
+                        ``,
+                        `📋 Plan: ${c.plan}`,
+                        `💰 Amount: ¥${price}`,
+                        ``,
+                        `Please transfer before Monday so we can confirm your meals for next week.`,
+                        `Thank you! 🙏💪`,
+                      ].join("");
+                      return (
+                        <div key={c.id} style={{background:"var(--s3)",border:"1px solid var(--bdr)",borderRadius:6,padding:12}}>
+                          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                            <span style={{color:"#fff",fontWeight:600,fontSize:12}}>{c.name}</span>
+                            <PlanBadge planName={c.plan} plans={plans}/>
+                            <span style={{color:"#f87171",fontSize:11,fontWeight:600}}>¥{price}</span>
+                          </div>
+                          <pre style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:5,padding:10,fontSize:11,color:"#ccc",whiteSpace:"pre-wrap",wordBreak:"break-word",marginBottom:8,lineHeight:1.6}}>{lines}</pre>
+                          <button className="btn btn-g btn-sm" onClick={()=>{navigator.clipboard.writeText(lines);alert("Copied!");}}>📋 Copy</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* ── MSG 3: Delivery Confirmation per client ── */}
+              <div className="sec-title">🛵 Delivery Confirmation Messages</div>
+              <p style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>Send to each client when their delivery is on the way. Select a day first.</p>
+              <div className="tabs" style={{marginBottom:16}}>
+                {DAYS.map(d=><button key={d} className={`tab${mealDay===d?" on":""}`} onClick={()=>setMealDay(d)}>{d}</button>)}
+              </div>
+              {active.length===0?(
+                <div className="empty-state"><div className="empty-state-icon">💬</div><div className="empty-state-title">No active clients</div></div>
+              ):(
+                <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                  {active.map(c=>{
+                    const slots = meals[c.id]?.[mealDay]||[];
+                    if (!slots.length) return null;
+                    return slots.map(slot=>{
+                      const mealsList = (slot.meals||[]).filter(Boolean);
+                      const lines = [
+                        `🛵 Your FIT IGNYTE delivery is on the way!`,
+                        ``,
+                        `Hi ${c.name.split(" ")[0]}! 👋`,
+                        ``,
+                        `📦 Today's order:`,
+                        ...mealsList.map(m=>`  • ${m}`),
+                        slot.snack ? `  • Snack: ${slot.snack}` : "",
+                        slot.time  ? `⏰ ETA: ${slot.time}` : "",
+                        ``,
+                        `Enjoy your meal! 💪🔥`,
+                      ].filter(l=>l!==undefined);
+                      const text = lines.join("");
+                      return (
+                        <div key={slot.id} style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:14}}>
+                          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                            <span style={{color:"#fff",fontWeight:600,fontSize:12}}>{c.name}</span>
+                            <PlanBadge planName={c.plan} plans={plans}/>
+                            {slot.time&&<span className="bx bx-b">🕐 {slot.time}</span>}
+                          </div>
+                          <pre style={{background:"var(--s3)",border:"1px solid var(--bdr)",borderRadius:6,padding:12,fontSize:11,color:"#ccc",whiteSpace:"pre-wrap",wordBreak:"break-word",marginBottom:10,lineHeight:1.6}}>{text}</pre>
+                          <button className="btn btn-g btn-sm" onClick={()=>{navigator.clipboard.writeText(text);alert("Copied!");}}>📋 Copy</button>
+                        </div>
+                      );
+                    });
+                  })}
+                  {active.every(c=>!(meals[c.id]?.[mealDay]||[]).length)&&(
+                    <div style={{color:"var(--dim)",fontSize:11,padding:20,textAlign:"center"}}>No delivery slots added for {mealDay} yet.</div>
+                  )}
+                </div>
+              )}
             </>}
 
             {/* ═══ WORKFLOW ════════════════════════════ */}

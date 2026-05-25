@@ -554,95 +554,77 @@ export default function App() {
     } catch(e){ console.error(e); }
   };
 
-  // ── Download PDF delivery sheet
-  const printDelivery = async () => {
-    const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm");
-    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  // ── Print / Save as PDF delivery sheet (supports Chinese characters)
+  const printDelivery = () => {
     const dayName = deliveryDay;
     const dateStr = new Date().toLocaleDateString("en-GB");
+    const rows = Object.entries(delivery).flatMap(([time, slots]) =>
+      slots.map(({client:c, slot}, i) => ({
+        num: i+1,
+        time,
+        name: c.name,
+        plan: c.plan,
+        address: c.address || "TBC",
+        access: c.access || "—",
+        meals: (slot.meals||[]).filter(Boolean),
+        snack: slot.snack || "—",
+        note: slot.note || c.customizations || "—",
+      }))
+    );
 
-    // Header bar
-    doc.setFillColor(232, 52, 42);
-    doc.rect(0, 0, 297, 18, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.text("FIT IGNYTE — Delivery Sheet", 10, 12);
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.text(dayName + "  |  " + dateStr, 210, 12);
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Delivery Sheet — ${dayName}</title>
+  <style>
+    body { font-family: Arial, 'Microsoft YaHei', sans-serif; font-size: 11px; margin: 15px; color: #111; }
+    h1 { font-size: 18px; margin: 0 0 2px; }
+    h2 { font-size: 11px; color: #666; margin: 0 0 14px; font-weight: normal; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #111; color: #fff; padding: 6px 8px; text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .8px; }
+    td { padding: 7px 8px; border-bottom: 1px solid #e0e0e0; vertical-align: top; font-size: 10px; }
+    tr:nth-child(even) td { background: #f7f7f7; }
+    .time { font-weight: bold; color: #e8342a; white-space: nowrap; }
+    .name { font-weight: bold; }
+    .note { color: #b45309; font-style: italic; }
+    .meal { display: block; }
+    .check { width: 18px; height: 18px; border: 1.5px solid #aaa; display: inline-block; }
+    @media print { body { margin: 8px; } button { display: none; } }
+  </style>
+</head>
+<body>
+  <h1>🔥 FIT IGNYTE — Delivery Sheet</h1>
+  <h2>${dayName} &nbsp;·&nbsp; ${dateStr} &nbsp;·&nbsp; ${rows.length} stop${rows.length!==1?"s":""}</h2>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Time</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Notes</th><th>Done</th></tr>
+    </thead>
+    <tbody>
+      ${rows.map((r,i) => `
+        <tr>
+          <td>${i+1}</td>
+          <td class="time">${r.time}</td>
+          <td class="name">${r.name}</td>
+          <td>${r.plan}</td>
+          <td>${r.address}</td>
+          <td>${r.access}</td>
+          <td>${r.meals.map(m=>`<span class="meal">• ${m}</span>`).join("") || "—"}</td>
+          <td>${r.snack}</td>
+          <td class="note">${r.note}</td>
+          <td><span class="check"></span></td>
+        </tr>
+      `).join("")}
+    </tbody>
+  </table>
+</body>
+</html>`;
 
-    // Column definitions
-    const cols = [
-      { label:"#",        x:8,   w:8  },
-      { label:"Time",     x:16,  w:16 },
-      { label:"Client",   x:32,  w:30 },
-      { label:"Plan",     x:62,  w:25 },
-      { label:"Address",  x:87,  w:48 },
-      { label:"Access",   x:135, w:25 },
-      { label:"Meals",    x:160, w:68 },
-      { label:"Snack",    x:228, w:20 },
-      { label:"Notes",    x:248, w:30 },
-      { label:"DONE ✓",   x:278, w:18 },
-    ];
-
-    // Table header
-    let y = 24;
-    doc.setFillColor(20, 20, 20);
-    doc.rect(0, y, 297, 8, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(7);
-    doc.setFont("helvetica", "bold");
-    cols.forEach(c => doc.text(c.label, c.x, y + 5.5));
-
-    // Rows
-    y += 8;
-    let rowNum = 0;
-    Object.entries(delivery).forEach(([time, slots]) => {
-      slots.forEach(({client:cl, slot}) => {
-        rowNum++;
-        const mealsArr = (slot.meals||[]).filter(Boolean);
-        const note     = slot.note || cl.customizations || "—";
-        // Split meals into multiple lines
-        const mealLines = mealsArr.length ? mealsArr : ["—"];
-        const rowH = Math.max(10, mealLines.length * 6 + 4);
-
-        const isEven = rowNum % 2 === 0;
-        if (isEven) { doc.setFillColor(245,245,245); doc.rect(0, y, 297, rowH, "F"); }
-
-        doc.setTextColor(50,50,50);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(8);
-
-        doc.text(String(rowNum),                                    cols[0].x, y+6);
-        doc.setTextColor(232,52,42); doc.setFont("helvetica","bold");
-        doc.text(time,                                              cols[1].x, y+6);
-        doc.setTextColor(20,20,20);
-        doc.text(cl.name,                                           cols[2].x, y+6);
-        doc.setTextColor(80,80,80); doc.setFont("helvetica","normal");
-        doc.text(cl.plan||"—",                                      cols[3].x, y+6);
-        doc.text(doc.splitTextToSize(cl.address||"TBC", 46)[0],     cols[4].x, y+6);
-        doc.text(doc.splitTextToSize(cl.access||"—", 23)[0],        cols[5].x, y+6);
-        // Meals — one per line
-        mealLines.forEach((m, mi) => {
-          doc.setTextColor(20,20,20);
-          doc.text(doc.splitTextToSize(m, 66)[0], cols[6].x, y + 6 + mi * 6);
-        });
-        doc.setTextColor(80,80,80);
-        doc.text(slot.snack||"—",                                   cols[7].x, y+6);
-        doc.setTextColor(180,120,0);
-        doc.text(doc.splitTextToSize(note, 28)[0],                  cols[8].x, y+6);
-        // Done checkbox — bigger and clearer
-        doc.setDrawColor(100,100,100);
-        doc.setLineWidth(0.5);
-        doc.rect(cols[9].x, y+2, 10, 10);
-
-        y += rowH;
-        if (y > 195) { doc.addPage(); y = 10; }
-      });
-    });
-
-    doc.save("delivery-" + dayName.toLowerCase() + ".pdf");
+    const w = window.open("", "_blank");
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 600);
   };
 
   const CHECKLIST = [
@@ -1212,7 +1194,7 @@ export default function App() {
                   });
                   lines.push("Reply with your choices by Friday! 💪");
                   lines.push("Any customizations? Let us know 🙏");
-                  const text = lines.join("");
+                  const text = lines.join("\n");
                   return (
                     <div>
                       <pre style={{background:"var(--s3)",border:"1px solid var(--bdr)",borderRadius:6,padding:14,fontSize:11,color:"#ccc",whiteSpace:"pre-wrap",wordBreak:"break-word",marginBottom:12,lineHeight:1.6}}>{text}</pre>
@@ -1286,7 +1268,7 @@ export default function App() {
                         ``,
                         `Enjoy your meal! 💪🔥`,
                       ].filter(l=>l!==undefined);
-                      const text = lines.join("");
+                      const text = lines.join("\n");
                       return (
                         <div key={slot.id} style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:14}}>
                           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>

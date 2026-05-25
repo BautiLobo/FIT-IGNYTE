@@ -723,11 +723,8 @@ export default function App() {
                 </div>
               )}
               {tab==="delivery"&&(
-                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                  <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
-                    {DAYS.map(d=><button key={d} className={`tab${deliveryDay===d?" on":""}`} onClick={()=>setDeliveryDay(d)}>{d.slice(0,3)}</button>)}
-                  </div>
-                  <button className="btn btn-r btn-sm" onClick={()=>printDelivery()}>⬇ PDF</button>
+                <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
+                  {DAYS.map(d=><button key={d} className={`tab${deliveryDay===d?" on":""}`} onClick={()=>setDeliveryDay(d)}>{d.slice(0,3)}</button>)}
                 </div>
               )}
             </div>

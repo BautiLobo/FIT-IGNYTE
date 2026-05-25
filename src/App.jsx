@@ -723,11 +723,11 @@ export default function App() {
                 </div>
               )}
               {tab==="delivery"&&(
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
                   <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
                     {DAYS.map(d=><button key={d} className={`tab${deliveryDay===d?" on":""}`} onClick={()=>setDeliveryDay(d)}>{d.slice(0,3)}</button>)}
                   </div>
-                  <button className="btn btn-g btn-sm" onClick={()=>printDelivery()}>⬇ PDF</button>
+                  <button className="btn btn-r btn-sm" onClick={()=>printDelivery()}>⬇ PDF</button>
                 </div>
               )}
             </div>
@@ -995,8 +995,11 @@ export default function App() {
 
             {/* ═══ DELIVERY ═══════════════════════════ */}
             {tab==="delivery"&&<>
-              <div className="alert-bar" style={{background:"#0d1a0d",borderColor:"#14532d",color:"#86efac"}}>
-                🛵 Sorted by delivery time. Each slot shown separately.
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
+                <div className="alert-bar" style={{background:"#0d1a0d",borderColor:"#14532d",color:"#86efac",margin:0,flex:1}}>
+                  🛵 Sorted by delivery time.
+                </div>
+                <button className="btn btn-r" onClick={()=>printDelivery()} style={{flexShrink:0}}>⬇ Download PDF</button>
               </div>
               {Object.keys(delivery).length===0?(
                 <div className="empty-state"><div className="empty-state-icon">🛵</div><div className="empty-state-title">No deliveries scheduled</div><div className="empty-state-sub">Add delivery slots in Meal Selections</div></div>

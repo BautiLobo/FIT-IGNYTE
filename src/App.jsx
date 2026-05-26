@@ -578,27 +578,41 @@ export default function App() {
   <meta charset="utf-8"/>
   <title>Delivery Sheet — ${dayName}</title>
   <style>
-    body { font-family: Arial, 'Microsoft YaHei', sans-serif; font-size: 11px; margin: 15px; color: #111; }
-    h1 { font-size: 18px; margin: 0 0 2px; }
-    h2 { font-size: 11px; color: #666; margin: 0 0 14px; font-weight: normal; }
-    table { width: 100%; border-collapse: collapse; }
-    th { background: #111; color: #fff; padding: 6px 8px; text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .8px; }
-    td { padding: 7px 8px; border-bottom: 1px solid #e0e0e0; vertical-align: top; font-size: 10px; }
+    body { font-family: Arial, 'Microsoft YaHei', sans-serif; font-size: 9px; margin: 8px; color: #111; }
+    h1 { font-size: 14px; margin: 0 0 2px; }
+    h2 { font-size: 9px; color: #666; margin: 0 0 10px; font-weight: normal; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    col.c0  { width: 3%; }
+    col.c1  { width: 6%; }
+    col.c2  { width: 9%; }
+    col.c3  { width: 9%; }
+    col.c4  { width: 16%; }
+    col.c5  { width: 8%; }
+    col.c6  { width: 30%; }
+    col.c7  { width: 7%; }
+    col.c8  { width: 9%; }
+    col.c9  { width: 3%; }
+    th { background: #111; color: #fff; padding: 4px 5px; text-align: left; font-size: 8px; text-transform: uppercase; letter-spacing: .5px; }
+    td { padding: 4px 5px; border-bottom: 1px solid #e0e0e0; vertical-align: top; font-size: 8.5px; word-wrap: break-word; }
     tr:nth-child(even) td { background: #f7f7f7; }
     .time { font-weight: bold; color: #e8342a; white-space: nowrap; }
     .name { font-weight: bold; }
     .note { color: #b45309; font-style: italic; }
-    .meal { display: block; }
-    .check { width: 18px; height: 18px; border: 1.5px solid #aaa; display: inline-block; }
-    @media print { body { margin: 8px; } button { display: none; } }
+    .meal { display: block; line-height: 1.4; }
+    .check { width: 14px; height: 14px; border: 1.5px solid #aaa; display: inline-block; }
+    @media print { body { margin: 5px; } button { display: none; } }
   </style>
 </head>
 <body>
   <h1>🔥 FIT IGNYTE — Delivery Sheet</h1>
   <h2>${dayName} &nbsp;·&nbsp; ${dateStr} &nbsp;·&nbsp; ${rows.length} stop${rows.length!==1?"s":""}</h2>
   <table>
+    <colgroup>
+      <col class="c0"><col class="c1"><col class="c2"><col class="c3"><col class="c4">
+      <col class="c5"><col class="c6"><col class="c7"><col class="c8"><col class="c9">
+    </colgroup>
     <thead>
-      <tr><th>#</th><th>Time</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Notes</th><th>Done</th></tr>
+      <tr><th>#</th><th>Time</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Notes</th><th>✓</th></tr>
     </thead>
     <tbody>
       ${rows.map((r,i) => `
@@ -620,11 +634,13 @@ export default function App() {
 </body>
 </html>`;
 
-    const w = window.open("", "_blank");
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 600);
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = "delivery-" + dayName.toLowerCase() + ".html";
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const CHECKLIST = [

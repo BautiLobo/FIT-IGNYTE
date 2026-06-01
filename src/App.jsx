@@ -9,6 +9,18 @@ import {
 } from "./lib/supabase";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const BATCHES = ["09:45", "11:00", "12:00", "16:00", "16:45", "17:45"];
+
+function getBatch(time) {
+  if (!time) return BATCHES[BATCHES.length - 1];
+  // Find the last batch that is <= delivery time
+  let assigned = BATCHES[0];
+  for (const b of BATCHES) {
+    if (time >= b) assigned = b;
+    else break;
+  }
+  return assigned;
+}
 const PLAN_COLORS = ["#38BDF8","#A78BFA","#F472B6","#FBBF24","#FB923C","#F87171","#34D399","#60A5FA","#E879F9","#FCD34D"];
 const uid = () => Math.random().toString(36).slice(2, 9);
 
@@ -360,27 +372,58 @@ export default function App() {
     return l;
   }, [clients,filterSt,search]);
 
-  // Kitchen: aggregate all meals across all slots for a given day
+  // Extract size tag from plan name: "Big x 2" → "BIG", "Small x 1" → "SMALL", "Vegetarian x 1" → "VEG"
+  const getPlanSize = (planName) => {
+    if (!planName) return "";
+    const lower = planName.toLowerCase();
+    if (lower.includes("big")) return "BIG";
+    if (lower.includes("small")) return "SMALL";
+    if (lower.includes("vegetarian")) return "VEG";
+    return "";
+  };
+
+  // Kitchen: aggregate meals by batch + size for each day
   const kitchen = useMemo(() => {
     const d = {};
     DAYS.forEach(day => {
-      const map={}, who={};
+      // key: "09:45__Minced Beef Bowl__BIG" → { count, who }
+      const batches = {};
+      BATCHES.forEach(b => { batches[b] = {}; });
+
       active.forEach(c => {
         const slots = meals[c.id]?.[day] || [];
+        const size = getPlanSize(c.plan);
+        const name = c.name.split(" ")[0];
+
         slots.forEach(slot => {
-          (slot.meals||[]).forEach(m => {
-            if (m && m!=="—") { map[m]=(map[m]||0)+1; (who[m]=who[m]||[]).push(c.name.split(" ")[0]); }
+          const batch = getBatch(slot.time || "");
+
+          (slot.meals||[]).filter(m => m && m !== "—").forEach(m => {
+            const key = m + (size ? "__" + size : "");
+            if (!batches[batch][key]) batches[batch][key] = { count: 0, who: [], meal: m, size };
+            batches[batch][key].count++;
+            batches[batch][key].who.push(name);
           });
-          if (slot.snack && slot.snack!=="—") {
-            map[slot.snack]=(map[slot.snack]||0)+1;
-            (who[slot.snack]=who[slot.snack]||[]).push(c.name.split(" ")[0]);
+          if (slot.snack && slot.snack !== "—") {
+            const key = slot.snack + (size ? "__" + size : "");
+            if (!batches[batch][key]) batches[batch][key] = { count: 0, who: [], meal: slot.snack, size };
+            batches[batch][key].count++;
+            batches[batch][key].who.push(name);
           }
         });
       });
-      d[day]=Object.entries(map).sort((a,b)=>b[1]-a[1]).map(([meal,count])=>({meal,count,who:who[meal]}));
+
+      // Convert to sorted array per batch
+      d[day] = BATCHES.map(b => ({
+        time: b,
+        items: Object.values(batches[b])
+          .sort((a, bv) => bv.count - a.count)
+          .map(({ meal, size, count, who }) => ({ meal, size, count, who })),
+        total: Object.values(batches[b]).reduce((s, v) => s + v.count, 0),
+      })).filter(b => b.items.length > 0);
     });
     return d;
-  }, [active, meals]);
+  }, [active, meals, plans]);
 
   // Delivery: group by time, filtered by selected day
   const delivery = useMemo(() => {
@@ -642,6 +685,102 @@ export default function App() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // ── Print Kitchen Prep sheet
+  const printKitchen = async () => {
+    const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm");
+    const dayName = kitDay;
+    const dateStr = new Date().toLocaleDateString("en-GB");
+    const batches = kitchen[kitDay] || [];
+    const allItems = {};
+    batches.forEach(b => b.items.forEach(({meal,size,count}) => {
+      const key = meal + (size ? "__" + size : "");
+      allItems[key] = (allItems[key]||0) + count;
+    }));
+    const totalPortions = batches.reduce((s,b)=>s+b.total,0);
+
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const W = 210;
+    let y = 0;
+
+    // Header
+    doc.setFillColor(232, 52, 42);
+    doc.rect(0, 0, W, 18, "F");
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(14); doc.setFont("helvetica","bold");
+    doc.text("FIT IGNYTE — Kitchen Prep", 10, 12);
+    doc.setFontSize(9); doc.setFont("helvetica","normal");
+    doc.text(dayName + "  |  " + dateStr + "  |  " + totalPortions + " portions  |  " + batches.length + " batches", 10, 17);
+    y = 24;
+
+    const sizeColor = (size) => {
+      if (size === "BIG")   return [251,146,60];
+      if (size === "VEG")   return [74,222,128];
+      if (size === "SMALL") return [96,165,250];
+      return [150,150,150];
+    };
+    const sizeBg = (size) => {
+      if (size === "BIG")   return [67,20,7];
+      if (size === "VEG")   return [5,46,22];
+      if (size === "SMALL") return [12,26,46];
+      return [30,30,30];
+    };
+
+    // Batches
+    batches.forEach(batch => {
+      if (y > 270) { doc.addPage(); y = 10; }
+      // Batch header
+      doc.setFillColor(232,52,42);
+      doc.rect(0, y, W, 8, "F");
+      doc.setTextColor(255,255,255);
+      doc.setFontSize(10); doc.setFont("helvetica","bold");
+      doc.text("BATCH " + batch.time, 10, y+5.5);
+      doc.text(batch.total + " portion" + (batch.total!==1?"s":""), W-10, y+5.5, {align:"right"});
+      y += 8;
+
+      batch.items.forEach(({meal,size,count,who},i) => {
+        if (y > 275) { doc.addPage(); y = 10; }
+        const rowH = 8;
+        if (i%2===0) { doc.setFillColor(245,245,245); doc.rect(0,y,W,rowH,"F"); }
+        // Count badge
+        doc.setFillColor(232,52,42);
+        doc.rect(8, y+1, 10, 6, "F");
+        doc.setTextColor(255,255,255);
+        doc.setFontSize(9); doc.setFont("helvetica","bold");
+        doc.text(String(count), 13, y+5.5, {align:"center"});
+        // Meal name
+        doc.setTextColor(20,20,20);
+        doc.setFont("helvetica","normal");
+        doc.text(doc.splitTextToSize(meal, 100)[0], 22, y+5.5);
+        // Size badge
+        if (size) {
+          const bg = sizeBg(size); const fg = sizeColor(size);
+          doc.setFillColor(bg[0],bg[1],bg[2]);
+          doc.rect(124, y+1.5, 14, 5, "F");
+          doc.setTextColor(fg[0],fg[1],fg[2]);
+          doc.setFontSize(7); doc.setFont("helvetica","bold");
+          doc.text(size, 131, y+5.2, {align:"center"});
+        }
+        // Who
+        doc.setTextColor(150,150,150);
+        doc.setFontSize(7); doc.setFont("helvetica","normal");
+        doc.text("→ " + who.join(", "), 140, y+5.5);
+        y += rowH;
+      });
+      y += 4;
+    });
+
+    doc.save("kitchen-" + dayName.toLowerCase() + ".pdf");
+  };
+
+  const _sizeStyle = (size) => {
+    if (size === "BIG") return "background:#431407;color:#fb923c;";
+    if (size === "VEG") return "background:#052e16;color:#4ade80;";
+    if (size === "SMALL") return "background:#0c1a2e;color:#60a5fa;";
+    return "";
+  };
+
+
 
   const CHECKLIST = [
     {k:"f1",day:"FRIDAY",   t:"Send WeChat to all clients — confirm next week attendance"},
@@ -939,55 +1078,91 @@ export default function App() {
             {tab==="kitchen"&&<>
               {/* Summary bar */}
               {(()=>{
-                const totalPortions = kitchen[kitDay]?.reduce((s,r)=>s+r.count,0)||0;
+                const totalPortions = kitchen[kitDay]?.reduce((s,b)=>s+b.total,0)||0;
                 const clientsToday  = active.filter(c=>(meals[c.id]?.[kitDay]||[]).length>0).length;
                 const alertCount    = active.filter(c=>c.customizations||c.allergies).length;
                 return (
-                  <div style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:"14px 18px",marginBottom:14,display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
-                    <div>
-                      <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Start Cooking At</div>
-                      <input
-                        className="cook-time-inp"
-                        type="time"
-                        value={cookTimes[kitDay]||""}
-                        onChange={e=>setCookTimes(p=>({...p,[kitDay]:e.target.value}))}
-                        placeholder="--:--"
-                        style={{fontSize:20,fontFamily:"'Rajdhani',sans-serif",fontWeight:700,color:"var(--red)",background:"transparent",border:"none",outline:"none",padding:0,width:90}}
-                      />
+                  <div style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:"14px 18px",marginBottom:14,display:"flex",alignItems:"center",gap:20,flexWrap:"wrap",justifyContent:"space-between"}}>
+                    <div style={{display:"flex",gap:20,alignItems:"center",flexWrap:"wrap"}}>
+                      <div>
+                        <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Total Portions</div>
+                        <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:700,color:"var(--blue)"}}>{totalPortions}</div>
+                      </div>
+                      <div style={{width:1,height:36,background:"var(--bdr)",flexShrink:0}}/>
+                      <div>
+                        <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Clients Today</div>
+                        <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:700,color:"var(--green)"}}>{clientsToday}</div>
+                      </div>
+                      <div style={{width:1,height:36,background:"var(--bdr)",flexShrink:0}}/>
+                      <div>
+                        <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Batches</div>
+                        <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:700,color:"var(--amber)"}}>{kitchen[kitDay]?.length||0}</div>
+                      </div>
+                      <div style={{width:1,height:36,background:"var(--bdr)",flexShrink:0}}/>
+                      <div>
+                        <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Allergy Alerts</div>
+                        <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:700,color:alertCount?"var(--amber)":"var(--dim)"}}>{alertCount}{alertCount>0?" ⚠️":""}</div>
+                      </div>
                     </div>
-                    <div style={{width:1,height:36,background:"var(--bdr)",flexShrink:0}}/>
-                    <div>
-                      <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Total Portions</div>
-                      <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:700,color:"var(--blue)"}}>{totalPortions}</div>
-                    </div>
-                    <div style={{width:1,height:36,background:"var(--bdr)",flexShrink:0}}/>
-                    <div>
-                      <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Clients Today</div>
-                      <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:700,color:"var(--green)"}}>{clientsToday}</div>
-                    </div>
-                    <div style={{width:1,height:36,background:"var(--bdr)",flexShrink:0}}/>
-                    <div>
-                      <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Allergy Alerts</div>
-                      <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:700,color:alertCount?"var(--amber)":"var(--dim)"}}>{alertCount}{alertCount>0?" ⚠️":""}</div>
-                    </div>
+                    <button className="btn btn-r btn-sm" onClick={()=>printKitchen()}>⬇ Print / PDF</button>
                   </div>
                 );
               })()}
 
-              <div className="kd-hd">
-                <span>{kitDay.toUpperCase()}</span>
-                <span style={{fontSize:12,opacity:.85}}>{kitchen[kitDay]?.reduce((s,r)=>s+r.count,0)||0} total portions</span>
-              </div>
-              {(kitchen[kitDay]||[]).map(({meal,count,who},i)=>(
-                <div className="kr" key={i} style={{background:i%2===0?"var(--s2)":"var(--s1)"}}>
-                  <div className="kc">{count}</div>
-                  <div className="km">{meal}</div>
-                  <div className="kclients">→ {who.join(", ")}</div>
+              {/* Batches */}
+              {(kitchen[kitDay]||[]).length===0?(
+                <div style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:20,textAlign:"center",color:"var(--dim)",fontSize:11}}>
+                  No meal selections for {kitDay} yet
                 </div>
-              ))}
-              {(!kitchen[kitDay]||kitchen[kitDay].length===0)&&<div className="kr" style={{justifyContent:"center",color:"var(--dim)"}}>No selections for this day</div>}
+              ):(
+                (kitchen[kitDay]||[]).map((batch,bi)=>(
+                  <div key={batch.time} style={{marginBottom:16}}>
+                    <div className="kd-hd" style={{borderRadius:"6px 6px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <span>🔴 BATCH {batch.time}</span>
+                      <span style={{fontSize:12,opacity:.85}}>{batch.total} portion{batch.total!==1?"s":""}</span>
+                    </div>
+                    {batch.items.map(({meal,size,count,who},i)=>(
+                      <div className="kr" key={i} style={{background:i%2===0?"var(--s2)":"var(--s1)"}}>
+                        <div className="kc">{count}</div>
+                        <div className="km">{meal}</div>
+                        {size&&<span style={{background:size==="BIG"?"#431407":size==="VEG"?"#052e16":"#0c1a2e",color:size==="BIG"?"#fb923c":size==="VEG"?"#4ade80":"#60a5fa",fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:4,marginLeft:8,flexShrink:0}}>{size}</span>}
+                        <div className="kclients">→ {who.join(", ")}</div>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
 
-              <div className="sec-title" style={{marginTop:20}}>Allergy & Customization Alerts</div>
+              {/* Day total summary */}
+              {(kitchen[kitDay]||[]).length>0&&(()=>{
+                const allItems = {};
+                (kitchen[kitDay]||[]).forEach(b => b.items.forEach(({meal,size,count}) => {
+                  const key = meal + (size ? "__" + size : "");
+                  allItems[key] = (allItems[key]||0) + count;
+                }));
+                return (
+                  <div style={{marginTop:8,marginBottom:20}}>
+                    <div style={{background:"#0f0f0f",border:"1px solid var(--bdr)",borderRadius:"6px 6px 0 0",padding:"9px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <span style={{fontFamily:"'Rajdhani',sans-serif",fontSize:14,fontWeight:700,letterSpacing:1,color:"var(--dim)"}}>DAY TOTAL — {kitDay.toUpperCase()}</span>
+                      <span style={{fontSize:11,color:"var(--dim)"}}>{Object.values(allItems).reduce((s,v)=>s+v,0)} portions</span>
+                    </div>
+                    {Object.entries(allItems).sort((a,b)=>b[1]-a[1]).map(([key,count],i)=>{
+                      const parts = key.split("__");
+                      const meal = parts[0];
+                      const size = parts[1] || "";
+                      return (
+                        <div className="kr" key={i} style={{background:i%2===0?"var(--s2)":"var(--s1)"}}>
+                          <div className="kc" style={{background:"#333",color:"#fff"}}>{count}</div>
+                          <div className="km" style={{color:"#aaa"}}>{meal}</div>
+                          {size&&<span style={{background:size==="BIG"?"#431407":size==="VEG"?"#052e16":"#0c1a2e",color:size==="BIG"?"#fb923c":size==="VEG"?"#4ade80":"#60a5fa",fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:4,marginLeft:8,flexShrink:0}}>{size}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              <div className="sec-title">Allergy & Customization Alerts</div>
               {active.filter(c=>c.customizations||c.allergies).length===0?(
                 <div className="tbl-wrap"><div style={{padding:16,textAlign:"center",color:"var(--dim)",fontSize:11}}>No alerts</div></div>
               ):(

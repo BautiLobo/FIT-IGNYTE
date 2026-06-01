@@ -482,36 +482,41 @@ export default function App() {
   };
 
   const updateSlot = async (clientId, day, slotId, field, value) => {
-    setMeals(p => {
-      const slots = (p[clientId]?.[day]||[]).map(s =>
-        s.id === slotId ? {...s, [field]: value} : s
-      );
-      return { ...p, [clientId]: { ...p[clientId], [day]: slots } };
-    });
-    // Persist — save the entire day's slots as JSON in the note field
-    // We use a special encoding via upsertMealSelection
+    // Calculate updated slots BEFORE setMeals (state not updated yet)
+    const updated = (meals[clientId]?.[day]||[]).map(s =>
+      s.id === slotId ? {...s, [field]: value} : s
+    );
+    setMeals(p => ({
+      ...p,
+      [clientId]: { ...p[clientId], [day]: updated }
+    }));
     try {
-      const updated = meals[clientId]?.[day]?.map(s =>
-        s.id === slotId ? {...s, [field]: value} : s
-      ) || [];
-      // Store serialized slots in meal1 field as JSON, meal2/3 unused
       await upsertMealSelection(clientId, day, {
         meal1: JSON.stringify(updated),
         meal2: "—", meal3: "—", snack: "", note: "__multi__"
       });
+      flash();
     } catch(e){ console.error(e); }
   };
 
   const updateSlotMeal = async (clientId, day, slotId, mealIndex, value) => {
-    setMeals(p => {
-      const slots = (p[clientId]?.[day]||[]).map(s => {
-        if (s.id !== slotId) return s;
-        const newMeals = [...(s.meals||[])];
-        newMeals[mealIndex] = value;
-        return {...s, meals: newMeals};
-      });
-      return { ...p, [clientId]: { ...p[clientId], [day]: slots } };
+    const updated = (meals[clientId]?.[day]||[]).map(s => {
+      if (s.id !== slotId) return s;
+      const newMeals = [...(s.meals||[])];
+      newMeals[mealIndex] = value;
+      return {...s, meals: newMeals};
     });
+    setMeals(p => ({
+      ...p,
+      [clientId]: { ...p[clientId], [day]: updated }
+    }));
+    try {
+      await upsertMealSelection(clientId, day, {
+        meal1: JSON.stringify(updated),
+        meal2: "—", meal3: "—", snack: "", note: "__multi__"
+      });
+      flash();
+    } catch(e){ console.error(e); }
   };
 
   const addMealToSlot = (clientId, day, slotId) => {

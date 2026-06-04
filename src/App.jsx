@@ -257,6 +257,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});
   const [draggingMeal, setDraggingMeal] = useState(null);
   const [dragOver,     setDragOver]     = useState(null);
+  const [extraRows,    setExtraRows]    = useState(0);
 
   const allMeals = useMemo(()=>{
     const seen=new Set(); const meals=[]; const snacks=[];
@@ -279,8 +280,10 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     if(!draggingMeal) return;
     const isSnack=slot==="Snack";
     const si=isSnack?null:parseInt(slot.replace("Meal ",""))-1;
-    const dm=menu[day]||{meals:["","",""],snack:""};
-    const newMeals=[...(dm.meals||["","",""])];
+    const dm=menu[day]||{meals:[],snack:""};
+    const newMeals=[...(dm.meals||[])];
+    // Extend array if needed
+    while(!isSnack && newMeals.length<=si) newMeals.push("");
     if(isSnack){upsertMenuDay(day,{meals:newMeals,snack:draggingMeal});}
     else{newMeals[si]=draggingMeal;upsertMenuDay(day,{meals:newMeals,snack:dm.snack||""});}
     setDraggingMeal(null); setDragOver(null);
@@ -337,12 +340,14 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
               {DAYS.map(d=><th key={d} style={{padding:"5px 4px",color:"var(--red)",fontSize:9,fontWeight:700,textAlign:"center"}}>{d.slice(0,3)}</th>)}
             </tr></thead>
             <tbody>
-              {["Meal 1","Meal 2","Meal 3","Snack"].map((slot,si)=>(
+              {[...["Meal 1","Meal 2","Meal 3"],...Array.from({length:extraRows},(_,i)=>`Meal ${4+i}`),"Snack"].map((slot,si)=>{
+                const isSnack=slot==="Snack";
+                const mealIdx=isSnack?null:parseInt(slot.replace("Meal ",""))-1;
+                return (
                 <tr key={slot}>
                   <td style={{padding:"3px 6px",color:"var(--dim)",fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>{slot}</td>
                   {DAYS.map(day=>{
-                    const isSnack=slot==="Snack";
-                    const val=isSnack?menu[day]?.snack:(menu[day]?.meals?.[si]||"");
+                    const val=isSnack?menu[day]?.snack:(menu[day]?.meals?.[mealIdx]||"");
                     const isOver=dragOver===`${day}-${slot}`;
                     return (
                       <td key={day}
@@ -354,7 +359,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                           style={{background:isOver?"rgba(232,52,42,0.15)":val?"var(--s2)":"var(--s3)",border:`1px ${isOver?"solid":"dashed"} ${isOver?"var(--red)":val?"var(--bdr)":"#333"}`,borderRadius:5,padding:"6px 5px",minHeight:56,fontSize:9,color:val?"#ccc":"var(--dim)",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}}>
                           <span style={{width:"100%",textAlign:"center",lineHeight:1.3,wordBreak:"break-word"}}>{val||<span style={{fontSize:8,color:"#333"}}>Drop</span>}</span>
                           {val&&<span style={{fontSize:8,color:"var(--dim)",cursor:"pointer",marginTop:2}}
-                            onClick={()=>{const nm=[...(menu[day]?.meals||["","",""])];if(isSnack){upsertMenuDay(day,{meals:nm,snack:""});}else{nm[si]="";upsertMenuDay(day,{meals:nm,snack:menu[day]?.snack||""});}}}>
+                            onClick={()=>{const nm=[...(menu[day]?.meals||[])];if(isSnack){upsertMenuDay(day,{meals:nm,snack:""});}else{nm[mealIdx]="";upsertMenuDay(day,{meals:nm.filter(Boolean),snack:menu[day]?.snack||""});}}}>
                             ✕
                           </span>}
                         </div>
@@ -362,7 +367,20 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                     );
                   })}
                 </tr>
-              ))}
+                );
+              })}
+              <tr>
+                <td colSpan={6} style={{padding:"8px 4px"}}>
+                  <div style={{display:"flex",gap:8}}>
+                    <button className="btn btn-g btn-sm" onClick={()=>setExtraRows(r=>r+1)} style={{flex:1}}>
+                      + Add Meal Row
+                    </button>
+                    {extraRows>0&&<button className="btn btn-sm" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>setExtraRows(r=>r-1)}>
+                      − Remove
+                    </button>}
+                  </div>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>

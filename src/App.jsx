@@ -410,6 +410,8 @@ export default function App() {
   const [checks,     setChecks]     = useState({});
   // cookTimes: { Monday: "10:00", Tuesday: "09:30", ... }
   const [cookTimes,  setCookTimes]  = useState({});
+  const [pdfUrls,    setPdfUrls]    = useState({en:"", cn:""});
+  const [pdfUploading,setPdfUploading]= useState({en:false, cn:false});
   // customMealItems: extra meals added manually
   const [customItems, setCustomItems] = useState([]);
 
@@ -1083,7 +1085,8 @@ export default function App() {
                   {active.length===0?(
                     <div className="empty-state"><div className="empty-state-icon">👥</div><div className="empty-state-title">No active clients</div><div className="empty-state-sub">Add your first client in the Clients tab</div></div>
                   ):(
-                    <table><thead><tr><th>Client</th><th>Plan</th><th>Paid</th><th>Renewal</th></tr></thead>
+                    <div style={{maxHeight:400,overflowY:"auto"}}>
+                    <table><thead style={{position:"sticky",top:0,background:"var(--s2)",zIndex:1}}><tr><th>Client</th><th>Plan</th><th>Paid</th><th>Renewal</th></tr></thead>
                     <tbody>{active.map(c=>(
                       <tr key={c.id}>
                         <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
@@ -1092,6 +1095,7 @@ export default function App() {
                         <td><RenewalBadge c={c}/></td>
                       </tr>
                     ))}</tbody></table>
+                    </div>
                   )}
                 </div>
                 <div className="panel" style={{padding:14}}>
@@ -1115,6 +1119,46 @@ export default function App() {
                     Total LTV: <strong style={{color:"var(--amber)"}}>¥{clients.reduce((s,c)=>s+(c.ltv||0),0)}</strong>
                   </div>
                 </div>
+              </div>
+
+              {/* PDF Brochures */}
+              <div className="sec-title" style={{marginTop:20}}>📄 Brochures</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:8}}>
+                {[["en","FIT IGNYTE — English","🇬🇧"],["cn","FIT IGNYTE — 中文","🇨🇳"]].map(([lang,label,flag])=>(
+                  <div key={lang} style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:10,padding:16}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"#fff",marginBottom:4}}>{flag} {label}</div>
+                    <div style={{fontSize:10,color:"var(--muted)",marginBottom:12}}>
+                      {pdfUrls[lang] ? "✅ Uploaded" : "No PDF uploaded yet"}
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <label style={{flex:1}}>
+                        <input type="file" accept="application/pdf" style={{display:"none"}}
+                          onChange={async e=>{
+                            const file = e.target.files?.[0];
+                            if(!file) return;
+                            setPdfUploading(p=>({...p,[lang]:true}));
+                            try {
+                              const {uploadDocument} = await import("./lib/supabase");
+                              const url = await uploadDocument(file, `brochure-${lang}.pdf`);
+                              setPdfUrls(p=>({...p,[lang]:url}));
+                              flash();
+                            } catch(err){ console.error(err); alert("Upload failed"); }
+                            setPdfUploading(p=>({...p,[lang]:false}));
+                          }}
+                        />
+                        <span className="btn btn-g btn-sm" style={{display:"block",textAlign:"center",cursor:"pointer"}}>
+                          {pdfUploading[lang] ? "⏳ Uploading..." : "⬆ Upload PDF"}
+                        </span>
+                      </label>
+                      {pdfUrls[lang]&&(
+                        <a href={pdfUrls[lang]} target="_blank" rel="noreferrer"
+                          className="btn btn-r btn-sm" style={{textDecoration:"none",display:"flex",alignItems:"center",gap:4}}>
+                          ⬇ Download
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </>}
 

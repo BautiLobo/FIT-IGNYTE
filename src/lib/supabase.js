@@ -1,207 +1,144 @@
 // lib/supabase.js
-// ─────────────────────────────────────────────────────────────────────────────
-//  Replace the two values below with your actual Supabase project credentials.
-//  Find them in: Supabase Dashboard → Project Settings → API
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL  = "https://ychpcxloiwelyrwcsebf.supabase.co";   // ← replace
-const SUPABASE_ANON = "sb_publishable_w005PkNGK7HYgPVU-Ps6-A_zWbb-MZj";                   // ← replace
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY;
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// ─── PLANS ────────────────────────────────────────────────────────────────────
+const check = ({ data, error }, label) => {
+  if (error) { console.error(`[${label}]`, error.message); throw error; }
+  return data;
+};
 
+// ── PLANS ────────────────────────────────────────────────────
 export async function getPlans() {
-  const { data, error } = await supabase.from("plans").select("*").order("price");
-  if (error) throw error;
-  return data;
+  return check(await supabase.from("plans").select("*").order("price"), "getPlans");
 }
-
 export async function upsertPlan(plan) {
-  const { data, error } = await supabase.from("plans").upsert(plan).select().single();
-  if (error) throw error;
-  return data;
+  return check(await supabase.from("plans").upsert(plan).select().single(), "upsertPlan");
 }
-
 export async function deletePlan(id) {
-  const { error } = await supabase.from("plans").delete().eq("id", id);
-  if (error) throw error;
+  check(await supabase.from("plans").delete().eq("id", id), "deletePlan");
 }
 
-// ─── CLIENTS ──────────────────────────────────────────────────────────────────
-
+// ── CLIENTS ──────────────────────────────────────────────────
 export async function getClients() {
-  const { data, error } = await supabase.from("clients").select("*").order("id");
-  if (error) throw error;
-  // Map snake_case DB columns → camelCase used in the app
-  return data.map(dbToClient);
+  const data = check(await supabase.from("clients").select("*").order("id"), "getClients");
+  return (data || []).map(c => ({
+    ...c,
+    startDate:      c.start_date      || "",
+    expiryDate:     c.expiry_date     || "",
+    deliveryTime:   c.delivery_time   || "",
+    amountPaid:     c.amount_paid     || 0,
+    acqChannel:     c.acq_channel     || "",
+    wechatOpenid:   c.wechat_openid   || "",
+    statusNote:     c.status_note     || "",
+    pausedUntil:    c.paused_until    || null,
+  }));
 }
-
 export async function upsertClient(client) {
-  const row = clientToDb(client);
-  const { data, error } = await supabase
-    .from("clients")
-    .upsert(row, { onConflict: "id" })
-    .select()
-    .single();
-  if (error) throw error;
-  return dbToClient(data);
-}
-
-export async function deleteClient(id) {
-  const { error } = await supabase.from("clients").delete().eq("id", id);
-  if (error) throw error;
-}
-
-// ─── MENU ─────────────────────────────────────────────────────────────────────
-
-export async function getMenu() {
-  const { data, error } = await supabase.from("menu").select("*");
-  if (error) throw error;
-  // Convert array of rows → { Monday: { meals:[...], snack }, ... }
-  const menu = {};
-  for (const row of data) {
-    menu[row.day] = {
-      meals: [row.meal1, row.meal2, row.meal3].filter(Boolean),
-      snack: row.snack,
-    };
-  }
-  return menu;
-}
-
-export async function updateMenuDay(day, { meal1, meal2, meal3, snack }) {
-  const { error } = await supabase
-    .from("menu")
-    .update({ meal1, meal2, meal3, snack })
-    .eq("day", day);
-  if (error) throw error;
-}
-
-// ─── MEAL SELECTIONS ──────────────────────────────────────────────────────────
-
-export async function getMealSelections() {
-  const { data, error } = await supabase.from("meal_selections").select("*");
-  if (error) throw error;
-  // Convert rows → { [clientId]: { Monday: { meal1, meal2, snack, note }, ... } }
-  const selections = {};
-  for (const row of data) {
-    if (!selections[row.client_id]) selections[row.client_id] = {};
-    selections[row.client_id][row.day] = {
-      meal1: row.meal1,
-      meal2: row.meal2,
-      meal3: row.meal3,
-      snack: row.snack,
-      note:  row.note,
-    };
-  }
-  return selections;
-}
-
-export async function upsertMealSelection(clientId, day, { meal1, meal2, meal3, snack, note }) {
-  const { error } = await supabase.from("meal_selections").upsert({
-    client_id: clientId,
-    day,
-    meal1: meal1 || "",
-    meal2: meal2 || "—",
-    meal3: meal3 || "—",
-    snack: snack || "",
-    note:  note  || "",
-  }, { onConflict: "client_id,day" });
-  if (error) throw error;
-}
-
-// ─── CHECKLIST ────────────────────────────────────────────────────────────────
-
-export async function getChecklist() {
-  const { data, error } = await supabase.from("checklist").select("*");
-  if (error) throw error;
-  const checks = {};
-  for (const row of data) checks[row.key] = row.checked;
-  return checks;
-}
-
-export async function toggleChecklistItem(key, checked) {
-  const { error } = await supabase.from("checklist").upsert(
-    { key, checked, updated_at: new Date().toISOString() },
-    { onConflict: "key" }
-  );
-  if (error) throw error;
-}
-
-// ─── DELIVERY STATUS ──────────────────────────────────────────────────────────
-
-export async function getDeliveryStatus(date) {
-  const { data, error } = await supabase
-    .from("delivery_status")
-    .select("*")
-    .eq("date", date);
-  if (error) throw error;
-  const status = {};
-  for (const row of data) status[`d_${row.client_id}`] = row.delivered;
-  return status;
-}
-
-export async function toggleDelivery(clientId, day, delivered, date) {
-  const { error } = await supabase.from("delivery_status").upsert(
-    { client_id: clientId, day, delivered, date },
-    { onConflict: "client_id,day,date" }
-  );
-  if (error) throw error;
-}
-
-// ─── FIELD MAPPERS ────────────────────────────────────────────────────────────
-
-function dbToClient(row) {
-  return {
-    id:             row.id,
-    name:           row.name,
-    phone:          row.phone         || "",
-    language:       row.language      || "EN",
-    district:       row.district      || "",
-    address:        row.address       || "",
-    access:         row.access        || "",
-    deliveries:     row.deliveries    ?? 1,
-    deliveryTime:   row.delivery_time || "",
-    plan:           row.plan          || "",
-    status:         row.status        || "Active",
-    startDate:      row.start_date    || "",
-    expiryDate:     row.expiry_date   || "",
-    paid:           row.paid          ?? false,
-    amountPaid:     row.amount_paid   ?? 0,
-    goal:           row.goal          || "",
-    allergies:      row.allergies     || "",
-    customizations: row.customizations|| "",
-    acqChannel:     row.acq_channel   || "",
-    ltv:            row.ltv           ?? 0,
-    weeks:          row.weeks         ?? 0,
-  };
-}
-
-function clientToDb(client) {
-  const row = {
+  const mapped = {
     name:           client.name,
     phone:          client.phone          || "",
     language:       client.language       || "EN",
     district:       client.district       || "",
     address:        client.address        || "",
     access:         client.access         || "",
-    deliveries:     client.deliveries     ?? 1,
+    deliveries:     client.deliveries     || 1,
     delivery_time:  client.deliveryTime   || "",
     plan:           client.plan           || null,
     status:         client.status         || "Active",
     start_date:     client.startDate      || null,
     expiry_date:    client.expiryDate     || null,
     paid:           client.paid           ?? false,
-    amount_paid:    client.amountPaid     ?? 0,
+    amount_paid:    client.amountPaid     || 0,
     goal:           client.goal           || "",
     allergies:      client.allergies      || "",
     customizations: client.customizations || "",
     acq_channel:    client.acqChannel     || "",
-    ltv:            client.ltv            ?? 0,
-    weeks:          client.weeks          ?? 0,
+    ltv:            client.ltv            || 0,
+    weeks:          client.weeks          || 0,
+    wechat_openid:  client.wechatOpenid   || "",
+    status_note:    client.statusNote     || "",
+    paused_until:   client.pausedUntil    || null,
   };
-  if (client.id) row.id = client.id;
-  return row;
+  if (client.id) mapped.id = client.id;
+  return check(await supabase.from("clients").upsert(mapped).select().single(), "upsertClient");
+}
+export async function deleteClient(id) {
+  check(await supabase.from("clients").delete().eq("id", id), "deleteClient");
+}
+
+// ── MENU ─────────────────────────────────────────────────────
+export async function getMenu() {
+  const data = check(await supabase.from("menu").select("*"), "getMenu");
+  const out = {};
+  for (const row of (data || [])) {
+    out[row.day] = {
+      meals: [row.meal1, row.meal2, row.meal3].filter(Boolean),
+      snack: row.snack || "",
+    };
+  }
+  return out;
+}
+export async function updateMenuDay(day, { meal1, meal2, meal3, snack }) {
+  check(await supabase.from("menu").upsert({
+    day, meal1: meal1||"", meal2: meal2||"", meal3: meal3||"", snack: snack||"",
+  }), "updateMenuDay");
+}
+
+// ── MEAL SELECTIONS ──────────────────────────────────────────
+export async function getMealSelections() {
+  const data = check(await supabase.from("meal_selections").select("*"), "getMealSelections");
+  // Convert array to object indexed by client_id -> day -> row
+  const out = {};
+  for (const row of (data || [])) {
+    const cid = String(row.client_id);
+    if (!out[cid]) out[cid] = {};
+    out[cid][row.day] = row;
+  }
+  return out;
+}
+export async function upsertMealSelection(clientId, day, { meal1, meal2, meal3, snack, note }) {
+  check(await supabase.from("meal_selections").upsert({
+    client_id: clientId, day,
+    meal1: meal1||"", meal2: meal2||"—", meal3: meal3||"—",
+    snack: snack||"", note: note||"",
+  }, { onConflict: "client_id,day" }), "upsertMealSelection");
+}
+
+// ── CHECKLIST ────────────────────────────────────────────────
+export async function getChecklist() {
+  return check(await supabase.from("checklist").select("*"), "getChecklist");
+}
+export async function toggleChecklistItem(key, checked) {
+  check(await supabase.from("checklist").upsert({ key, checked, updated_at: new Date().toISOString() }), "toggleChecklist");
+}
+
+// ── NEW ORDERS ───────────────────────────────────────────────
+export async function createNewOrder(order) {
+  return check(await supabase.from("new_orders").insert(order).select().single(), "createNewOrder");
+}
+export async function getPendingOrders() {
+  return check(await supabase.from("new_orders").select("*").eq("status","pending").order("created_at"), "getPendingOrders");
+}
+export async function updateOrderStatus(id, status, note) {
+  check(await supabase.from("new_orders").update({ status, note: note||"" }).eq("id", id), "updateOrderStatus");
+}
+
+// ── STORAGE ──────────────────────────────────────────────────
+export async function uploadMealPhoto(file, mealId) {
+  const ext  = file.name.split(".").pop();
+  const path = `${mealId}.${ext}`;
+  const { error } = await supabase.storage.from("meal-photos").upload(path, file, { upsert: true });
+  if (error) throw error;
+  const { data } = supabase.storage.from("meal-photos").getPublicUrl(path);
+  return data.publicUrl;
+}
+export async function uploadDocument(file, name) {
+  const { error } = await supabase.storage.from("documents").upload(name, file, { upsert: true });
+  if (error) throw error;
+  const { data } = supabase.storage.from("documents").getPublicUrl(name);
+  return data.publicUrl;
 }

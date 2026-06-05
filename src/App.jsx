@@ -258,15 +258,73 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   const [draggingMeal, setDraggingMeal] = useState(null);
   const [dragOver,     setDragOver]     = useState(null);
   const [extraRows,    setExtraRows]    = useState(0);
+  const [mealLibrary,  setMealLibrary]  = useState([]);
+  const [savingMeal,   setSavingMeal]   = useState(false);
 
-  const allMeals = useMemo(()=>{
-    const seen=new Set(); const meals=[]; const snacks=[];
-    DAYS.forEach(d=>{
-      (menu[d]?.meals||[]).forEach(m=>{if(m&&m!=="—"&&!seen.has(m)){seen.add(m);meals.push({name:m,source:"meal"});}});
-      const s=menu[d]?.snack; if(s&&s!=="—"&&!seen.has(s)){seen.add(s);snacks.push({name:s,source:"snack"});}
+  // Load meal library from Supabase on mount
+  useEffect(()=>{
+    import("./lib/supabase").then(({getMealLibrary})=>{
+      getMealLibrary().then(data=>setMealLibrary(data||[])).catch(console.error);
     });
-    return [...meals.sort((a,b)=>a.name.localeCompare(b.name)),...snacks];
-  },[menu]);
+  },[]);
+
+  // allMeals = meal_library + any snacks from weekly menu not already in library
+  const allMeals = useMemo(()=>{
+    const libNames = new Set(mealLibrary.map(m=>m.name));
+    const snacks = [];
+    DAYS.forEach(d=>{
+      const s=menu[d]?.snack;
+      if(s&&s!=="—"&&!libNames.has(s)) snacks.push({name:s,source:"snack",id:null});
+    });
+    return [
+      ...mealLibrary.map(m=>({...m,source:m.sauce?"meal":"meal"})).sort((a,b)=>a.name.localeCompare(b.name)),
+      ...snacks
+    ];
+  },[mealLibrary, menu]);
+
+  const saveMealToLibrary = async () => {
+    if(!mealForm.name.trim()){alert("Meal name is required");return;}
+    setSavingMeal(true);
+    try {
+      const {upsertMealLibrary} = await import("./lib/supabase");
+      const payload = {
+        name: mealForm.name.trim(),
+        sauce: mealForm.sauce||"",
+        kcal: parseInt(mealForm.kcal)||0,
+        protein: parseInt(mealForm.protein)||0,
+        carbs: parseInt(mealForm.carbs)||0,
+        fat: parseInt(mealForm.fat)||0,
+      };
+      if(editingMealId) payload.id = editingMealId;
+      const saved = await upsertMealLibrary(payload);
+      setMealLibrary(p=>{
+        const idx = p.findIndex(m=>m.id===saved.id);
+        return idx>=0 ? p.map((m,i)=>i===idx?saved:m) : [...p,saved];
+      });
+      setShowAddMeal(false);
+      setEditingMealId(null);
+      flash();
+    } catch(e){ console.error(e); alert("Error saving meal"); }
+    setSavingMeal(false);
+  };
+
+  const deleteMealFromLibrary = async (id, name) => {
+    if(!confirm(`Delete "${name}"?`)) return;
+    try {
+      const {deleteMealLibrary} = await import("./lib/supabase");
+      await deleteMealLibrary(id);
+      setMealLibrary(p=>p.filter(m=>m.id!==id));
+      flash();
+    } catch(e){ console.error(e); }
+  };
+
+  const [editingMealId, setEditingMealId] = useState(null);
+
+  const openEditMeal = (m) => {
+    setEditingMealId(m.id);
+    setMealForm({name:m.name,sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:""});
+    setShowAddMeal(true);
+  };
 
   const handlePhotoDrop = (e) => {
     e.preventDefault();
@@ -298,23 +356,31 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     {menuTab==="library"&&<>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div className="sec-title" style={{marginBottom:0}}>All Meals ({allMeals.length})</div>
-        <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});setShowAddMeal(true);}}>+ Add Meal</button>
+        <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});setEditingMealId(null);setShowAddMeal(true);}}>+ Add Meal</button>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12}}>
         {allMeals.map((m,i)=>(
-          <div key={i} draggable onDragStart={()=>setDraggingMeal(m.name)} onDragEnd={()=>setDraggingMeal(null)}
-            style={{overflow:"hidden",borderRadius:10,border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,background:"var(--s2)",cursor:"grab",userSelect:"none"}}>
+          <div key={m.id||i} draggable onDragStart={()=>setDraggingMeal(m.name)} onDragEnd={()=>setDraggingMeal(null)}
+            style={{overflow:"hidden",borderRadius:10,border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,background:"var(--s2)",cursor:"grab",userSelect:"none",position:"relative"}}>
+            {m.id&&<button onClick={e=>{e.stopPropagation();deleteMealFromLibrary(m.id,m.name);}}
+              style={{position:"absolute",top:5,left:5,background:"rgba(0,0,0,0.7)",border:"none",color:"#f87171",width:20,height:20,borderRadius:"50%",cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>✕</button>}
             <div style={{width:"100%",height:90,background:"var(--s3)",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",borderBottom:"1px solid var(--bdr)"}}>
               <span style={{fontSize:10,color:"var(--dim)"}}>No photo yet</span>
               <span style={{position:"absolute",top:5,right:5,fontSize:8,background:"var(--s1)",color:m.source==="snack"?"#4ade80":"var(--muted)",padding:"2px 5px",borderRadius:3,border:"1px solid var(--bdr)"}}>{m.source==="snack"?"SNACK":"MEAL"}</span>
             </div>
             <div style={{padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:600,color:"#fff",marginBottom:2}}>{m.name}</div>
-              <div style={{fontSize:9,color:"var(--muted)"}}>Drag to planner →</div>
+              {m.sauce&&<div style={{fontSize:9,color:"var(--muted)",marginBottom:1}}>{m.sauce}</div>}
+              {m.kcal>0&&<div style={{fontSize:9,color:"var(--dim)"}}>{m.kcal} kcal · {m.protein}P {m.carbs}C {m.fat}F</div>}
+              {!m.kcal&&<div style={{fontSize:9,color:"var(--muted)"}}>Drag to planner →</div>}
+              {m.id&&<button onClick={e=>{e.stopPropagation();openEditMeal(m);}}
+                style={{marginTop:6,background:"var(--s3)",border:"1px solid var(--bdr)",color:"var(--muted)",fontSize:9,padding:"3px 8px",borderRadius:5,cursor:"pointer",width:"100%"}}>
+                ✏️ Edit
+              </button>}
             </div>
           </div>
         ))}
-        {allMeals.length===0&&<div style={{color:"var(--dim)",fontSize:11,padding:20,gridColumn:"1/-1"}}>No meals yet.</div>}
+        {allMeals.length===0&&<div style={{color:"var(--dim)",fontSize:11,padding:20,gridColumn:"1/-1"}}>No meals yet. Click + Add Meal to get started.</div>}
       </div>
     </>}
 
@@ -388,9 +454,9 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     </>}
 
     {showAddMeal&&(
-      <div className="mo" onClick={()=>setShowAddMeal(false)}>
+      <div className="mo" onClick={()=>{setShowAddMeal(false);setEditingMealId(null);}}>
         <div className="mo-box" onClick={e=>e.stopPropagation()}>
-          <div className="mo-hd"><div className="mo-title">Add New Meal</div><button className="mo-close" onClick={()=>setShowAddMeal(false)}>✕</button></div>
+          <div className="mo-hd"><div className="mo-title">{editingMealId?"Edit Meal":"Add New Meal"}</div><button className="mo-close" onClick={()=>{setShowAddMeal(false);setEditingMealId(null);}}>✕</button></div>
           <div onDragOver={e=>e.preventDefault()} onDrop={handlePhotoDrop}
             style={{border:"2px dashed var(--bdr)",borderRadius:10,height:130,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",marginBottom:16,background:"var(--s2)",cursor:"pointer",overflow:"hidden"}}
             onClick={()=>document.getElementById("meal-photo-inp").click()}>
@@ -410,7 +476,9 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
           </div>
           <div style={{display:"flex",gap:8,marginTop:16}}>
             <button className="btn btn-g" style={{flex:1}} onClick={()=>setShowAddMeal(false)}>Cancel</button>
-            <button className="btn btn-r" style={{flex:1}} onClick={()=>{if(!mealForm.name.trim()){alert("Meal name is required");return;}setShowAddMeal(false);flash();}}>Save Meal</button>
+            <button className="btn btn-r" style={{flex:1}} onClick={saveMealToLibrary} disabled={savingMeal}>
+              {savingMeal?"Saving...":"Save Meal"}
+            </button>
           </div>
         </div>
       </div>

@@ -116,6 +116,17 @@ export async function toggleChecklistItem(key, checked) {
   check(await supabase.from("checklist").upsert({ key, checked, updated_at: new Date().toISOString() }), "toggleChecklist");
 }
 
+// ── MEAL LIBRARY ─────────────────────────────────────────────
+export async function getMealLibrary() {
+  return check(await supabase.from("meal_library").select("*").order("name"), "getMealLibrary");
+}
+export async function upsertMealLibrary(meal) {
+  return check(await supabase.from("meal_library").upsert(meal).select().single(), "upsertMealLibrary");
+}
+export async function deleteMealLibrary(id) {
+  check(await supabase.from("meal_library").delete().eq("id", id), "deleteMealLibrary");
+}
+
 // ── NEW ORDERS ───────────────────────────────────────────────
 export async function createNewOrder(order) {
   return check(await supabase.from("new_orders").insert(order).select().single(), "createNewOrder");

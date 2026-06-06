@@ -257,7 +257,15 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});
   const [draggingMeal, setDraggingMeal] = useState(null);
   const [dragOver,     setDragOver]     = useState(null);
-  const [extraRows,    setExtraRows]    = useState(0);
+  const [extraRows,    setExtraRows]    = useState(()=>parseInt(localStorage.getItem("menuExtraRows")||"0"));
+
+  const updateExtraRows = (fn) => {
+    setExtraRows(prev => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      localStorage.setItem("menuExtraRows", String(next));
+      return next;
+    });
+  };
   const [mealLibrary,  setMealLibrary]  = useState([]);
   const [savingMeal,   setSavingMeal]   = useState(false);
 
@@ -438,10 +446,10 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
               <tr>
                 <td colSpan={6} style={{padding:"8px 4px"}}>
                   <div style={{display:"flex",gap:8}}>
-                    <button className="btn btn-g btn-sm" onClick={()=>setExtraRows(r=>r+1)} style={{flex:1}}>
+                    <button className="btn btn-g btn-sm" onClick={()=>updateExtraRows(r=>r+1)} style={{flex:1}}>
                       + Add Meal Row
                     </button>
-                    {extraRows>0&&<button className="btn btn-sm" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>setExtraRows(r=>r-1)}>
+                    {extraRows>0&&<button className="btn btn-sm" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>updateExtraRows(r=>r-1)}>
                       − Remove
                     </button>}
                   </div>
@@ -637,7 +645,7 @@ export default function App() {
         slots.forEach(slot => {
           const batch = getBatch(slot.time || "");
 
-          (slot.meals||[]).filter(m => m && m !== "—").forEach(m => {
+          (slot.meals||[]).filter(m => m && m.trim() && m !== "—").forEach(m => {
             const key = m + (size ? "__" + size : "");
             if (!batches[batch][key]) batches[batch][key] = { count: 0, who: [], meal: m, size };
             batches[batch][key].count++;
@@ -843,8 +851,8 @@ export default function App() {
 
   const upsertMenuDay = async (day, {meals, snack}) => {
     try {
-      const [meal1,meal2,meal3] = meals;
-      await updateMenuDay(day, {meal1:meal1||"",meal2:meal2||"",meal3:meal3||"",snack:snack||""});
+      const [meal1,meal2,meal3,meal4,meal5] = meals;
+      await updateMenuDay(day, {meal1:meal1||"",meal2:meal2||"",meal3:meal3||"",meal4:meal4||"",meal5:meal5||"",snack:snack||""});
       setMenu(p=>({...p,[day]:{meals:meals.filter(Boolean),snack:snack||""}}));
       flash();
     } catch(e){ console.error(e); }

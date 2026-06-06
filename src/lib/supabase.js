@@ -76,15 +76,18 @@ export async function getMenu() {
   const out = {};
   for (const row of (data || [])) {
     out[row.day] = {
-      meals: [row.meal1, row.meal2, row.meal3].filter(Boolean),
+      meals: [row.meal1, row.meal2, row.meal3, row.meal4, row.meal5].filter(Boolean),
       snack: row.snack || "",
     };
   }
   return out;
 }
-export async function updateMenuDay(day, { meal1, meal2, meal3, snack }) {
+export async function updateMenuDay(day, { meal1, meal2, meal3, meal4, meal5, snack }) {
   check(await supabase.from("menu").upsert({
-    day, meal1: meal1||"", meal2: meal2||"", meal3: meal3||"", snack: snack||"",
+    day,
+    meal1: meal1||"", meal2: meal2||"", meal3: meal3||"",
+    meal4: meal4||"", meal5: meal5||"",
+    snack: snack||"",
   }), "updateMenuDay");
 }
 

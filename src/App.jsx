@@ -1,5 +1,5 @@
 // FitIgnyte.jsx — Full app connected to Supabase
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   getPlans, upsertPlan, deletePlan as dbDeletePlan,
   getClients, upsertClient, deleteClient as dbDeleteClient,
@@ -232,7 +232,11 @@ function MealOptions({ menu, extraItems = [] }) {
         if (!meals.length) return null;
         return (
           <optgroup key={day} label={`── ${day} ──`}>
-            {meals.map(m => <option key={m} value={m}>{m}</option>)}
+            {meals.map(m => {
+              const name = typeof m === "object" ? m.name : m;
+              const id   = typeof m === "object" ? m.id   : m;
+              return <option key={`${day}-${id}`} value={name}>{name}</option>;
+            })}
           </optgroup>
         );
       })}
@@ -250,7 +254,7 @@ function MealOptions({ menu, extraItems = [] }) {
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
 
-function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, deletePlanHandler }) {
+function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, deletePlanHandler, mealLibraryRef }) {
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"];
   const [menuTab,      setMenuTab]      = useState("library");
   const [showAddMeal,  setShowAddMeal]  = useState(false);
@@ -268,11 +272,16 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   };
   const [mealLibrary,  setMealLibrary]  = useState([]);
   const [savingMeal,   setSavingMeal]   = useState(false);
+  const [libraryLoaded, setLibraryLoaded] = useState(false);
 
   // Load meal library from Supabase on mount
   useEffect(()=>{
     import("./lib/supabase").then(({getMealLibrary})=>{
-      getMealLibrary().then(data=>setMealLibrary(data||[])).catch(console.error);
+      getMealLibrary().then(data=>{
+        setMealLibrary(data||[]);
+        if(mealLibraryRef) mealLibraryRef.current = data||[];
+        setLibraryLoaded(true);
+      }).catch(console.error);
     });
   },[]);
 
@@ -344,14 +353,17 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
 
   const handleAssignMeal = (day, slot) => {
     if(!draggingMeal) return;
-    const isSnack=slot==="Snack";
-    const si=isSnack?null:parseInt(slot.replace("Meal ",""))-1;
-    const dm=menu[day]||{meals:[],snack:""};
-    const newMeals=[...(dm.meals||[])];
-    // Extend array if needed
-    while(!isSnack && newMeals.length<=si) newMeals.push("");
-    if(isSnack){upsertMenuDay(day,{meals:newMeals,snack:draggingMeal});}
-    else{newMeals[si]=draggingMeal;upsertMenuDay(day,{meals:newMeals,snack:dm.snack||""});}
+    const isSnack = slot==="Snack";
+    const si = isSnack ? null : parseInt(slot.replace("Meal ",""))-1;
+    const dm = menu[day] || {mealIds:[], snack:"", snackId:""};
+    const newIds = [...(dm.mealIds||[])];
+    if(isSnack){
+      upsertMenuDay(day, {mealIds:newIds, snackId:draggingMeal.id});
+    } else {
+      while(newIds.length <= si) newIds.push("");
+      newIds[si] = draggingMeal.id;
+      upsertMenuDay(day, {mealIds:newIds.filter(Boolean), snackId:dm.snackId||""});
+    }
     setDraggingMeal(null); setDragOver(null);
   };
 
@@ -368,7 +380,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12}}>
         {allMeals.map((m,i)=>(
-          <div key={m.id||i} draggable onDragStart={()=>setDraggingMeal(m.name)} onDragEnd={()=>setDraggingMeal(null)}
+          <div key={m.id||i} draggable onDragStart={()=>setDraggingMeal(m)} onDragEnd={()=>setDraggingMeal(null)}
             style={{overflow:"hidden",borderRadius:10,border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,background:"var(--s2)",cursor:"grab",userSelect:"none",position:"relative"}}>
             {m.id&&<button onClick={e=>{e.stopPropagation();deleteMealFromLibrary(m.id,m.name);}}
               style={{position:"absolute",top:5,left:5,background:"rgba(0,0,0,0.7)",border:"none",color:"#f87171",width:20,height:20,borderRadius:"50%",cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>✕</button>}
@@ -393,13 +405,16 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     </>}
 
     {menuTab==="planner"&&<>
+      {!libraryLoaded
+        ? <div style={{padding:40,textAlign:"center",color:"var(--dim)"}}>Loading meals...</div>
+        : <>
       <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
         <div style={{width:200,flexShrink:0}}>
           <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:8,fontWeight:700}}>Drag meals →</div>
           <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:560,overflowY:"auto",paddingRight:4}}>
             {allMeals.map((m,i)=>(
-              <div key={i} draggable onDragStart={()=>setDraggingMeal(m.name)} onDragEnd={()=>setDraggingMeal(null)}
-                style={{background:draggingMeal===m.name?"var(--red)":"var(--s2)",border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,borderRadius:8,padding:"10px 12px",fontSize:11,color:draggingMeal===m.name?"#fff":m.source==="snack"?"#4ade80":"#ccc",cursor:"grab",userSelect:"none",lineHeight:1.3,transition:"background .15s",wordBreak:"break-word"}}>
+              <div key={i} draggable onDragStart={()=>setDraggingMeal(m)} onDragEnd={()=>setDraggingMeal(null)}
+                style={{background:draggingMeal?.id===m.id?"var(--red)":"var(--s2)",border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,borderRadius:8,padding:"10px 12px",fontSize:11,color:draggingMeal?.id===m.id?"#fff":m.source==="snack"?"#4ade80":"#ccc",cursor:"grab",userSelect:"none",lineHeight:1.3,transition:"background .15s",wordBreak:"break-word"}}>
                 {m.source==="snack"&&<span style={{fontSize:8,color:"#4ade80",display:"block",marginBottom:2,letterSpacing:1,fontWeight:700}}>SNACK</span>}
                 {m.name}
               </div>
@@ -421,7 +436,8 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                 <tr key={slot}>
                   <td style={{padding:"3px 6px",color:"var(--dim)",fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>{slot}</td>
                   {DAYS.map(day=>{
-                    const val=isSnack?menu[day]?.snack:(menu[day]?.meals?.[mealIdx]||"");
+                    const mealObj = isSnack ? menu[day]?.snackObj : (menu[day]?.meals?.[mealIdx]||null);
+                    const val = mealObj?.name || (isSnack ? menu[day]?.snack : "") || "";
                     const isOver=dragOver===`${day}-${slot}`;
                     return (
                       <td key={day}
@@ -433,7 +449,12 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                           style={{background:isOver?"rgba(232,52,42,0.15)":val?"var(--s2)":"var(--s3)",border:`1px ${isOver?"solid":"dashed"} ${isOver?"var(--red)":val?"var(--bdr)":"#333"}`,borderRadius:5,padding:"6px 5px",minHeight:56,fontSize:9,color:val?"#ccc":"var(--dim)",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}}>
                           <span style={{width:"100%",textAlign:"center",lineHeight:1.3,wordBreak:"break-word"}}>{val||<span style={{fontSize:8,color:"#333"}}>Drop</span>}</span>
                           {val&&<span style={{fontSize:8,color:"var(--dim)",cursor:"pointer",marginTop:2}}
-                            onClick={()=>{const nm=[...(menu[day]?.meals||[])];if(isSnack){upsertMenuDay(day,{meals:nm,snack:""});}else{nm[mealIdx]="";upsertMenuDay(day,{meals:nm.filter(Boolean),snack:menu[day]?.snack||""});}}}>
+                            onClick={()=>{
+                              const dm=menu[day]||{mealIds:[],snack:"",snackId:""};
+                              const newIds=[...(dm.mealIds||[])];
+                              if(isSnack){upsertMenuDay(day,{mealIds:newIds,snackId:""});}
+                              else{newIds[mealIdx]="";upsertMenuDay(day,{mealIds:newIds.filter(Boolean),snackId:dm.snackId||""});}
+                            }}>
                             ✕
                           </span>}
                         </div>
@@ -459,6 +480,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
           </table>
         </div>
       </div>
+      </>}
     </>}
 
     {showAddMeal&&(
@@ -504,6 +526,7 @@ export default function App() {
   const [checks,     setChecks]     = useState({});
   // cookTimes: { Monday: "10:00", Tuesday: "09:30", ... }
   const [cookTimes,  setCookTimes]  = useState({});
+  const mealLibraryRef = useRef([]);
   const [pdfUrls,    setPdfUrls]    = useState({en:"", cn:""});
   const [pdfUploading,setPdfUploading]= useState({en:false, cn:false});
   // customMealItems: extra meals added manually
@@ -835,25 +858,44 @@ export default function App() {
   // ── Menu modal
   const openEditMenu = day => {
     setMenuEditDay(day);
-    setMenuForm({meals:[...(menu[day]?.meals||["","",""])],snack:menu[day]?.snack||""});
+    setMenuForm({meals:[...(menu[day]?.meals||[]).map(m=>typeof m==="object"?m.name:m),...["","",""]].slice(0,3),snack:menu[day]?.snack||""});
     setShowMenuModal(true);
   };
   const saveMenu = async () => {
     try {
-      const [meal1,meal2,meal3,...rest] = menuForm.meals;
+      // Look up IDs from meal names in library
+      const lib = mealLibraryRef.current;
+      const mealIds = menuForm.meals.filter(Boolean).map(name => {
+        const found = lib.find(m=>m.name===name);
+        return found ? found.id : null;
+      }).filter(Boolean);
+      const snackObj = lib.find(m=>m.name===menuForm.snack);
       await updateMenuDay(menuEditDay, {
-        meal1:meal1||"", meal2:meal2||"", meal3:meal3||"", snack:menuForm.snack||""
+        mealIds,
+        snackId: snackObj?.id || "",
       });
-      setMenu(p=>({...p,[menuEditDay]:{meals:menuForm.meals.filter(Boolean),snack:menuForm.snack}}));
+      const mealObjs = mealIds.map(id=>lib.find(m=>m.id===id)).filter(Boolean);
+      setMenu(p=>({...p,[menuEditDay]:{
+        meals:mealObjs, mealIds,
+        snack:snackObj?.name||"", snackId:snackObj?.id||"", snackObj:snackObj||null
+      }}));
       setShowMenuModal(false); flash();
     } catch(e){ console.error(e); }
   };
 
-  const upsertMenuDay = async (day, {meals, snack}) => {
+  const upsertMenuDay = async (day, {mealIds, snackId}) => {
     try {
-      const [meal1,meal2,meal3,meal4,meal5] = meals;
-      await updateMenuDay(day, {meal1:meal1||"",meal2:meal2||"",meal3:meal3||"",meal4:meal4||"",meal5:meal5||"",snack:snack||""});
-      setMenu(p=>({...p,[day]:{meals:meals.filter(Boolean),snack:snack||""}}));
+      await updateMenuDay(day, {mealIds, snackId});
+      const lib = mealLibraryRef.current;
+      const mealObjs = mealIds.map(id => lib.find(m=>m.id===id)).filter(Boolean);
+      const snackObj = lib.find(m=>m.id===snackId) || null;
+      setMenu(p=>({...p,[day]:{
+        meals:   mealObjs,
+        mealIds,
+        snack:   snackObj?.name || "",
+        snackId: snackId||"",
+        snackObj,
+      }}));
       flash();
     } catch(e){ console.error(e); }
   };
@@ -1651,6 +1693,7 @@ export default function App() {
               menu={menu} plans={plans} active={active}
               upsertMenuDay={upsertMenuDay} flash={flash}
               openEditPlan={openEditPlan} deletePlanHandler={deletePlanHandler}
+              mealLibraryRef={mealLibraryRef}
             />}
 
             {/* ═══ WECHAT ═════════════════════════════ */}
@@ -1662,7 +1705,7 @@ export default function App() {
                 {(()=>{
                   const lines = ["🔥 FIT IGNYTE — This Week's Menu", ""];
                   DAYS.forEach(day => {
-                    const meals = (menu[day]?.meals||[]).filter(Boolean);
+                    const meals = (menu[day]?.meals||[]).map(m=>typeof m==="object"?m.name:m).filter(Boolean);
                     const snack = menu[day]?.snack || "";
                     lines.push(`📅 ${day}`);
                     meals.forEach((m,i) => lines.push(`  Meal ${i+1}: ${m}`));

@@ -72,22 +72,36 @@ export async function deleteClient(id) {
 
 // ── MENU ─────────────────────────────────────────────────────
 export async function getMenu() {
-  const data = check(await supabase.from("menu").select("*"), "getMenu");
+  const [menuData, libData] = await Promise.all([
+    supabase.from("menu").select("*"),
+    supabase.from("meal_library").select("*"),
+  ]);
+  check(menuData, "getMenu");
+  check(libData, "getMealLibraryForMenu");
+
+  const libById = {};
+  for (const m of (libData.data || [])) libById[m.id] = m;
+
   const out = {};
-  for (const row of (data || [])) {
+  for (const row of (menuData.data || [])) {
+    const mealIds = row.meals_json || [];
+    const snackObj = row.snack_id ? libById[row.snack_id] : null;
     out[row.day] = {
-      meals: [row.meal1, row.meal2, row.meal3, row.meal4, row.meal5].filter(Boolean),
-      snack: row.snack || "",
+      meals:    mealIds.map(id => libById[id]).filter(Boolean),
+      mealIds,
+      snack:    snackObj?.name || "",
+      snackId:  row.snack_id || "",
+      snackObj: snackObj || null,
     };
   }
   return out;
 }
-export async function updateMenuDay(day, { meal1, meal2, meal3, meal4, meal5, snack }) {
+
+export async function updateMenuDay(day, { mealIds, snackId }) {
   check(await supabase.from("menu").upsert({
     day,
-    meal1: meal1||"", meal2: meal2||"", meal3: meal3||"",
-    meal4: meal4||"", meal5: meal5||"",
-    snack: snack||"",
+    meals_json: mealIds || [],
+    snack_id:   snackId || "",
   }), "updateMenuDay");
 }
 

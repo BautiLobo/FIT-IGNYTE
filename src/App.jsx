@@ -260,6 +260,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   const [showAddMeal,  setShowAddMeal]  = useState(false);
   const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});
   const [draggingMeal, setDraggingMeal] = useState(null);
+  const draggingMealRef = useRef(null);
   const [dragOver,     setDragOver]     = useState(null);
   const [extraRows,    setExtraRows]    = useState(()=>parseInt(localStorage.getItem("menuExtraRows")||"0"));
 
@@ -352,18 +353,20 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   };
 
   const handleAssignMeal = (day, slot) => {
-    if(!draggingMeal) return;
+    const meal = draggingMealRef.current;
+    if(!meal) return;
     const isSnack = slot==="Snack";
     const si = isSnack ? null : parseInt(slot.replace("Meal ",""))-1;
     const dm = menu[day] || {mealIds:[], snack:"", snackId:""};
     const newIds = [...(dm.mealIds||[])];
     if(isSnack){
-      upsertMenuDay(day, {mealIds:newIds, snackId:draggingMeal.id});
+      upsertMenuDay(day, {mealIds:newIds, snackId:meal.id});
     } else {
       while(newIds.length <= si) newIds.push("");
-      newIds[si] = draggingMeal.id;
+      newIds[si] = meal.id;
       upsertMenuDay(day, {mealIds:newIds.filter(Boolean), snackId:dm.snackId||""});
     }
+    draggingMealRef.current = null;
     setDraggingMeal(null); setDragOver(null);
   };
 
@@ -380,7 +383,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12}}>
         {allMeals.map((m,i)=>(
-          <div key={m.id||i} draggable onDragStart={()=>setDraggingMeal(m)} onDragEnd={()=>setDraggingMeal(null)}
+          <div key={m.id||i} draggable onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}} onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
             style={{overflow:"hidden",borderRadius:10,border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,background:"var(--s2)",cursor:"grab",userSelect:"none",position:"relative"}}>
             {m.id&&<button onClick={e=>{e.stopPropagation();deleteMealFromLibrary(m.id,m.name);}}
               style={{position:"absolute",top:5,left:5,background:"rgba(0,0,0,0.7)",border:"none",color:"#f87171",width:20,height:20,borderRadius:"50%",cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>✕</button>}
@@ -413,7 +416,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
           <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:8,fontWeight:700}}>Drag meals →</div>
           <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:560,overflowY:"auto",paddingRight:4}}>
             {allMeals.map((m,i)=>(
-              <div key={i} draggable onDragStart={()=>setDraggingMeal(m)} onDragEnd={()=>setDraggingMeal(null)}
+              <div key={i} draggable onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}} onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
                 style={{background:draggingMeal?.id===m.id?"var(--red)":"var(--s2)",border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,borderRadius:8,padding:"10px 12px",fontSize:11,color:draggingMeal?.id===m.id?"#fff":m.source==="snack"?"#4ade80":"#ccc",cursor:"grab",userSelect:"none",lineHeight:1.3,transition:"background .15s",wordBreak:"break-word"}}>
                 {m.source==="snack"&&<span style={{fontSize:8,color:"#4ade80",display:"block",marginBottom:2,letterSpacing:1,fontWeight:700}}>SNACK</span>}
                 {m.name}

@@ -567,9 +567,12 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [pl, cl, mn, ms, ch] = await Promise.all([
+        const {getSettings} = await import("./lib/supabase");
+        const [pl, cl, mn, ms, ch, st] = await Promise.all([
           getPlans(), getClients(), getMenu(), getMealSelections(), getChecklist(),
+          getSettings(["brochure_en","brochure_cn"]),
         ]);
+        setPdfUrls({en: st.brochure_en||"", cn: st.brochure_cn||""});
         setPlans(pl);
         setClients(cl);
         setMenu(mn);
@@ -1279,6 +1282,8 @@ export default function App() {
                             try {
                               const {uploadDocument} = await import("./lib/supabase");
                               const url = await uploadDocument(file, `brochure-${lang}.pdf`);
+                              const {upsertSetting} = await import("./lib/supabase");
+                              await upsertSetting(`brochure_${lang}`, url);
                               setPdfUrls(p=>({...p,[lang]:url}));
                               flash();
                             } catch(err){ console.error(err); alert("Upload failed"); }

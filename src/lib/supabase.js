@@ -155,6 +155,17 @@ export async function updateOrderStatus(id, status, note) {
   check(await supabase.from("new_orders").update({ status, note: note||"" }).eq("id", id), "updateOrderStatus");
 }
 
+// ── SETTINGS ─────────────────────────────────────────────────
+export async function getSettings(keys) {
+  const data = check(await supabase.from("settings").select("*").in("key", keys), "getSettings");
+  const out = {};
+  for (const row of (data || [])) out[row.key] = row.value;
+  return out;
+}
+export async function upsertSetting(key, value) {
+  check(await supabase.from("settings").upsert({key, value}), "upsertSetting");
+}
+
 // ── STORAGE ──────────────────────────────────────────────────
 export async function uploadMealPhoto(file, mealId) {
   const ext  = file.name.split(".").pop();

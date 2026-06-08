@@ -223,7 +223,7 @@ function RenewalBadge({ c }) {
 // ─── MEAL OPTIONS BUILDER ─────────────────────────────────────────────────────
 // Returns grouped <optgroup> options: all meals by day + all snacks + custom items
 function MealOptions({ menu, day, extraItems = [] }) {
-  // If day provided, show only that day's meals — otherwise show all
+  // If day provided show only that day's meals, otherwise show all deduplicated
   const days = day ? [day] : DAYS;
   const seen = new Set();
   const allMeals = [];
@@ -1413,7 +1413,7 @@ export default function App() {
                                 {(slot.meals||[""]).map((meal,mi)=>(
                                   <div key={mi} style={{display:"flex",gap:4,alignItems:"center"}}>
                                     <select className="msel" value={meal||""} onChange={e=>updateSlotMeal(c.id,mealDay,slot.id,mi,e.target.value)} style={{flex:1}}>
-                                      <MealOptions menu={menu} day={mealDay} extraItems={customItems}/>
+                                      <MealOptions menu={menu} extraItems={customItems}/>
                                     </select>
                                     {(slot.meals||[]).length>1&&(
                                       <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none",padding:"2px 6px"}} onClick={()=>removeMealFromSlot(c.id,mealDay,slot.id,mi)}>✕</button>

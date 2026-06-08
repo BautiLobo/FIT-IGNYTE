@@ -539,6 +539,7 @@ export default function App() {
   // cookTimes: { Monday: "10:00", Tuesday: "09:30", ... }
   const [cookTimes,  setCookTimes]  = useState({});
   const mealLibraryRef = useRef([]);
+  const [mealLibraryState, setMealLibraryState] = useState([]);
   const [pdfUrls,    setPdfUrls]    = useState({en:"", cn:""});
   const [pdfUploading,setPdfUploading]= useState({en:false, cn:false});
   // customMealItems: extra meals added manually
@@ -576,11 +577,15 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const {getSettings} = await import("./lib/supabase");
-        const [pl, cl, mn, ms, ch, st] = await Promise.all([
+        const {getSettings, getMealLibrary} = await import("./lib/supabase");
+        const [pl, cl, mn, ms, ch, st, lib] = await Promise.all([
           getPlans(), getClients(), getMenu(), getMealSelections(), getChecklist(),
           getSettings(["brochure_en","brochure_cn"]),
+          getMealLibrary(),
         ]);
+        // Populate ref immediately so mealName() works in useMemos
+        mealLibraryRef.current = lib || [];
+        setMealLibraryState(lib || []);
         setPdfUrls({en: st.brochure_en||"", cn: st.brochure_cn||""});
         setPlans(pl);
         setClients(cl);
@@ -712,7 +717,7 @@ export default function App() {
       })).filter(b => b.items.length > 0);
     });
     return d;
-  }, [active, meals, plans]);
+  }, [active, meals, plans, mealLibraryState]);
 
   // Delivery: group by time, filtered by selected day
   const delivery = useMemo(() => {
@@ -729,7 +734,7 @@ export default function App() {
       (g[t]=g[t]||[]).push(x);
     });
     return g;
-  }, [active, meals, deliveryDay]);
+  }, [active, meals, deliveryDay, mealLibraryState]);
 
   // ── Handlers
   const togglePaid = async id => {

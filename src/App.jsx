@@ -949,7 +949,7 @@ export default function App() {
         plan: c.planName,
         address: c.address || "TBC",
         access: c.access || "—",
-        meals: (slot.meals||[]).filter(Boolean),
+        meals: (slot.meals||[]).filter(Boolean).map(id => mealName(id) || id),
         snack: slot.snackId ? mealName(slot.snackId) : slot.snack || "—",
         note: slot.note || c.customizations || "—",
       }))

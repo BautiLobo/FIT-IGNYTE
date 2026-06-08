@@ -26,7 +26,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 
 const BLANK_CLIENT = {
   name:"", phone:"", language:"EN", district:"", address:"", access:"",
-  deliveries:1, deliveryTime:"", plan:"", status:"Active",
+  deliveries:1, deliveryTime:"", planId:"", planName:"", status:"Active",
   startDate:"", expiryDate:"", paid:false, amountPaid:0,
   goal:"", allergies:"", customizations:"", acqChannel:"", ltv:0, weeks:0,
 };
@@ -222,27 +222,36 @@ function RenewalBadge({ c }) {
 
 // ─── MEAL OPTIONS BUILDER ─────────────────────────────────────────────────────
 // Returns grouped <optgroup> options: all meals by day + all snacks + custom items
-function MealOptions({ menu, extraItems = [] }) {
-  const allSnacks = [...new Set(DAYS.map(d => menu[d]?.snack).filter(Boolean))];
+function MealOptions({ menu, day, extraItems = [] }) {
+  // If day provided, show only that day's meals — otherwise show all
+  const days = day ? [day] : DAYS;
+  const seen = new Set();
+  const allMeals = [];
+  days.forEach(d => {
+    (menu[d]?.meals || []).forEach(m => {
+      const id   = typeof m === "object" ? m.id   : null;
+      const name = typeof m === "object" ? m.name : m;
+      if (id && !seen.has(id)) { seen.add(id); allMeals.push({id, name}); }
+    });
+  });
+  const allSnacks = [];
+  days.forEach(d => {
+    const s = menu[d]?.snackObj;
+    if (s && !seen.has(s.id)) { seen.add(s.id); allSnacks.push(s); }
+  });
   return (
     <>
       <option value="">— none —</option>
-      {DAYS.map(day => {
-        const meals = menu[day]?.meals || [];
-        if (!meals.length) return null;
-        return (
-          <optgroup key={day} label={`── ${day} ──`}>
-            {meals.map(m => {
-              const name = typeof m === "object" ? m.name : m;
-              const id   = typeof m === "object" ? m.id   : m;
-              return <option key={`${day}-${id}`} value={name}>{name}</option>;
-            })}
-          </optgroup>
-        );
-      })}
-      <optgroup label="── Snacks ──">
-        {allSnacks.map(s => <option key={s} value={s}>{s}</option>)}
-      </optgroup>
+      {allMeals.length > 0 && (
+        <optgroup label="── Meals ──">
+          {allMeals.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </optgroup>
+      )}
+      {allSnacks.length > 0 && (
+        <optgroup label="── Snacks ──">
+          {allSnacks.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </optgroup>
+      )}
       {extraItems.length > 0 && (
         <optgroup label="── Custom ──">
           {extraItems.map(i => <option key={i} value={i}>{i}</option>)}
@@ -576,30 +585,24 @@ export default function App() {
         setPlans(pl);
         setClients(cl);
         setMenu(mn);
-        // Convert DB format to multi-slot format
+        // New schema: getMealSelections already returns {cid: {day: [slots]}}
+        // Each slot has: {id, slot, mealIds, deliveryTime, snackId, snack, snackObj, note}
+        // Convert to internal format used by App: {id, time, meals, snack, note}
         const converted = {};
         for (const cid of Object.keys(ms)) {
           converted[cid] = {};
           for (const day of DAYS) {
-            const row = ms[cid]?.[day];
-            if (!row) { converted[cid][day] = []; continue; }
-            if (Array.isArray(row)) { converted[cid][day] = row; continue; }
-            // Serialized multi-slot format
-            if (row.note === "__multi__") {
-              try {
-                const parsed = JSON.parse(row.meal1);
-                converted[cid][day] = Array.isArray(parsed) ? parsed : [];
-              } catch { converted[cid][day] = []; }
-              continue;
-            }
-            // Old flat format -> single slot
-            const mealsList = [row.meal1, row.meal2, row.meal3].filter(m => m && m !== "—");
-            converted[cid][day] = (mealsList.length || row.snack) ? [{
-              id: uid(), time: "",
-              meals: mealsList.length ? mealsList : [""],
-              snack: row.snack || "",
-              note: row.note || "",
-            }] : [];
+            const slots = ms[cid]?.[day] || [];
+            converted[cid][day] = slots.map(s => ({
+              id:     String(s.id),
+              slot:   s.slot,
+              time:   s.deliveryTime || "",
+              meals:  s.mealIds || [],   // array of meal IDs
+              snack:  s.snack || "",
+              snackId: s.snackId || "",
+              snackObj: s.snackObj || null,
+              note:   s.note || "",
+            }));
           }
         }
         setMeals(converted);
@@ -634,8 +637,8 @@ export default function App() {
   const unpaid   = useMemo(() => active.filter(c=>!c.paid), [active]);
   const renewDue = useMemo(() => active.filter(c=>{ const d=daysUntil(c.expiryDate); return d>=0&&d<=2; }), [active]);
   const overdue  = useMemo(() => active.filter(c=>daysUntil(c.expiryDate)<0), [active]);
-  const revenue  = useMemo(() => active.reduce((s,c)=>s+(plans.find(p=>p.name===c.plan)?.price||0),0), [active,plans]);
-  const totalMl  = useMemo(() => active.reduce((s,c)=>s+(plans.find(p=>p.name===c.plan)?.meals||0),0)*5, [active,plans]);
+  const revenue  = useMemo(() => active.reduce((s,c)=>s+(c.planObj?.price||0),0), [active,plans]);
+  const totalMl  = useMemo(() => active.reduce((s,c)=>s+(c.planObj?.meals||0),0)*5, [active,plans]);
 
   const filtered = useMemo(() => {
     let l = clients;
@@ -643,7 +646,7 @@ export default function App() {
     if (search) l=l.filter(c=>
       c.name.toLowerCase().includes(search.toLowerCase())||
       (c.district||"").toLowerCase().includes(search.toLowerCase())||
-      (c.plan||"").toLowerCase().includes(search.toLowerCase())
+      (c.planName||"").toLowerCase().includes(search.toLowerCase())
     );
     return l;
   }, [clients,filterSt,search]);
@@ -658,6 +661,14 @@ export default function App() {
     return "";
   };
 
+  // Helper: resolve meal ID to name using mealLibraryRef
+  const mealName = (id) => {
+    if (!id) return "";
+    const m = mealLibraryRef.current.find(m => m.id === id);
+    return m ? m.name : id;
+  };
+  const getMealObj = (id) => id ? mealLibraryRef.current.find(m => m.id === id) || null : null;
+
   // Kitchen: aggregate meals by batch + size for each day
   const kitchen = useMemo(() => {
     const d = {};
@@ -668,21 +679,23 @@ export default function App() {
 
       active.forEach(c => {
         const slots = meals[c.id]?.[day] || [];
-        const size = getPlanSize(c.plan);
+        const size = getPlanSize(c.planName);
         const name = c.name.split(" ")[0];
 
         slots.forEach(slot => {
           const batch = getBatch(slot.time || "");
 
-          (slot.meals||[]).filter(m => m && m.trim() && m !== "—").forEach(m => {
+          (slot.meals||[]).filter(id => id && id.trim() && id !== "—").forEach(rawId => {
+            const m = mealName(rawId) || rawId;
             const key = m + (size ? "__" + size : "");
             if (!batches[batch][key]) batches[batch][key] = { count: 0, who: [], meal: m, size };
             batches[batch][key].count++;
             batches[batch][key].who.push(name);
           });
-          if (slot.snack && slot.snack !== "—") {
-            const key = slot.snack + (size ? "__" + size : "");
-            if (!batches[batch][key]) batches[batch][key] = { count: 0, who: [], meal: slot.snack, size };
+          const snackName = slot.snackId ? mealName(slot.snackId) : (slot.snack||"");
+          if (snackName && snackName !== "—") {
+            const key = snackName + (size ? "__" + size : "");
+            if (!batches[batch][key]) batches[batch][key] = { count: 0, who: [], meal: snackName, size };
             batches[batch][key].count++;
             batches[batch][key].who.push(name);
           }
@@ -742,34 +755,46 @@ export default function App() {
   const navTo = t => { setTab(t); setSbOpen(false); };
 
   // ── Meal slot handlers
-  const addSlot = (clientId, day) => {
-    const newSlot = { id: uid(), time: "", meals: [""], snack: "", note: "" };
+  const addSlot = async (clientId, day) => {
+    const existingSlots = meals[clientId]?.[day] || [];
+    const nextSlot = existingSlots.length + 1;
+    const newSlot = { id: uid(), slot: nextSlot, time: "", meals: [], snack: "", snackId: "", note: "" };
     setMeals(p => ({
       ...p,
       [clientId]: { ...p[clientId], [day]: [...(p[clientId]?.[day]||[]), newSlot] }
     }));
+    try {
+      await upsertMealSelection(clientId, day, nextSlot, { mealIds:[], deliveryTime:"", snackId:null, note:"" });
+    } catch(e){ console.error(e); }
   };
 
-  const removeSlot = (clientId, day, slotId) => {
+  const removeSlot = async (clientId, day, slotId) => {
+    const slot = meals[clientId]?.[day]?.find(s=>s.id===slotId);
     setMeals(p => ({
       ...p,
       [clientId]: { ...p[clientId], [day]: (p[clientId]?.[day]||[]).filter(s=>s.id!==slotId) }
     }));
+    if (slot?.slot) {
+      try {
+        const {deleteMealSelection} = await import("./lib/supabase");
+        await deleteMealSelection(clientId, day, slot.slot);
+      } catch(e){ console.error(e); }
+    }
   };
 
   const updateSlot = async (clientId, day, slotId, field, value) => {
-    // Calculate updated slots BEFORE setMeals (state not updated yet)
     const updated = (meals[clientId]?.[day]||[]).map(s =>
       s.id === slotId ? {...s, [field]: value} : s
     );
-    setMeals(p => ({
-      ...p,
-      [clientId]: { ...p[clientId], [day]: updated }
-    }));
+    setMeals(p => ({ ...p, [clientId]: { ...p[clientId], [day]: updated } }));
+    const slot = updated.find(s=>s.id===slotId);
+    if (!slot) return;
     try {
-      await upsertMealSelection(clientId, day, {
-        meal1: JSON.stringify(updated),
-        meal2: "—", meal3: "—", snack: "", note: "__multi__"
+      await upsertMealSelection(clientId, day, slot.slot||1, {
+        mealIds:      slot.meals || [],
+        deliveryTime: slot.time  || "",
+        snackId:      slot.snackId || null,
+        note:         slot.note  || "",
       });
       flash();
     } catch(e){ console.error(e); }
@@ -782,14 +807,15 @@ export default function App() {
       newMeals[mealIndex] = value;
       return {...s, meals: newMeals};
     });
-    setMeals(p => ({
-      ...p,
-      [clientId]: { ...p[clientId], [day]: updated }
-    }));
+    setMeals(p => ({ ...p, [clientId]: { ...p[clientId], [day]: updated } }));
+    const slot = updated.find(s=>s.id===slotId);
+    if (!slot) return;
     try {
-      await upsertMealSelection(clientId, day, {
-        meal1: JSON.stringify(updated),
-        meal2: "—", meal3: "—", snack: "", note: "__multi__"
+      await upsertMealSelection(clientId, day, slot.slot||1, {
+        mealIds:      slot.meals || [],
+        deliveryTime: slot.time  || "",
+        snackId:      slot.snackId || null,
+        note:         slot.note  || "",
       });
       flash();
     } catch(e){ console.error(e); }
@@ -831,7 +857,7 @@ export default function App() {
         const defaultMeals = {};
         for (const day of DAYS) {
           defaultMeals[day] = [];
-          await upsertMealSelection(saved.id, day, { meal1:"", meal2:"—", meal3:"—", snack:"", note:"" });
+          // No need to pre-create rows — slots are created on demand
         }
         setMeals(p=>({...p,[saved.id]:defaultMeals}));
       }
@@ -915,11 +941,11 @@ export default function App() {
         num: i+1,
         time,
         name: c.name,
-        plan: c.plan,
+        plan: c.planName,
         address: c.address || "TBC",
         access: c.access || "—",
         meals: (slot.meals||[]).filter(Boolean),
-        snack: slot.snack || "—",
+        snack: slot.snackId ? mealName(slot.snackId) : slot.snack || "—",
         note: slot.note || c.customizations || "—",
       }))
     );
@@ -1232,7 +1258,7 @@ export default function App() {
                     <tbody>{active.map(c=>(
                       <tr key={c.id}>
                         <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                        <td><PlanBadge planName={c.plan} plans={plans}/></td>
+                        <td><PlanBadge planName={c.planName} plans={plans}/></td>
                         <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓ Paid":"Unpaid"}</button></td>
                         <td><RenewalBadge c={c}/></td>
                       </tr>
@@ -1243,7 +1269,7 @@ export default function App() {
                 <div className="panel" style={{padding:14}}>
                   <div className="sec-title" style={{marginBottom:12}}>Plan Distribution</div>
                   {plans.map(pd=>{
-                    const cnt=active.filter(c=>c.plan===pd.name).length;
+                    const cnt=active.filter(c=>c.planName===pd.name).length;
                     if(!cnt) return null;
                     const pct=Math.round((cnt/active.length)*100);
                     return (
@@ -1324,8 +1350,8 @@ export default function App() {
                       <td style={{color:"var(--muted)"}}>{c.phone||"—"}</td>
                       <td><span className="bx bx-gr">{c.language}</span></td>
                       <td><span className="chip">{c.district||"—"}</span></td>
-                      <td><PlanBadge planName={c.plan} plans={plans}/></td>
-                      <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===c.plan)?.price||0}</td>
+                      <td><PlanBadge planName={c.planName} plans={plans}/></td>
+                      <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
                       <td>{c.status==="Active"?<span className="bx bx-g">Active</span>:c.status==="Paused"?<span className="bx bx-a">Paused</span>:<span className="bx bx-gr">Inactive</span>}</td>
                       <td><RenewalBadge c={c}/></td>
                       <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓":"Unpaid"}</button></td>
@@ -1357,7 +1383,7 @@ export default function App() {
                     <div className="client-card" key={c.id}>
                       <div className="client-card-hd">
                         <div className="client-card-name">{c.name}</div>
-                        <PlanBadge planName={c.plan} plans={plans}/>
+                        <PlanBadge planName={c.planName} plans={plans}/>
                         {c.customizations&&<span style={{fontSize:10,color:"#fcd34d"}}>⚠️ {c.customizations}</span>}
                       </div>
 
@@ -1382,7 +1408,7 @@ export default function App() {
                                 {(slot.meals||[""]).map((meal,mi)=>(
                                   <div key={mi} style={{display:"flex",gap:4,alignItems:"center"}}>
                                     <select className="msel" value={meal||""} onChange={e=>updateSlotMeal(c.id,mealDay,slot.id,mi,e.target.value)} style={{flex:1}}>
-                                      <MealOptions menu={menu} extraItems={customItems}/>
+                                      <MealOptions menu={menu} day={mealDay} extraItems={customItems}/>
                                     </select>
                                     {(slot.meals||[]).length>1&&(
                                       <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none",padding:"2px 6px"}} onClick={()=>removeMealFromSlot(c.id,mealDay,slot.id,mi)}>✕</button>
@@ -1396,12 +1422,11 @@ export default function App() {
                             {/* Snack */}
                             <div className="slot-field slot-field-sm">
                               <label>Snack</label>
-                              <select className="msel" value={slot.snack||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"snack",e.target.value)}>
+                              <select className="msel" value={slot.snackId||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"snackId",e.target.value)}>
                                 <option value="">— none —</option>
-                                {[...new Set(DAYS.map(d=>menu[d]?.snack).filter(Boolean))].map(s=>(
-                                  <option key={s} value={s}>{s}</option>
+                                {[...new Set(DAYS.map(d=>menu[d]?.snackObj).filter(Boolean))].map(s=>(
+                                  <option key={s.id} value={s.id}>{s.name}</option>
                                 ))}
-                                {customItems.map(i=><option key={i} value={i}>{i}</option>)}
                               </select>
                             </div>
 
@@ -1525,7 +1550,7 @@ export default function App() {
                   <tbody>{active.filter(c=>c.customizations||c.allergies).map(c=>(
                     <tr key={c.id}>
                       <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                      <td><PlanBadge planName={c.plan} plans={plans}/></td>
+                      <td><PlanBadge planName={c.planName} plans={plans}/></td>
                       <td style={{color:"#f87171"}}>{c.allergies||"—"}</td>
                       <td style={{color:"#fcd34d"}}>{c.customizations||"—"}</td>
                       <td style={{color:"var(--muted)"}}>{c.access||"—"}</td>
@@ -1554,15 +1579,15 @@ export default function App() {
                       <tr key={slot.id}>
                         <td style={{color:"var(--dim)"}}>{i+1}</td>
                         <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                        <td><PlanBadge planName={c.plan} plans={plans}/></td>
+                        <td><PlanBadge planName={c.planName} plans={plans}/></td>
                         <td style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",color:"var(--muted)"}}>{c.address||"TBC"}</td>
                         <td style={{color:"var(--muted)",fontSize:10}}>{c.access||"—"}</td>
                         <td style={{maxWidth:180}}>
                           {(slot.meals||[]).filter(Boolean).map((m,i)=>(
-                            <div key={i} style={{fontSize:10,color:"#ccc"}}>{m}</div>
+                            <div key={i} style={{fontSize:10,color:"#ccc"}}>{mealName(m)||m}</div>
                           ))}
                         </td>
-                        <td style={{fontSize:10,color:"var(--blue)"}}>{slot.snack||"—"}</td>
+                        <td style={{fontSize:10,color:"var(--blue)"}}>{slot.snackId ? mealName(slot.snackId) : slot.snack||"—"}</td>
                         <td style={{color:"#fcd34d",fontSize:10}}>{slot.note||c.customizations||"—"}</td>
                         <td><button className={`bx bx-clk ${checks["d_"+slot.id]?"bx-g":"bx-gr"}`} onClick={()=>toggleCheck("d_"+slot.id)}>{checks["d_"+slot.id]?"✓ Done":"Pending"}</button></td>
                       </tr>
@@ -1581,7 +1606,7 @@ export default function App() {
                   <tbody>{overdue.map(c=>(
                     <tr key={c.id}>
                       <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                      <td><PlanBadge planName={c.plan} plans={plans}/></td>
+                      <td><PlanBadge planName={c.planName} plans={plans}/></td>
                       <td style={{color:"#f87171"}}>{fmtDate(c.expiryDate)}</td>
                       <td><span className="bx bx-r">{Math.abs(daysUntil(c.expiryDate))}d overdue</span></td>
                       <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"Paid":"Unpaid"}</button></td>
@@ -1597,10 +1622,10 @@ export default function App() {
                   {renewDue.map(c=>(
                     <tr key={c.id}>
                       <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                      <td><PlanBadge planName={c.plan} plans={plans}/></td>
+                      <td><PlanBadge planName={c.planName} plans={plans}/></td>
                       <td style={{color:"var(--amber)"}}>{fmtDate(c.expiryDate)}</td>
                       <td><RenewalBadge c={c}/></td>
-                      <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===c.plan)?.price||0}</td>
+                      <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
                       <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-a"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓ Paid":"Confirm"}</button></td>
                     </tr>
                   ))}
@@ -1613,7 +1638,7 @@ export default function App() {
                 <tbody>{active.map(c=>(
                   <tr key={c.id}>
                     <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                    <td><PlanBadge planName={c.plan} plans={plans}/></td>
+                    <td><PlanBadge planName={c.planName} plans={plans}/></td>
                     <td style={{color:"var(--muted)"}}>{fmtDate(c.startDate)}</td>
                     <td style={{color:"var(--muted)"}}>{fmtDate(c.expiryDate)}</td>
                     <td><RenewalBadge c={c}/></td>
@@ -1629,8 +1654,8 @@ export default function App() {
             {tab==="payments"&&<>
               <div className="kpis" style={{gridTemplateColumns:"repeat(3,1fr)"}}>
                 {[
-                  {lbl:"Collected This Week", val:`¥${active.filter(c=>c.paid).reduce((s,c)=>s+(plans.find(p=>p.name===c.plan)?.price||0),0)}`, c:"var(--green)"},
-                  {lbl:"Pending / Unpaid",    val:`¥${unpaid.reduce((s,c)=>s+(plans.find(p=>p.name===c.plan)?.price||0),0)}`,                    c:"var(--amber)"},
+                  {lbl:"Collected This Week", val:`¥${active.filter(c=>c.paid).reduce((s,c)=>s+(c.planObj?.price||0),0)}`, c:"var(--green)"},
+                  {lbl:"Pending / Unpaid",    val:`¥${unpaid.reduce((s,c)=>s+(c.planObj?.price||0),0)}`,                    c:"var(--amber)"},
                   {lbl:"Total LTV All Time",  val:`¥${clients.reduce((s,c)=>s+(c.ltv||0),0)}`,                                                    c:"var(--blue)"},
                 ].map((k,i)=>(
                   <div className="kpi" key={i} style={{"--kc":k.c}}>
@@ -1646,8 +1671,8 @@ export default function App() {
                   <tbody>{unpaid.map(c=>(
                     <tr key={c.id}>
                       <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                      <td><PlanBadge planName={c.plan} plans={plans}/></td>
-                      <td style={{color:"#f87171",fontWeight:600}}>¥{plans.find(p=>p.name===c.plan)?.price||0}</td>
+                      <td><PlanBadge planName={c.planName} plans={plans}/></td>
+                      <td style={{color:"#f87171",fontWeight:600}}>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
                       <td style={{color:"var(--muted)"}}>{c.phone||"—"}</td>
                       <td><span className="chip">{c.district||"—"}</span></td>
                       <td><button className="btn btn-grn btn-sm" onClick={()=>togglePaid(c.id)}>Mark Paid</button></td>
@@ -1661,8 +1686,8 @@ export default function App() {
                 <tbody>{active.map(c=>(
                   <tr key={c.id}>
                     <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                    <td><PlanBadge planName={c.plan} plans={plans}/></td>
-                    <td>¥{plans.find(p=>p.name===c.plan)?.price||0}</td>
+                    <td><PlanBadge planName={c.planName} plans={plans}/></td>
+                    <td>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
                     <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓ Paid":"Unpaid"}</button></td>
                     <td style={{color:"var(--green)"}}>¥{c.amountPaid}</td>
                     <td><RenewalBadge c={c}/></td>
@@ -1685,7 +1710,7 @@ export default function App() {
                       </div>
                       <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:800,color:pd.color}}>¥{pd.price}</div>
                     </div>
-                    <div style={{fontSize:10,color:"var(--dim)",marginTop:6}}>{active.filter(c=>c.plan===pd.name).length} active client{active.filter(c=>c.plan===pd.name).length!==1?"s":""}</div>
+                    <div style={{fontSize:10,color:"var(--dim)",marginTop:6}}>{active.filter(c=>c.planName===pd.name).length} active client{active.filter(c=>c.planName===pd.name).length!==1?"s":""}</div>
                     <div style={{display:"flex",gap:6,marginTop:10}}>
                       <button className="btn btn-g btn-xs" onClick={()=>openEditPlan(pd)}>Edit</button>
                       <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>deletePlanHandler(pd.id)}>Delete</button>
@@ -1741,13 +1766,13 @@ export default function App() {
                 ):(
                   <div style={{display:"flex",flexDirection:"column",gap:10}}>
                     {unpaid.map(c=>{
-                      const price = plans.find(p=>p.name===c.plan)?.price||0;
+                      const price = plans.find(p=>p.name===c.planName)?.price||0;
                       const lines = [
                         `Hi ${c.name.split(" ")[0]}! 👋`,
                         ``,
                         `Just a reminder that your FIT IGNYTE payment is due.`,
                         ``,
-                        `📋 Plan: ${c.plan}`,
+                        `📋 Plan: ${c.planName}`,
                         `💰 Amount: ¥${price}`,
                         ``,
                         `Please transfer before Monday so we can confirm your meals for next week.`,
@@ -1757,7 +1782,7 @@ export default function App() {
                         <div key={c.id} style={{background:"var(--s3)",border:"1px solid var(--bdr)",borderRadius:6,padding:12}}>
                           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
                             <span style={{color:"#fff",fontWeight:600,fontSize:12}}>{c.name}</span>
-                            <PlanBadge planName={c.plan} plans={plans}/>
+                            <PlanBadge planName={c.planName} plans={plans}/>
                             <span style={{color:"#f87171",fontSize:11,fontWeight:600}}>¥{price}</span>
                           </div>
                           <pre style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:5,padding:10,fontSize:11,color:"#ccc",whiteSpace:"pre-wrap",wordBreak:"break-word",marginBottom:8,lineHeight:1.6}}>{lines}</pre>
@@ -1791,7 +1816,7 @@ export default function App() {
                         ``,
                         `📦 Today's order:`,
                         ...mealsList.map(m=>`  • ${m}`),
-                        slot.snack ? `  • Snack: ${slot.snack}` : "",
+                        slot.snackId ? `  • Snack: ${mealName(slot.snackId)}` : slot.snack ? `  • Snack: ${slot.snack}` : "",
                         slot.time  ? `⏰ ETA: ${slot.time}` : "",
                         ``,
                         `Enjoy your meal! 💪🔥`,
@@ -1801,7 +1826,7 @@ export default function App() {
                         <div key={slot.id} style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:14}}>
                           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
                             <span style={{color:"#fff",fontWeight:600,fontSize:12}}>{c.name}</span>
-                            <PlanBadge planName={c.plan} plans={plans}/>
+                            <PlanBadge planName={c.planName} plans={plans}/>
                             {slot.time&&<span className="bx bx-b">🕐 {slot.time}</span>}
                           </div>
                           <pre style={{background:"var(--s3)",border:"1px solid var(--bdr)",borderRadius:6,padding:12,fontSize:11,color:"#ccc",whiteSpace:"pre-wrap",wordBreak:"break-word",marginBottom:10,lineHeight:1.6}}>{text}</pre>
@@ -1862,7 +1887,7 @@ export default function App() {
                   ["access",       "Building / Access Notes",   "text",     "fg-full"],
                   ["deliveryTime", "Default Delivery Time",     "text",     ""],
                   ["deliveries",   "Deliveries / Day",          "number",   ""],
-                  ["plan",         "Plan",                      "sel_plans",""],
+                  ["planId",       "Plan",                      "sel_plans",""],
                   ["status",       "Status",                    "sel:Active,Inactive,Paused,Trial",""],
                   ["startDate",    "Start Date",                "date",     ""],
                   ["expiryDate",   "Expiry Date",               "date",     ""],
@@ -1878,7 +1903,7 @@ export default function App() {
                     {type==="sel_plans"?(
                       <select className="sel" value={clientForm[k]||""} onChange={e=>cfld(k,e.target.value)}>
                         <option value="">— Select plan —</option>
-                        {plans.map(p=><option key={p.id} value={p.name}>{p.name} · ¥{p.price}/wk</option>)}
+                        {plans.map(p=><option key={p.id} value={p.id}>{p.name} · ¥{p.price}/wk</option>)}
                       </select>
                     ):type==="sel_paid"?(
                       <select className="sel" value={String(clientForm[k])} onChange={e=>cfld(k,e.target.value==="true")}>

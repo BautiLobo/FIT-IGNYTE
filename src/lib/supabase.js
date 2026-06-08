@@ -24,9 +24,15 @@ export async function deletePlan(id) {
 
 // ── CLIENTS ──────────────────────────────────────────────────
 export async function getClients() {
-  const data = check(await supabase.from("clients").select("*").order("id"), "getClients");
+  const data = check(await supabase
+    .from("clients")
+    .select("*, plan:plan_id(id,name,kcal,meals,price,tier,color)")
+    .order("id"), "getClients");
   return (data || []).map(c => ({
     ...c,
+    planId:         c.plan_id         || "",
+    planName:       c.plan?.name      || "",
+    planObj:        c.plan            || null,
     startDate:      c.start_date      || "",
     expiryDate:     c.expiry_date     || "",
     deliveryTime:   c.delivery_time   || "",
@@ -47,7 +53,7 @@ export async function upsertClient(client) {
     access:         client.access         || "",
     deliveries:     client.deliveries     || 1,
     delivery_time:  client.deliveryTime   || "",
-    plan:           client.plan           || null,
+    plan_id:        client.planId         || null,
     status:         client.status         || "Active",
     start_date:     client.startDate      || null,
     expiry_date:    client.expiryDate     || null,
@@ -107,22 +113,53 @@ export async function updateMenuDay(day, { mealIds, snackId }) {
 
 // ── MEAL SELECTIONS ──────────────────────────────────────────
 export async function getMealSelections() {
-  const data = check(await supabase.from("meal_selections").select("*"), "getMealSelections");
-  // Convert array to object indexed by client_id -> day -> row
+  // Join with meal_library to get full meal objects
+  const data = check(
+    await supabase.from("meal_selections")
+      .select("*, snack:snack_id(id,name,kcal,protein,carbs,fat,is_snack)"),
+    "getMealSelections"
+  );
+  // Index by client_id -> day -> array of slots
   const out = {};
   for (const row of (data || [])) {
     const cid = String(row.client_id);
     if (!out[cid]) out[cid] = {};
-    out[cid][row.day] = row;
+    if (!out[cid][row.day]) out[cid][row.day] = [];
+    out[cid][row.day].push({
+      id:           row.id,
+      slot:         row.slot,
+      mealIds:      row.meals_json || [],
+      deliveryTime: row.delivery_time || "",
+      snackId:      row.snack_id || "",
+      snack:        row.snack?.name || "",
+      snackObj:     row.snack || null,
+      note:         row.note || "",
+    });
+    // Sort by slot
+    out[cid][row.day].sort((a,b) => a.slot - b.slot);
   }
   return out;
 }
-export async function upsertMealSelection(clientId, day, { meal1, meal2, meal3, snack, note }) {
+
+export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, snackId, note }) {
   check(await supabase.from("meal_selections").upsert({
-    client_id: clientId, day,
-    meal1: meal1||"", meal2: meal2||"—", meal3: meal3||"—",
-    snack: snack||"", note: note||"",
-  }, { onConflict: "client_id,day" }), "upsertMealSelection");
+    client_id:     clientId,
+    day,
+    slot:          slot || 1,
+    meals_json:    mealIds || [],
+    delivery_time: deliveryTime || "",
+    snack_id:      snackId || null,
+    note:          note || "",
+  }, { onConflict: "client_id,day,slot" }), "upsertMealSelection");
+}
+
+export async function deleteMealSelection(clientId, day, slot) {
+  check(await supabase.from("meal_selections")
+    .delete()
+    .eq("client_id", clientId)
+    .eq("day", day)
+    .eq("slot", slot),
+  "deleteMealSelection");
 }
 
 // ── CHECKLIST ────────────────────────────────────────────────

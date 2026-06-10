@@ -30,6 +30,7 @@ export async function getClients() {
     .order("id"), "getClients");
   return (data || []).map(c => ({
     ...c,
+    plan:           c.plan?.name      || "",
     planId:         c.plan_id         || "",
     planName:       c.plan?.name      || "",
     planObj:        c.plan            || null,
@@ -129,6 +130,7 @@ export async function getMealSelections() {
       id:           row.id,
       slot:         row.slot,
       mealIds:      row.meals_json || [],
+      sauceIds:     row.sauce_ids  || [],
       deliveryTime: row.delivery_time || "",
       snackId:      row.snack_id || "",
       snack:        row.snack?.name || "",
@@ -141,7 +143,7 @@ export async function getMealSelections() {
   return out;
 }
 
-export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, snackId, note }) {
+export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, snackId, note, sauceIds }) {
   check(await supabase.from("meal_selections").upsert({
     client_id:     clientId,
     day,
@@ -150,6 +152,7 @@ export async function upsertMealSelection(clientId, day, slot, { mealIds, delive
     delivery_time: deliveryTime || "",
     snack_id:      snackId || null,
     note:          note || "",
+    sauce_ids:     sauceIds || [],
   }, { onConflict: "client_id,day,slot" }), "upsertMealSelection");
 }
 

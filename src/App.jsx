@@ -267,7 +267,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"];
   const [menuTab,      setMenuTab]      = useState("library");
   const [showAddMeal,  setShowAddMeal]  = useState(false);
-  const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});
+  const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",itemType:"meal",tier:"SMALL"});
   const [draggingMeal, setDraggingMeal] = useState(null);
   const draggingMealRef = useRef(null);
   const [dragOver,     setDragOver]     = useState(null);
@@ -321,6 +321,9 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
         protein: parseInt(mealForm.protein)||0,
         carbs: parseInt(mealForm.carbs)||0,
         fat: parseInt(mealForm.fat)||0,
+        item_type: mealForm.itemType||"meal",
+        tier: mealForm.itemType==="meal" ? (mealForm.tier||"SMALL") : null,
+        is_snack: mealForm.itemType==="snack",
       };
       if(editingMealId) payload.id = editingMealId;
       const saved = await upsertMealLibrary(payload);
@@ -349,7 +352,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
 
   const openEditMeal = (m) => {
     setEditingMealId(m.id);
-    setMealForm({name:m.name,sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:""});
+    setMealForm({name:m.name,sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:"",itemType:m.item_type||"meal",tier:m.tier||"SMALL"});
     setShowAddMeal(true);
   };
 
@@ -388,17 +391,20 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     {menuTab==="library"&&<>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div className="sec-title" style={{marginBottom:0}}>All Meals ({allMeals.length})</div>
-        <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});setEditingMealId(null);setShowAddMeal(true);}}>+ Add Meal</button>
+        <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",itemType:"meal",tier:"SMALL"});setEditingMealId(null);setShowAddMeal(true);}}>+ Add Meal</button>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12}}>
         {allMeals.map((m,i)=>(
           <div key={m.id||i} draggable onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}} onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
-            style={{overflow:"hidden",borderRadius:10,border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,background:"var(--s2)",cursor:"grab",userSelect:"none",position:"relative"}}>
+            style={{overflow:"hidden",borderRadius:10,border:`1px solid ${m.item_type==="sauce"?"#78350f":m.item_type==="snack"?"#166534":m.tier==="BIG"?"#7c2d12":m.tier==="VEG"?"#14532d":"#1e3a5f"}`,background:"var(--s2)",cursor:"grab",userSelect:"none",position:"relative"}}>
             {m.id&&<button onClick={e=>{e.stopPropagation();deleteMealFromLibrary(m.id,m.name);}}
               style={{position:"absolute",top:5,left:5,background:"rgba(0,0,0,0.7)",border:"none",color:"#f87171",width:20,height:20,borderRadius:"50%",cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>✕</button>}
             <div style={{width:"100%",height:90,background:"var(--s3)",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",borderBottom:"1px solid var(--bdr)"}}>
               <span style={{fontSize:10,color:"var(--dim)"}}>No photo yet</span>
-              <span style={{position:"absolute",top:5,right:5,fontSize:8,background:"var(--s1)",color:m.source==="snack"?"#4ade80":"var(--muted)",padding:"2px 5px",borderRadius:3,border:"1px solid var(--bdr)"}}>{m.source==="snack"?"SNACK":"MEAL"}</span>
+              <span style={{position:"absolute",top:5,right:5,fontSize:8,fontWeight:700,padding:"2px 6px",borderRadius:3,
+                background:m.item_type==="sauce"?"#451a03":m.item_type==="snack"?"#052e16":m.tier==="BIG"?"#431407":m.tier==="VEG"?"#052e16":"#0c1a2e",
+                color:m.item_type==="sauce"?"#fbbf24":m.item_type==="snack"?"#4ade80":m.tier==="BIG"?"#fb923c":m.tier==="VEG"?"#4ade80":"#60a5fa",
+              }}>{m.item_type==="sauce"?"SAUCE":m.item_type==="snack"?"SNACK":m.tier||"SMALL"}</span>
             </div>
             <div style={{padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:600,color:"#fff",marginBottom:2}}>{m.name}</div>
@@ -426,8 +432,11 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
           <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:560,overflowY:"auto",paddingRight:4}}>
             {allMeals.map((m,i)=>(
               <div key={i} draggable onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}} onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
-                style={{background:draggingMeal?.id===m.id?"var(--red)":"var(--s2)",border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,borderRadius:8,padding:"10px 12px",fontSize:11,color:draggingMeal?.id===m.id?"#fff":m.source==="snack"?"#4ade80":"#ccc",cursor:"grab",userSelect:"none",lineHeight:1.3,transition:"background .15s",wordBreak:"break-word"}}>
-                {m.source==="snack"&&<span style={{fontSize:8,color:"#4ade80",display:"block",marginBottom:2,letterSpacing:1,fontWeight:700}}>SNACK</span>}
+                style={{background:draggingMeal?.id===m.id?"var(--red)":"var(--s2)",border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,borderRadius:8,padding:"10px 12px",fontSize:11,color:draggingMeal?.id===m.id?"#fff":m.item_type==="sauce"?"#fbbf24":m.item_type==="snack"?"#4ade80":"#ccc",cursor:"grab",userSelect:"none",lineHeight:1.3,transition:"background .15s",wordBreak:"break-word"}}>
+                <span style={{fontSize:7,fontWeight:700,display:"block",marginBottom:2,letterSpacing:1,
+                color:m.item_type==="sauce"?"#fbbf24":m.item_type==="snack"?"#4ade80":m.tier==="BIG"?"#fb923c":m.tier==="VEG"?"#4ade80":"#60a5fa"}}>
+                {m.item_type==="sauce"?"SAUCE":m.item_type==="snack"?"SNACK":m.tier||"SMALL"}
+              </span>
                 {m.name}
               </div>
             ))}
@@ -508,8 +517,27 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
             <input id="meal-photo-inp" type="file" accept="image/*" style={{display:"none"}} onChange={handlePhotoDrop}/>
           </div>
           <div style={{display:"grid",gap:10}}>
-            <div><div className="form-label">Meal name *</div><input className="form-inp" value={mealForm.name} onChange={e=>setMealForm(p=>({...p,name:e.target.value}))} placeholder="e.g. Minced Beef Bowl"/></div>
-            <div><div className="form-label">Sauce</div><input className="form-inp" value={mealForm.sauce} onChange={e=>setMealForm(p=>({...p,sauce:e.target.value}))} placeholder="e.g. Chimichurri"/></div>
+            <div><div className="form-label">Name *</div><input className="form-inp" value={mealForm.name} onChange={e=>setMealForm(p=>({...p,name:e.target.value}))} placeholder="e.g. Minced Beef Bowl"/></div>
+            <div>
+              <div className="form-label">Type</div>
+              <div style={{display:"flex",gap:6}}>
+                {[["meal","Meal"],["snack","Snack"],["sauce","Sauce"]].map(([t,lbl])=>(
+                  <button key={t} type="button" className={`btn btn-sm ${mealForm.itemType===t?"btn-r":"btn-g"}`} style={{flex:1}} onClick={()=>setMealForm(p=>({...p,itemType:t}))}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {mealForm.itemType==="meal"&&<div>
+              <div className="form-label">Plan</div>
+              <div style={{display:"flex",gap:6}}>
+                {[["SMALL","Lean Fit"],["BIG","Muscle"],["VEG","Vegetarian"]].map(([t,lbl])=>(
+                  <button key={t} type="button" className={`btn btn-sm ${mealForm.tier===t?"btn-r":"btn-g"}`} style={{flex:1}} onClick={()=>setMealForm(p=>({...p,tier:t}))}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}}>
               {[["kcal","Kcal"],["protein","Protein g"],["carbs","Carbs g"],["fat","Fat g"]].map(([k,lbl])=>(
                 <div key={k}><div className="form-label">{lbl}</div><input className="form-inp" type="number" value={mealForm[k]||""} onChange={e=>setMealForm(p=>({...p,[k]:e.target.value}))} placeholder="0"/></div>
@@ -604,6 +632,7 @@ export default function App() {
               time:   s.deliveryTime || "",
               meals:  s.mealIds || [],   // array of meal IDs
               snack:  s.snack || "",
+              sauceIds: s.sauceIds || [],
               snackId: s.snackId || "",
               snackObj: s.snackObj || null,
               note:   s.note || "",
@@ -763,7 +792,7 @@ export default function App() {
   const addSlot = async (clientId, day) => {
     const existingSlots = meals[clientId]?.[day] || [];
     const nextSlot = existingSlots.length + 1;
-    const newSlot = { id: uid(), slot: nextSlot, time: "", meals: [], snack: "", snackId: "", note: "" };
+    const newSlot = { id: uid(), slot: nextSlot, time: "", meals: [], snack: "", snackId: "", sauceIds: [], note: "" };
     setMeals(p => ({
       ...p,
       [clientId]: { ...p[clientId], [day]: [...(p[clientId]?.[day]||[]), newSlot] }
@@ -796,10 +825,11 @@ export default function App() {
     if (!slot) return;
     try {
       await upsertMealSelection(clientId, day, slot.slot||1, {
-        mealIds:      slot.meals || [],
-        deliveryTime: slot.time  || "",
-        snackId:      slot.snackId || null,
-        note:         slot.note  || "",
+        mealIds:      slot.meals    || [],
+        deliveryTime: slot.time     || "",
+        snackId:      slot.snackId  || null,
+        note:         slot.note     || "",
+        sauceIds:     slot.sauceIds || [],
       });
       flash();
     } catch(e){ console.error(e); }
@@ -817,10 +847,11 @@ export default function App() {
     if (!slot) return;
     try {
       await upsertMealSelection(clientId, day, slot.slot||1, {
-        mealIds:      slot.meals || [],
-        deliveryTime: slot.time  || "",
-        snackId:      slot.snackId || null,
-        note:         slot.note  || "",
+        mealIds:      slot.meals    || [],
+        deliveryTime: slot.time     || "",
+        snackId:      slot.snackId  || null,
+        note:         slot.note     || "",
+        sauceIds:     slot.sauceIds || [],
       });
       flash();
     } catch(e){ console.error(e); }
@@ -949,9 +980,13 @@ export default function App() {
         plan: c.planName,
         address: c.address || "TBC",
         access: c.access || "—",
-        meals: (slot.meals||[]).filter(Boolean).map(id => mealName(id) || id),
+        meals: (slot.meals||[]).filter(Boolean).map((id,mi) => ({
+          name:  mealName(id) || id,
+          sauce: (slot.sauceIds||[])[mi] ? mealName((slot.sauceIds||[])[mi]) : "",
+        })),
         snack: slot.snackId ? mealName(slot.snackId) : slot.snack || "—",
         note: slot.note || c.customizations || "—",
+        allergies: c.allergies || "",
       }))
     );
 
@@ -995,7 +1030,7 @@ export default function App() {
       <col class="c5"><col class="c6"><col class="c7"><col class="c8"><col class="c9">
     </colgroup>
     <thead>
-      <tr><th>#</th><th>Time</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Notes</th><th>✓</th></tr>
+      <tr><th>#</th><th>Time</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Notes</th><th>⚠️ Allergies</th><th>✓</th></tr>
     </thead>
     <tbody>
       ${rows.map((r,i) => `
@@ -1006,9 +1041,10 @@ export default function App() {
           <td>${r.plan}</td>
           <td>${r.address}</td>
           <td>${r.access}</td>
-          <td>${r.meals.map(m=>`<span class="meal">• ${m}</span>`).join("") || "—"}</td>
+          <td>${r.meals.map(m=>"<span class=\"meal\">\u2022 " + (m.name||m) + (m.sauce ? " <span style=\"color:#888;font-size:7.5px;font-style:italic\">(" + m.sauce + ")</span>" : "") + "</span>").join("") || "—"}</td>
           <td>${r.snack}</td>
           <td class="note">${r.note}</td>
+          <td style="color:#dc2626;font-weight:bold;font-size:8px">${r.allergies||"—"}</td>
           <td><span class="check"></span></td>
         </tr>
       `).join("")}
@@ -1412,8 +1448,21 @@ export default function App() {
                               <div style={{display:"flex",flexDirection:"column",gap:5}}>
                                 {(slot.meals||[""]).map((meal,mi)=>(
                                   <div key={mi} style={{display:"flex",gap:4,alignItems:"center"}}>
-                                    <select className="msel" value={meal||""} onChange={e=>updateSlotMeal(c.id,mealDay,slot.id,mi,e.target.value)} style={{flex:1}}>
+                                    <select className="msel" value={meal||""} onChange={e=>updateSlotMeal(c.id,mealDay,slot.id,mi,e.target.value)} style={{flex:2}}>
                                       <MealOptions menu={menu} extraItems={customItems}/>
+                                    </select>
+                                    <select className="msel" style={{flex:1,fontSize:10}}
+                                      value={(slot.sauceIds||[])[mi]||""}
+                                      onChange={e=>{
+                                        const sv=[...(slot.sauceIds||[])];
+                                        while(sv.length<=mi) sv.push("");
+                                        sv[mi]=e.target.value;
+                                        updateSlot(c.id,mealDay,slot.id,"sauceIds",sv);
+                                      }}>
+                                      <option value="">— sauce —</option>
+                                      {mealLibraryState.filter(m=>m.item_type==="sauce").map(s=>(
+                                        <option key={s.id} value={s.id}>{s.name}</option>
+                                      ))}
                                     </select>
                                     {(slot.meals||[]).length>1&&(
                                       <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none",padding:"2px 6px"}} onClick={()=>removeMealFromSlot(c.id,mealDay,slot.id,mi)}>✕</button>

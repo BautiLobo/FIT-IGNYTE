@@ -270,7 +270,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"];
   const [menuTab,      setMenuTab]      = useState("library");
   const [showAddMeal,  setShowAddMeal]  = useState(false);
-  const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});
+  const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",photoFile:null});
   const [draggingMeal, setDraggingMeal] = useState(null);
   const draggingMealRef = useRef(null);
   const [dragOver,     setDragOver]     = useState(null);
@@ -316,7 +316,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     if(!mealForm.name.trim()){alert("Meal name is required");return;}
     setSavingMeal(true);
     try {
-      const {upsertMealLibrary} = await import("./lib/supabase");
+      const {upsertMealLibrary, uploadMealPhoto, supabase} = await import("./lib/supabase");
       const payload = {
         name: mealForm.name.trim(),
         sauce: mealForm.sauce||"",
@@ -326,7 +326,16 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
         fat: parseInt(mealForm.fat)||0,
       };
       if(editingMealId) payload.id = editingMealId;
+      // First save to get the ID
       const saved = await upsertMealLibrary(payload);
+      // Then upload photo if one was selected
+      if(mealForm.photoFile) {
+        try {
+          const url = await uploadMealPhoto(mealForm.photoFile, saved.id);
+          saved.photo_url = url;
+          await upsertMealLibrary({...saved, photo_url: url});
+        } catch(photoErr){ console.error("Photo upload failed:", photoErr); }
+      }
       setMealLibrary(p=>{
         const idx = p.findIndex(m=>m.id===saved.id);
         return idx>=0 ? p.map((m,i)=>i===idx?saved:m) : [...p,saved];
@@ -352,7 +361,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
 
   const openEditMeal = (m) => {
     setEditingMealId(m.id);
-    setMealForm({name:m.name,sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:""});
+    setMealForm({name:m.name,sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:m.photo_url||"",photoFile:null});
     setShowAddMeal(true);
   };
 
@@ -360,7 +369,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     e.preventDefault();
     const file=e.dataTransfer?.files[0]||e.target?.files?.[0];
     if(file&&file.type.startsWith("image/")){
-      setMealForm(p=>({...p,photoUrl:URL.createObjectURL(file)}));
+      setMealForm(p=>({...p,photoFile:file,photoUrl:URL.createObjectURL(file)}));
     }
   };
 
@@ -401,7 +410,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     {menuTab==="library"&&<>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div className="sec-title" style={{marginBottom:0}}>All Meals ({allMeals.length})</div>
-        <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});setEditingMealId(null);setShowAddMeal(true);}}>+ Add Meal</button>
+        <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",photoFile:null});setEditingMealId(null);setShowAddMeal(true);}}>+ Add Meal</button>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12}}>
         {allMeals.map((m,i)=>(
@@ -410,7 +419,9 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
             {m.id&&<button onClick={e=>{e.stopPropagation();deleteMealFromLibrary(m.id,m.name);}}
               style={{position:"absolute",top:5,left:5,background:"rgba(0,0,0,0.7)",border:"none",color:"#f87171",width:20,height:20,borderRadius:"50%",cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>✕</button>}
             <div style={{width:"100%",height:90,background:"var(--s3)",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",borderBottom:"1px solid var(--bdr)"}}>
-              <span style={{fontSize:10,color:"var(--dim)"}}>No photo yet</span>
+              {m.photo_url
+                ? <img src={m.photo_url} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={m.name}/>
+                : <span style={{fontSize:10,color:"var(--dim)"}}>No photo yet</span>}
               <span style={{position:"absolute",top:5,right:5,fontSize:8,fontWeight:700,padding:"2px 6px",borderRadius:3,
                 background:m.item_type==="sauce"?"#451a03":m.item_type==="snack"?"#052e16":m.tier==="BIG"?"#431407":m.tier==="VEG"?"#052e16":"#0c1a2e",
                 color:m.item_type==="sauce"?"#fbbf24":m.item_type==="snack"?"#4ade80":m.tier==="BIG"?"#fb923c":m.tier==="VEG"?"#4ade80":"#60a5fa",

@@ -26,9 +26,9 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 
 const BLANK_CLIENT = {
   name:"", phone:"", language:"EN", district:"", address:"", access:"",
-  deliveries:1, deliveryTime:"", planId:"", planName:"", status:"Active",
-  startDate:"", expiryDate:"", paid:false, amountPaid:0,
-  goal:"", allergies:"", customizations:"", acqChannel:"", ltv:0, weeks:0,
+  planId:"", planName:"", status:"Active",
+  startDate:"", expiryDate:"", paid:false,
+  goal:"", allergies:"", customizations:"", ltv:0, weeks:0,
 };
 const BLANK_PLAN = { id:"", name:"", kcal:0, meals:1, price:0, tier:"", color:"#38BDF8" };
 
@@ -300,17 +300,22 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
 
   // allMeals = meal_library + any snacks from weekly menu not already in library
   const allMeals = useMemo(()=>{
-    const libNames = new Set(mealLibrary.map(m=>m.name));
-    const snacks = [];
-    DAYS.forEach(d=>{
-      const s=menu[d]?.snack;
-      if(s&&s!=="—"&&!libNames.has(s)) snacks.push({name:s,source:"snack",id:null});
-    });
-    return [
-      ...mealLibrary.map(m=>({...m,source:m.sauce?"meal":"meal"})).sort((a,b)=>a.name.localeCompare(b.name)),
-      ...snacks
-    ];
-  },[mealLibrary, menu]);
+    const tierOrder = {SMALL:0, BIG:1, VEG:2};
+    const typeOrder = {meal:0, snack:1, sauce:2};
+    return mealLibrary
+      .filter(m => {
+        if (m.item_type === "sauce") return menuTab !== "planner"; // sauces only in library
+        if (menuTab === "planner" && m.item_type === "meal") return m.tier === menuTier;
+        return true;
+      })
+      .map(m=>({...m, source:m.item_type||"meal"}))
+      .sort((a,b)=>{
+        const td = (typeOrder[a.item_type]||0)-(typeOrder[b.item_type]||0);
+        if (td !== 0) return td;
+        const od = (tierOrder[a.tier]||0)-(tierOrder[b.tier]||0);
+        return od !== 0 ? od : a.name.localeCompare(b.name);
+      });
+  },[mealLibrary, menuTier, menuTab]);
 
   const saveMealToLibrary = async () => {
     if(!mealForm.name.trim()){alert("Meal name is required");return;}
@@ -324,6 +329,9 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
         protein: parseInt(mealForm.protein)||0,
         carbs: parseInt(mealForm.carbs)||0,
         fat: parseInt(mealForm.fat)||0,
+        item_type: mealForm.itemType||"meal",
+        tier: mealForm.itemType==="meal" ? (mealForm.tier||"SMALL") : null,
+        is_snack: mealForm.itemType==="snack",
       };
       if(editingMealId) payload.id = editingMealId;
       // First save to get the ID
@@ -381,11 +389,11 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     const dm = tierMenu[day] || {mealIds:[], snack:"", snackId:""};
     const newIds = [...(dm.mealIds||[])];
     if(isSnack){
-      upsertMenuDay(day, {mealIds:newIds, snackId:meal.id});
+      upsertMenuDay(day, menuTier, {mealIds:newIds, snackId:meal.id});
     } else {
       while(newIds.length <= si) newIds.push("");
       newIds[si] = meal.id;
-      upsertMenuDay(day, {mealIds:newIds.filter(Boolean), snackId:dm.snackId||""});
+      upsertMenuDay(day, menuTier, {mealIds:newIds.filter(Boolean), snackId:dm.snackId||""});
     }
     draggingMealRef.current = null;
     setDraggingMeal(null); setDragOver(null);
@@ -397,7 +405,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
       <button className={`btn btn-sm ${menuTab==="planner"?"btn-r":"btn-g"}`} onClick={()=>setMenuTab("planner")} style={{flex:1}}>📅 Weekly Planner</button>
     </div>
     {menuTab==="planner"&&<div style={{display:"flex",gap:6,marginBottom:16}}>
-      {[["SMALL","💪 Lean Fit","#60a5fa"],["BIG","🏋️ Muscle","#fb923c"],["VEG","🥦 Vegetarian","#4ade80"]].map(([t,lbl,col])=>(
+      {[["SMALL","Lean Fit","#60a5fa"],["BIG","Muscle","#fb923c"],["VEG","Vegetarian","#4ade80"]].map(([t,lbl,col])=>(
         <button key={t} onClick={()=>setMenuTier(t)}
           style={{flex:1,padding:"8px",borderRadius:8,border:`2px solid ${menuTier===t?col:"var(--bdr)"}`,
             background:menuTier===t?`${col}22`:"var(--s2)",color:menuTier===t?col:"var(--muted)",
@@ -538,8 +546,27 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
             <input id="meal-photo-inp" type="file" accept="image/*" style={{display:"none"}} onChange={handlePhotoDrop}/>
           </div>
           <div style={{display:"grid",gap:10}}>
-            <div><div className="form-label">Meal name *</div><input className="form-inp" value={mealForm.name} onChange={e=>setMealForm(p=>({...p,name:e.target.value}))} placeholder="e.g. Minced Beef Bowl"/></div>
-            <div><div className="form-label">Sauce</div><input className="form-inp" value={mealForm.sauce} onChange={e=>setMealForm(p=>({...p,sauce:e.target.value}))} placeholder="e.g. Chimichurri"/></div>
+            <div><div className="form-label">Name *</div><input className="form-inp" value={mealForm.name} onChange={e=>setMealForm(p=>({...p,name:e.target.value}))} placeholder="e.g. Minced Beef Bowl"/></div>
+            <div>
+              <div className="form-label">Type</div>
+              <div style={{display:"flex",gap:6}}>
+                {[["meal","Meal"],["snack","Snack"],["sauce","Sauce"]].map(([t,lbl])=>(
+                  <button key={t} type="button" className={`btn btn-sm ${mealForm.itemType===t?"btn-r":"btn-g"}`} style={{flex:1}} onClick={()=>setMealForm(p=>({...p,itemType:t}))}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {mealForm.itemType==="meal"&&<div>
+              <div className="form-label">Plan</div>
+              <div style={{display:"flex",gap:6}}>
+                {[["SMALL","Lean Fit"],["BIG","Muscle"],["VEG","Vegetarian"]].map(([t,lbl])=>(
+                  <button key={t} type="button" className={`btn btn-sm ${mealForm.tier===t?"btn-r":"btn-g"}`} style={{flex:1}} onClick={()=>setMealForm(p=>({...p,tier:t}))}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}}>
               {[["kcal","Kcal"],["protein","Protein g"],["carbs","Carbs g"],["fat","Fat g"]].map(([k,lbl])=>(
                 <div key={k}><div className="form-label">{lbl}</div><input className="form-inp" type="number" value={mealForm[k]||""} onChange={e=>setMealForm(p=>({...p,[k]:e.target.value}))} placeholder="0"/></div>
@@ -771,7 +798,7 @@ export default function App() {
   const togglePaid = async id => {
     const c = clients.find(x=>x.id===id);
     if (!c) return;
-    const updated = {...c, paid:!c.paid};
+    const updated = {...c, paid:!c.paid, planId: c.planId||c.plan_id||""};
     setClients(p=>p.map(x=>x.id===id?updated:x));
     try { await upsertClient(updated); flash(); } catch(e){ console.error(e); }
   };
@@ -887,7 +914,29 @@ export default function App() {
   const saveClient = async () => {
     if (!clientForm.name.trim()) return;
     try {
-      const saved = await upsertClient(clientForm);
+      // Ensure planId is set correctly (clientForm might have plan as object from spread)
+      const formToSave = {
+        ...clientForm,
+        planId: clientForm.planId || (typeof clientForm.plan === "object" ? clientForm.plan?.id : "") || "",
+      };
+      const rawSaved = await upsertClient(formToSave);
+      // Find the plan object from our local plans list
+      const savedPlanObj = plans.find(p => p.id === formToSave.planId) || formToSave.planObj || null;
+      const saved = {
+        ...rawSaved,
+        plan:         savedPlanObj?.name       || formToSave.planName || "",
+        planId:       rawSaved.plan_id         || formToSave.planId   || "",
+        planName:     savedPlanObj?.name       || formToSave.planName || "",
+        planObj:      savedPlanObj,
+        startDate:    rawSaved.start_date      || "",
+        expiryDate:   rawSaved.expiry_date     || "",
+        deliveryTime: rawSaved.delivery_time   || "",
+        amountPaid:   rawSaved.amount_paid     || 0,
+        acqChannel:   rawSaved.acq_channel     || "",
+        wechatOpenid: rawSaved.wechat_openid   || "",
+        statusNote:   rawSaved.status_note     || "",
+        pausedUntil:  rawSaved.paused_until    || null,
+      };
       if (editClientId) {
         setClients(p=>p.map(c=>c.id===editClientId?saved:c));
       } else {
@@ -1010,22 +1059,25 @@ export default function App() {
     h2 { font-size: 9px; color: #666; margin: 0 0 10px; font-weight: normal; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     col.c0  { width: 3%; }
-    col.c1  { width: 6%; }
-    col.c2  { width: 9%; }
-    col.c3  { width: 9%; }
-    col.c4  { width: 16%; }
-    col.c5  { width: 8%; }
-    col.c6  { width: 30%; }
+    col.c1  { width: 5%; }
+    col.c2  { width: 8%; }
+    col.c3  { width: 8%; }
+    col.c4  { width: 13%; }
+    col.c5  { width: 6%; }
+    col.c6  { width: 20%; }
     col.c7  { width: 7%; }
-    col.c8  { width: 9%; }
-    col.c9  { width: 3%; }
+    col.c8  { width: 8%; }
+    col.c9  { width: 13%; }
+    col.c10 { width: 5%; }
+    col.c11 { width: 4%; }
     th { background: #111; color: #fff; padding: 4px 5px; text-align: left; font-size: 8px; text-transform: uppercase; letter-spacing: .5px; }
     td { padding: 4px 5px; border-bottom: 1px solid #e0e0e0; vertical-align: top; font-size: 8.5px; word-wrap: break-word; }
     tr:nth-child(even) td { background: #f7f7f7; }
     .time { font-weight: bold; color: #e8342a; white-space: nowrap; }
     .name { font-weight: bold; }
     .note { color: #b45309; font-style: italic; }
-    .meal { display: block; line-height: 1.4; }
+    .meal { display: block; line-height: 1.5; }
+    .sauce-cell { color: #6b7280; font-size: 8px; font-style: italic; display: block; line-height: 1.5; }
     .check { width: 14px; height: 14px; border: 1.5px solid #aaa; display: inline-block; }
     @media print { body { margin: 5px; } button { display: none; } }
   </style>
@@ -1036,10 +1088,10 @@ export default function App() {
   <table>
     <colgroup>
       <col class="c0"><col class="c1"><col class="c2"><col class="c3"><col class="c4">
-      <col class="c5"><col class="c6"><col class="c7"><col class="c8"><col class="c9">
+      <col class="c5"><col class="c6"><col class="c7"><col class="c8"><col class="c9"><col class="c10"><col class="c11">
     </colgroup>
     <thead>
-      <tr><th>#</th><th>Time</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Notes</th><th>⚠️ Allergies</th><th>✓</th></tr>
+      <tr><th>#</th><th>Time</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Sauce</th><th>Notes</th><th>⚠️ Allergies</th><th>✓</th></tr>
     </thead>
     <tbody>
       ${rows.map((r,i) => `
@@ -1052,7 +1104,8 @@ export default function App() {
           <td>${r.access}</td>
           <td>${r.meals.map(m=>"<span class=\"meal\">\u2022 " + (m.name||m) + (m.sauce ? " <span style=\"color:#888;font-size:7.5px;font-style:italic\">(" + m.sauce + ")</span>" : "") + "</span>").join("") || "—"}</td>
           <td>${r.snack}</td>
-          <td class="note">${r.note}</td>
+          <td>${r.meals.some(m=>m.sauce) ? r.meals.map(m=>m.sauce ? "<span class=\"sauce-cell\">"+m.sauce+"</span>" : "").filter(Boolean).join("") : "—"}</td>
+          <td class="note" style="min-width:70px">${r.note}</td>
           <td style="color:#dc2626;font-weight:bold;font-size:8px">${r.allergies||"—"}</td>
           <td><span class="check"></span></td>
         </tr>
@@ -1935,59 +1988,74 @@ export default function App() {
       {/* ═══ CLIENT MODAL ════════════════════════════ */}
       {showClientModal&&(
         <div className="mo" onClick={e=>{if(e.target===e.currentTarget)setShowClientModal(false);}}>
-          <div className="mo-box">
+          <div className="mo-box" style={{maxWidth:560}}>
             <div className="mo-hd">
               <div className="mo-title">{editClientId?"Edit Client":"New Client"}</div>
               <button className="btn btn-g btn-sm" onClick={()=>setShowClientModal(false)}>✕</button>
             </div>
             <div className="mo-body">
-              <div className="fg">
-                {[
-                  ["name",         "Full Name *",               "text",     "fg-full"],
-                  ["phone",        "Phone / WeChat",            "text",     ""],
-                  ["language",     "Language",                  "sel:EN,CN",""],
-                  ["district",     "District / Area",           "text",     ""],
-                  ["address",      "Delivery Address",          "text",     "fg-full"],
-                  ["access",       "Building / Access Notes",   "text",     "fg-full"],
-                  ["deliveryTime", "Default Delivery Time",     "text",     ""],
-                  ["deliveries",   "Deliveries / Day",          "number",   ""],
-                  ["planId",       "Plan",                      "sel_plans",""],
-                  ["status",       "Status",                    "sel:Active,Inactive,Paused,Trial",""],
-                  ["startDate",    "Start Date",                "date",     ""],
-                  ["expiryDate",   "Expiry Date",               "date",     ""],
-                  ["paid",         "Paid This Week?",           "sel_paid", ""],
-                  ["amountPaid",   "Amount Paid (¥)",           "number",   ""],
-                  ["goal",         "Goal",                      "text",     ""],
-                  ["allergies",    "Allergies / Restrictions",  "text",     ""],
-                  ["customizations","Permanent Customizations", "text",     "fg-full"],
-                  ["acqChannel",   "Acquisition Channel",       "text",     ""],
-                ].map(([k,lbl,type,cls])=>(
-                  <div key={k} className={`fl ${cls}`}>
-                    <label>{lbl}</label>
-                    {type==="sel_plans"?(
-                      <select className="sel" value={clientForm[k]||""} onChange={e=>cfld(k,e.target.value)}>
-                        <option value="">— Select plan —</option>
-                        {plans.map(p=><option key={p.id} value={p.id}>{p.name} · ¥{p.price}/wk</option>)}
-                      </select>
-                    ):type==="sel_paid"?(
-                      <select className="sel" value={String(clientForm[k])} onChange={e=>cfld(k,e.target.value==="true")}>
-                        <option value="true">Yes, paid</option>
-                        <option value="false">No</option>
-                      </select>
-                    ):type.startsWith("sel:")?(
-                      <select className="sel" value={clientForm[k]||""} onChange={e=>cfld(k,e.target.value)}>
-                        {type.slice(4).split(",").map(opt=><option key={opt} value={opt}>{opt}</option>)}
-                      </select>
-                    ):(
-                      <input className="inp" type={type} value={clientForm[k]||""} onChange={e=>{
-                        let v=e.target.value;
-                        if(type==="number") v=v===""?"":Number(v);
-                        cfld(k,v);
-                      }}/>
-                    )}
+
+              {/* Section: Identity */}
+              <div style={{marginBottom:18}}>
+                <div style={{fontSize:9,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>Identity</div>
+                <div className="fg">
+                  <div className="fl fg-full"><label>Full Name *</label><input className="inp" value={clientForm.name||""} onChange={e=>cfld("name",e.target.value)} placeholder="e.g. Sarah Chen"/></div>
+                  <div className="fl"><label>Phone / WeChat</label><input className="inp" value={clientForm.phone||""} onChange={e=>cfld("phone",e.target.value)} placeholder="+86 138..."/></div>
+                  <div className="fl"><label>Language</label>
+                    <select className="sel" value={clientForm.language||"EN"} onChange={e=>cfld("language",e.target.value)}>
+                      <option value="EN">English</option>
+                      <option value="CN">中文</option>
+                    </select>
                   </div>
-                ))}
+                </div>
               </div>
+
+              {/* Section: Delivery */}
+              <div style={{marginBottom:18}}>
+                <div style={{fontSize:9,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>Delivery</div>
+                <div className="fg">
+                  <div className="fl"><label>District / Area</label><input className="inp" value={clientForm.district||""} onChange={e=>cfld("district",e.target.value)} placeholder="e.g. Jing'an"/></div>
+                  <div className="fl fg-full"><label>Address</label><input className="inp" value={clientForm.address||""} onChange={e=>cfld("address",e.target.value)} placeholder="288 Nanjing Rd, 801B"/></div>
+                  <div className="fl fg-full"><label>Building Access</label><input className="inp" value={clientForm.access||""} onChange={e=>cfld("access",e.target.value)} placeholder="e.g. Leave at door, ring doorbell..."/></div>
+                </div>
+              </div>
+
+              {/* Section: Plan & Status */}
+              <div style={{marginBottom:18}}>
+                <div style={{fontSize:9,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>Plan & Status</div>
+                <div className="fg">
+                  <div className="fl"><label>Plan</label>
+                    <select className="sel" value={clientForm.planId||""} onChange={e=>cfld("planId",e.target.value)}>
+                      <option value="">— Select plan —</option>
+                      {plans.map(p=><option key={p.id} value={p.id}>{p.name} · ¥{p.price}/wk</option>)}
+                    </select>
+                  </div>
+                  <div className="fl"><label>Status</label>
+                    <select className="sel" value={clientForm.status||"Active"} onChange={e=>cfld("status",e.target.value)}>
+                      {["Active","Inactive","Paused","Trial"].map(s=><option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="fl"><label>Start Date</label><input className="inp" type="date" value={clientForm.startDate||""} onChange={e=>cfld("startDate",e.target.value)}/></div>
+                  <div className="fl"><label>Expiry Date</label><input className="inp" type="date" value={clientForm.expiryDate||""} onChange={e=>cfld("expiryDate",e.target.value)}/></div>
+                  <div className="fl"><label>Paid This Week?</label>
+                    <select className="sel" value={String(clientForm.paid)} onChange={e=>cfld("paid",e.target.value==="true")}>
+                      <option value="true">Yes, paid</option>
+                      <option value="false">No</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section: Health & Notes */}
+              <div>
+                <div style={{fontSize:9,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>Health & Notes</div>
+                <div className="fg">
+                  <div className="fl fg-full"><label>Goal</label><input className="inp" value={clientForm.goal||""} onChange={e=>cfld("goal",e.target.value)} placeholder="e.g. Lose weight, gain muscle..."/></div>
+                  <div className="fl fg-full"><label>Allergies / Restrictions</label><input className="inp" value={clientForm.allergies||""} onChange={e=>cfld("allergies",e.target.value)} placeholder="e.g. No nuts, gluten-free..."/></div>
+                  <div className="fl fg-full"><label>Notes</label><input className="inp" value={clientForm.customizations||""} onChange={e=>cfld("customizations",e.target.value)} placeholder="e.g. No onion, extra sauce..."/></div>
+                </div>
+              </div>
+
             </div>
             <div className="mo-ft">
               <button className="btn btn-g" onClick={()=>setShowClientModal(false)}>Cancel</button>

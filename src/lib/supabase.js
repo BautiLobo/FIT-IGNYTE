@@ -30,7 +30,6 @@ export async function getClients() {
     .order("id"), "getClients");
   return (data || []).map(c => ({
     ...c,
-    plan:           c.plan?.name      || "",
     planId:         c.plan_id         || "",
     planName:       c.plan?.name      || "",
     planObj:        c.plan            || null,
@@ -89,11 +88,13 @@ export async function getMenu() {
   const libById = {};
   for (const m of (libData.data || [])) libById[m.id] = m;
 
-  const out = {};
+  // out[tier][day] = { meals, mealIds, snack, snackId, snackObj }
+  const out = { SMALL:{}, BIG:{}, VEG:{} };
   for (const row of (menuData.data || [])) {
+    const tier = row.tier || "SMALL";
     const mealIds = row.meals_json || [];
     const snackObj = row.snack_id ? libById[row.snack_id] : null;
-    out[row.day] = {
+    out[tier][row.day] = {
       meals:    mealIds.map(id => libById[id]).filter(Boolean),
       mealIds,
       snack:    snackObj?.name || "",
@@ -104,12 +105,13 @@ export async function getMenu() {
   return out;
 }
 
-export async function updateMenuDay(day, { mealIds, snackId }) {
+export async function updateMenuDay(day, tier, { mealIds, snackId }) {
   check(await supabase.from("menu").upsert({
     day,
+    tier: tier || "SMALL",
     meals_json: mealIds || [],
-    snack_id:   snackId || "",
-  }), "updateMenuDay");
+    snack_id:   snackId || null,
+  }, { onConflict: "day,tier" }), "updateMenuDay");
 }
 
 // ── MEAL SELECTIONS ──────────────────────────────────────────
@@ -130,7 +132,6 @@ export async function getMealSelections() {
       id:           row.id,
       slot:         row.slot,
       mealIds:      row.meals_json || [],
-      sauceIds:     row.sauce_ids  || [],
       deliveryTime: row.delivery_time || "",
       snackId:      row.snack_id || "",
       snack:        row.snack?.name || "",
@@ -143,7 +144,7 @@ export async function getMealSelections() {
   return out;
 }
 
-export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, snackId, note, sauceIds }) {
+export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, snackId, note }) {
   check(await supabase.from("meal_selections").upsert({
     client_id:     clientId,
     day,
@@ -152,7 +153,6 @@ export async function upsertMealSelection(clientId, day, slot, { mealIds, delive
     delivery_time: deliveryTime || "",
     snack_id:      snackId || null,
     note:          note || "",
-    sauce_ids:     sauceIds || [],
   }, { onConflict: "client_id,day,slot" }), "upsertMealSelection");
 }
 

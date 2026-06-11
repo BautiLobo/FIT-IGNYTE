@@ -228,7 +228,8 @@ function MealOptions({ menu, day, extraItems = [] }) {
   const seen = new Set();
   const allMeals = [];
   days.forEach(d => {
-    (menu[d]?.meals || []).forEach(m => {
+    const allTierMeals = [...(menu.SMALL?.[d]?.meals||[]), ...(menu.BIG?.[d]?.meals||[]), ...(menu.VEG?.[d]?.meals||[])];
+    allTierMeals.forEach(m => {
       const id   = typeof m === "object" ? m.id   : null;
       const name = typeof m === "object" ? m.name : m;
       if (id && !seen.has(id)) { seen.add(id); allMeals.push({id, name}); }
@@ -264,10 +265,12 @@ function MealOptions({ menu, day, extraItems = [] }) {
 // ─── APP ─────────────────────────────────────────────────────────────────────
 
 function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, deletePlanHandler, mealLibraryRef }) {
+  const [menuTier, setMenuTier] = useState("SMALL");
+  const tierMenu = menu[menuTier] || {};
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"];
   const [menuTab,      setMenuTab]      = useState("library");
   const [showAddMeal,  setShowAddMeal]  = useState(false);
-  const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",itemType:"meal",tier:"SMALL"});
+  const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});
   const [draggingMeal, setDraggingMeal] = useState(null);
   const draggingMealRef = useRef(null);
   const [dragOver,     setDragOver]     = useState(null);
@@ -321,9 +324,6 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
         protein: parseInt(mealForm.protein)||0,
         carbs: parseInt(mealForm.carbs)||0,
         fat: parseInt(mealForm.fat)||0,
-        item_type: mealForm.itemType||"meal",
-        tier: mealForm.itemType==="meal" ? (mealForm.tier||"SMALL") : null,
-        is_snack: mealForm.itemType==="snack",
       };
       if(editingMealId) payload.id = editingMealId;
       const saved = await upsertMealLibrary(payload);
@@ -352,7 +352,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
 
   const openEditMeal = (m) => {
     setEditingMealId(m.id);
-    setMealForm({name:m.name,sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:"",itemType:m.item_type||"meal",tier:m.tier||"SMALL"});
+    setMealForm({name:m.name,sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:""});
     setShowAddMeal(true);
   };
 
@@ -369,7 +369,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     if(!meal) return;
     const isSnack = slot==="Snack";
     const si = isSnack ? null : parseInt(slot.replace("Meal ",""))-1;
-    const dm = menu[day] || {mealIds:[], snack:"", snackId:""};
+    const dm = tierMenu[day] || {mealIds:[], snack:"", snackId:""};
     const newIds = [...(dm.mealIds||[])];
     if(isSnack){
       upsertMenuDay(day, {mealIds:newIds, snackId:meal.id});
@@ -383,15 +383,25 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   };
 
   return <>
-    <div style={{display:"flex",gap:8,marginBottom:20}}>
+    <div style={{display:"flex",gap:8,marginBottom:12}}>
       <button className={`btn btn-sm ${menuTab==="library"?"btn-r":"btn-g"}`} onClick={()=>setMenuTab("library")} style={{flex:1}}>🍽️ Meal Library</button>
       <button className={`btn btn-sm ${menuTab==="planner"?"btn-r":"btn-g"}`} onClick={()=>setMenuTab("planner")} style={{flex:1}}>📅 Weekly Planner</button>
     </div>
+    {menuTab==="planner"&&<div style={{display:"flex",gap:6,marginBottom:16}}>
+      {[["SMALL","💪 Lean Fit","#60a5fa"],["BIG","🏋️ Muscle","#fb923c"],["VEG","🥦 Vegetarian","#4ade80"]].map(([t,lbl,col])=>(
+        <button key={t} onClick={()=>setMenuTier(t)}
+          style={{flex:1,padding:"8px",borderRadius:8,border:`2px solid ${menuTier===t?col:"var(--bdr)"}`,
+            background:menuTier===t?`${col}22`:"var(--s2)",color:menuTier===t?col:"var(--muted)",
+            fontWeight:700,fontSize:11,cursor:"pointer"}}>
+          {lbl}
+        </button>
+      ))}
+    </div>}
 
     {menuTab==="library"&&<>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div className="sec-title" style={{marginBottom:0}}>All Meals ({allMeals.length})</div>
-        <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",itemType:"meal",tier:"SMALL"});setEditingMealId(null);setShowAddMeal(true);}}>+ Add Meal</button>
+        <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:""});setEditingMealId(null);setShowAddMeal(true);}}>+ Add Meal</button>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12}}>
         {allMeals.map((m,i)=>(
@@ -432,7 +442,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
           <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:560,overflowY:"auto",paddingRight:4}}>
             {allMeals.map((m,i)=>(
               <div key={i} draggable onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}} onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
-                style={{background:draggingMeal?.id===m.id?"var(--red)":"var(--s2)",border:`1px solid ${m.source==="snack"?"#166534":"var(--bdr)"}`,borderRadius:8,padding:"10px 12px",fontSize:11,color:draggingMeal?.id===m.id?"#fff":m.item_type==="sauce"?"#fbbf24":m.item_type==="snack"?"#4ade80":"#ccc",cursor:"grab",userSelect:"none",lineHeight:1.3,transition:"background .15s",wordBreak:"break-word"}}>
+                style={{background:draggingMeal?.id===m.id?"var(--red)":"var(--s2)",border:`1px solid ${m.item_type==="sauce"?"#78350f":m.item_type==="snack"?"#166534":m.tier==="BIG"?"#7c2d12":m.tier==="VEG"?"#14532d":"#1e3a5f"}`,borderRadius:8,padding:"10px 12px",fontSize:11,color:draggingMeal?.id===m.id?"#fff":m.item_type==="sauce"?"#fbbf24":m.item_type==="snack"?"#4ade80":"#ccc",cursor:"grab",userSelect:"none",lineHeight:1.3,transition:"background .15s",wordBreak:"break-word"}}>
                 <span style={{fontSize:7,fontWeight:700,display:"block",marginBottom:2,letterSpacing:1,
                 color:m.item_type==="sauce"?"#fbbf24":m.item_type==="snack"?"#4ade80":m.tier==="BIG"?"#fb923c":m.tier==="VEG"?"#4ade80":"#60a5fa"}}>
                 {m.item_type==="sauce"?"SAUCE":m.item_type==="snack"?"SNACK":m.tier||"SMALL"}
@@ -457,8 +467,8 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                 <tr key={slot}>
                   <td style={{padding:"3px 6px",color:"var(--dim)",fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>{slot}</td>
                   {DAYS.map(day=>{
-                    const mealObj = isSnack ? menu[day]?.snackObj : (menu[day]?.meals?.[mealIdx]||null);
-                    const val = mealObj?.name || (isSnack ? menu[day]?.snack : "") || "";
+                    const mealObj = isSnack ? tierMenu[day]?.snackObj : (tierMenu[day]?.meals?.[mealIdx]||null);
+                    const val = mealObj?.name || (isSnack ? tierMenu[day]?.snack : "") || "";
                     const isOver=dragOver===`${day}-${slot}`;
                     return (
                       <td key={day}
@@ -471,10 +481,10 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                           <span style={{width:"100%",textAlign:"center",lineHeight:1.3,wordBreak:"break-word"}}>{val||<span style={{fontSize:8,color:"#333"}}>Drop</span>}</span>
                           {val&&<span style={{fontSize:8,color:"var(--dim)",cursor:"pointer",marginTop:2}}
                             onClick={()=>{
-                              const dm=menu[day]||{mealIds:[],snack:"",snackId:""};
+                              const dm=tierMenu[day]||{mealIds:[],snack:"",snackId:""};
                               const newIds=[...(dm.mealIds||[])];
-                              if(isSnack){upsertMenuDay(day,{mealIds:newIds,snackId:""});}
-                              else{newIds[mealIdx]="";upsertMenuDay(day,{mealIds:newIds.filter(Boolean),snackId:dm.snackId||""});}
+                              if(isSnack){upsertMenuDay(day,menuTier,{mealIds:newIds,snackId:""});}
+                              else{newIds[mealIdx]="";upsertMenuDay(day,menuTier,{mealIds:newIds.filter(Boolean),snackId:dm.snackId||""});}
                             }}>
                             ✕
                           </span>}
@@ -517,27 +527,8 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
             <input id="meal-photo-inp" type="file" accept="image/*" style={{display:"none"}} onChange={handlePhotoDrop}/>
           </div>
           <div style={{display:"grid",gap:10}}>
-            <div><div className="form-label">Name *</div><input className="form-inp" value={mealForm.name} onChange={e=>setMealForm(p=>({...p,name:e.target.value}))} placeholder="e.g. Minced Beef Bowl"/></div>
-            <div>
-              <div className="form-label">Type</div>
-              <div style={{display:"flex",gap:6}}>
-                {[["meal","Meal"],["snack","Snack"],["sauce","Sauce"]].map(([t,lbl])=>(
-                  <button key={t} type="button" className={`btn btn-sm ${mealForm.itemType===t?"btn-r":"btn-g"}`} style={{flex:1}} onClick={()=>setMealForm(p=>({...p,itemType:t}))}>
-                    {lbl}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {mealForm.itemType==="meal"&&<div>
-              <div className="form-label">Plan</div>
-              <div style={{display:"flex",gap:6}}>
-                {[["SMALL","Lean Fit"],["BIG","Muscle"],["VEG","Vegetarian"]].map(([t,lbl])=>(
-                  <button key={t} type="button" className={`btn btn-sm ${mealForm.tier===t?"btn-r":"btn-g"}`} style={{flex:1}} onClick={()=>setMealForm(p=>({...p,tier:t}))}>
-                    {lbl}
-                  </button>
-                ))}
-              </div>
-            </div>}
+            <div><div className="form-label">Meal name *</div><input className="form-inp" value={mealForm.name} onChange={e=>setMealForm(p=>({...p,name:e.target.value}))} placeholder="e.g. Minced Beef Bowl"/></div>
+            <div><div className="form-label">Sauce</div><input className="form-inp" value={mealForm.sauce} onChange={e=>setMealForm(p=>({...p,sauce:e.target.value}))} placeholder="e.g. Chimichurri"/></div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}}>
               {[["kcal","Kcal"],["protein","Protein g"],["carbs","Carbs g"],["fat","Fat g"]].map(([k,lbl])=>(
                 <div key={k}><div className="form-label">{lbl}</div><input className="form-inp" type="number" value={mealForm[k]||""} onChange={e=>setMealForm(p=>({...p,[k]:e.target.value}))} placeholder="0"/></div>
@@ -926,7 +917,8 @@ export default function App() {
   // ── Menu modal
   const openEditMenu = day => {
     setMenuEditDay(day);
-    setMenuForm({meals:[...(menu[day]?.meals||[]).map(m=>typeof m==="object"?m.name:m),...["","",""]].slice(0,3),snack:menu[day]?.snack||""});
+    const d0=menu.SMALL?.[day]||menu.BIG?.[day]||{};
+    setMenuForm({meals:[...(d0.meals||[]).map(m=>typeof m==="object"?m.name:m),...["","",""]].slice(0,3),snack:d0.snack||""});
     setShowMenuModal(true);
   };
   const saveMenu = async () => {
@@ -951,19 +943,25 @@ export default function App() {
     } catch(e){ console.error(e); }
   };
 
-  const upsertMenuDay = async (day, {mealIds, snackId}) => {
+  const upsertMenuDay = async (day, tier, {mealIds, snackId}) => {
     try {
-      await updateMenuDay(day, {mealIds, snackId});
+      await updateMenuDay(day, tier, {mealIds, snackId});
       const lib = mealLibraryRef.current;
       const mealObjs = mealIds.map(id => lib.find(m=>m.id===id)).filter(Boolean);
       const snackObj = lib.find(m=>m.id===snackId) || null;
-      setMenu(p=>({...p,[day]:{
-        meals:   mealObjs,
-        mealIds,
-        snack:   snackObj?.name || "",
-        snackId: snackId||"",
-        snackObj,
-      }}));
+      setMenu(p=>({
+        ...p,
+        [tier]: {
+          ...p[tier],
+          [day]: {
+            meals:   mealObjs,
+            mealIds,
+            snack:   snackObj?.name || "",
+            snackId: snackId||"",
+            snackObj,
+          }
+        }
+      }));
       flash();
     } catch(e){ console.error(e); }
   };
@@ -1478,7 +1476,7 @@ export default function App() {
                               <label>Snack</label>
                               <select className="msel" value={slot.snackId||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"snackId",e.target.value)}>
                                 <option value="">— none —</option>
-                                {[...new Set(DAYS.map(d=>menu[d]?.snackObj).filter(Boolean))].map(s=>(
+                                {Object.values(DAYS.reduce((acc,d)=>{const s=menu.SMALL?.[d]?.snackObj||menu.BIG?.[d]?.snackObj||menu.VEG?.[d]?.snackObj;if(s?.id)acc[s.id]=s;return acc},{})).map(s=>(
                                   <option key={s.id} value={s.id}>{s.name}</option>
                                 ))}
                               </select>
@@ -1792,8 +1790,9 @@ export default function App() {
                 {(()=>{
                   const lines = ["🔥 FIT IGNYTE — This Week's Menu", ""];
                   DAYS.forEach(day => {
-                    const meals = (menu[day]?.meals||[]).map(m=>typeof m==="object"?m.name:m).filter(Boolean);
-                    const snack = menu[day]?.snack || "";
+                    const allTiers = [...(menu.SMALL?.[day]?.meals||[]),...(menu.BIG?.[day]?.meals||[]),...(menu.VEG?.[day]?.meals||[])];
+                    const meals = [...new Set(allTiers.map(m=>typeof m==="object"?m.name:m))].filter(Boolean);
+                    const snack = menu.SMALL?.[day]?.snack || menu.BIG?.[day]?.snack || "";
                     lines.push(`📅 ${day}`);
                     meals.forEach((m,i) => lines.push(`  Meal ${i+1}: ${m}`));
                     if (snack) lines.push(`  Snack: ${snack}`);

@@ -221,25 +221,40 @@ function RenewalBadge({ c }) {
 }
 
 // ─── MEAL OPTIONS BUILDER ─────────────────────────────────────────────────────
-// Returns grouped <optgroup> options: all meals by day + all snacks + custom items
-function MealOptions({ menu, day, extraItems = [] }) {
-  // If day provided show only that day's meals, otherwise show all deduplicated
+// Returns grouped <optgroup> options filtered by the client's plan tier.
+// menu{} keys are whatever string is stored in Supabase (e.g. "Lean Fit", "Muscle Gain").
+// clientTier comes directly from c.planObj.tier — same string — so we match by exact key
+// and also case-insensitive fallback to handle any casing inconsistencies.
+function MealOptions({ menu, day, clientTier = null, extraItems = [] }) {
   const days = day ? [day] : DAYS;
   const seen = new Set();
   const allMeals = [];
+
+  // Find the matching menu key for this client's tier (case-insensitive)
+  const matchingKeys = clientTier
+    ? Object.keys(menu).filter(k => k === clientTier || k.toLowerCase() === clientTier.toLowerCase())
+    : Object.keys(menu); // no tier = show all
+
   days.forEach(d => {
-    const allTierMeals = Object.values(menu).flatMap(tm=>tm[d]?.meals||[]);
-    allTierMeals.forEach(m => {
-      const id   = typeof m === "object" ? m.id   : null;
-      const name = typeof m === "object" ? m.name : m;
-      if (id && !seen.has(id)) { seen.add(id); allMeals.push({id, name}); }
+    matchingKeys.forEach(k => {
+      (menu[k]?.[d]?.meals || []).forEach(m => {
+        const id   = typeof m === "object" ? m.id   : null;
+        const name = typeof m === "object" ? m.name : m;
+        if (id && !seen.has(id)) { seen.add(id); allMeals.push({id, name}); }
+      });
     });
   });
+
+  // Snacks are shared across all tiers
   const allSnacks = [];
-  days.forEach(d => {
-    const s = menu[d]?.snackObj;
-    if (s && !seen.has(s.id)) { seen.add(s.id); allSnacks.push(s); }
+  const snackSeen = new Set();
+  Object.values(menu).forEach(tierMenu => {
+    days.forEach(d => {
+      const s = tierMenu[d]?.snackObj;
+      if (s && !snackSeen.has(s.id)) { snackSeen.add(s.id); allSnacks.push(s); }
+    });
   });
+
   return (
     <>
       <option value="">— none —</option>
@@ -286,43 +301,34 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     });
   };
 
-  // Tiers derived from plans. menu{} keys can be "SMALL"/"BIG"/"VEG"
-  // OR "Lean Fit"/"Muscle Gain"/"Vegetarian" — we handle both via aliases.
+  // Tiers come directly from plans.tier — no hardcoding.
+  // Each unique tier label becomes one tab. The key used in menu{} is whatever
+  // string is actually stored in Supabase (matched case-insensitively).
   const availableTiers = useMemo(()=>{
-    const mlKeys = {
-      "lean fit":"SMALL","small":"SMALL",
-      "muscle gain":"BIG","muscle":"BIG","big":"BIG",
-      "vegetarian":"VEG","veg":"VEG",
-    };
     const seen = new Set();
     const tiers = [];
     (plans||[]).forEach(p=>{
       if(!p.tier) return;
-      const shortKey = mlKeys[p.tier.toLowerCase()] || p.tier.toUpperCase().slice(0,5);
-      if(seen.has(shortKey)) return;
-      seen.add(shortKey);
-      // All possible keys this tier might be stored as in menu{}
-      const aliases = [shortKey, p.tier, p.tier.toLowerCase(), p.tier.toUpperCase()];
-      tiers.push({ tier:shortKey, label:p.tier, color:p.color||"#aaa", aliases });
+      const key = p.tier; // use the tier label as-is as the internal key
+      const keyLower = key.toLowerCase();
+      if(seen.has(keyLower)) return;
+      seen.add(keyLower);
+      tiers.push({ tier:key, label:p.tier, color:p.color||"#aaa" });
     });
-    const order = {SMALL:0,BIG:1,VEG:2};
-    tiers.sort((a,b)=>(order[a.tier]??99)-(order[b.tier]??99));
     return tiers;
   },[plans]);
 
   // Active tier
   const activeTier = menuTier || availableTiers[0]?.tier || "";
 
-  // Find the right menu key by trying all aliases (handles both SMALL and "Lean Fit" etc.)
-  // Also expose activeTierKey = the actual key found in menu{}, so upserts use the right value
+  // Find the matching menu key case-insensitively
+  // activeTierKey = the actual key in menu{} used for upserts
   const { tierMenu, activeTierKey } = useMemo(()=>{
-    const tierDef = availableTiers.find(t => t.tier === activeTier);
-    const aliases = tierDef?.aliases || [activeTier];
-    for (const alias of aliases) {
-      if (menu[alias]) return { tierMenu: menu[alias], activeTierKey: alias };
-    }
-    // Nothing found yet — default to first alias (will create new row on save)
-    return { tierMenu: {}, activeTierKey: aliases[0] || activeTier };
+    const match = Object.keys(menu).find(k =>
+      k === activeTier || k.toLowerCase() === activeTier.toLowerCase()
+    );
+    if (match) return { tierMenu: menu[match], activeTierKey: match };
+    return { tierMenu: {}, activeTierKey: activeTier };
   }, [menu, activeTier, availableTiers]);
 
   // Load meal library from Supabase on mount
@@ -336,19 +342,15 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     });
   },[]);
 
-  // allMeals = meal_library + any snacks from weekly menu not already in library
+  // allMeals = meal_library filtered by active tier (planner) or all (library)
   const allMeals = useMemo(()=>{
-    const tierOrder = {SMALL:0, BIG:1, VEG:2};
     const typeOrder = {meal:0, snack:1, sauce:2};
-    // All aliases for the active tier (e.g. ["SMALL","Lean Fit","lean fit","LEAN FIT"])
-    const activeTierAliases = new Set(
-      availableTiers.find(t=>t.tier===activeTier)?.aliases || [activeTier]
-    );
     return mealLibrary
       .filter(m => {
         if (m.item_type === "sauce") return menuTab !== "planner";
         if (menuTab === "planner" && m.item_type === "meal") {
-          return activeTierAliases.has(m.tier) || activeTierAliases.has((m.tier||"").toUpperCase());
+          // Match meal tier against active tier — case-insensitive, no hardcoding
+          return m.tier === activeTier || (m.tier||"").toLowerCase() === activeTier.toLowerCase();
         }
         return true;
       })
@@ -356,10 +358,9 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
       .sort((a,b)=>{
         const td = (typeOrder[a.item_type]||0)-(typeOrder[b.item_type]||0);
         if (td !== 0) return td;
-        const od = (tierOrder[a.tier]||0)-(tierOrder[b.tier]||0);
-        return od !== 0 ? od : a.name.localeCompare(b.name);
+        return a.name.localeCompare(b.name);
       });
-  },[mealLibrary, menuTier, menuTab, activeTier, availableTiers]);
+  },[mealLibrary, menuTier, menuTab, activeTier]);
 
   const saveMealToLibrary = async () => {
     if(!mealForm.name.trim()){alert("Meal name is required");return;}
@@ -374,7 +375,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
         carbs: parseInt(mealForm.carbs)||0,
         fat: parseInt(mealForm.fat)||0,
         item_type: mealForm.itemType||"meal",
-        tier: mealForm.itemType==="meal" ? (mealForm.tier||"SMALL") : null,
+        tier: mealForm.itemType==="meal" ? (mealForm.tier||availableTiers[0]?.tier||"") : null,
         is_snack: mealForm.itemType==="snack",
       };
       if(editingMealId) payload.id = editingMealId;
@@ -484,7 +485,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12}}>
         {allMeals.map((m,i)=>{
           const tierDef = m.item_type==="meal"
-            ? availableTiers.find(t=>t.aliases?.some(a=>a===m.tier||a?.toLowerCase()===m.tier?.toLowerCase()))
+            ? availableTiers.find(t=>t.tier===m.tier||t.tier.toLowerCase()===(m.tier||"").toLowerCase())
             : null;
           const tc = m.item_type==="sauce"?"#f87171":m.item_type==="snack"?"#4ade80":tierDef?.color||"#60a5fa";
           const badgeLabel = m.item_type==="sauce"?"SAUCE":m.item_type==="snack"?"SNACK":tierDef?.label||m.tier||"—";
@@ -1705,7 +1706,7 @@ export default function App() {
                                 {(slot.meals||[""]).map((meal,mi)=>(
                                   <div key={mi} style={{display:"flex",gap:4,alignItems:"center"}}>
                                     <select className="msel" value={meal||""} onChange={e=>updateSlotMeal(c.id,mealDay,slot.id,mi,e.target.value)} style={{flex:2}}>
-                                      <MealOptions menu={menu} extraItems={customItems}/>
+                                      <MealOptions menu={menu} clientTier={c.planObj?.tier||""} extraItems={customItems}/>
                                     </select>
                                     <select className="msel" style={{flex:1,fontSize:10}}
                                       value={(slot.sauceIds||[])[mi]||""}

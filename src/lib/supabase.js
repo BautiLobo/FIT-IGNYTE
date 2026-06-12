@@ -88,10 +88,11 @@ export async function getMenu() {
   const libById = {};
   for (const m of (libData.data || [])) libById[m.id] = m;
 
-  // out[tier][day] = { meals, mealIds, snack, snackId, snackObj }
-  const out = { SMALL:{}, BIG:{}, VEG:{} };
+  // out[tier][day] — tier is whatever string is stored in menu.tier
+  const out = {};
   for (const row of (menuData.data || [])) {
     const tier = row.tier || "SMALL";
+    if (!out[tier]) out[tier] = {};
     const mealIds = row.meals_json || [];
     const snackObj = row.snack_id ? libById[row.snack_id] : null;
     out[tier][row.day] = {

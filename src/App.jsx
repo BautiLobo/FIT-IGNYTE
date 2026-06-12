@@ -228,7 +228,7 @@ function MealOptions({ menu, day, extraItems = [] }) {
   const seen = new Set();
   const allMeals = [];
   days.forEach(d => {
-    const allTierMeals = [...(menu.SMALL?.[d]?.meals||[]), ...(menu.BIG?.[d]?.meals||[]), ...(menu.VEG?.[d]?.meals||[])];
+    const allTierMeals = Object.values(menu).flatMap(tm=>tm[d]?.meals||[]);
     allTierMeals.forEach(m => {
       const id   = typeof m === "object" ? m.id   : null;
       const name = typeof m === "object" ? m.name : m;
@@ -265,16 +265,18 @@ function MealOptions({ menu, day, extraItems = [] }) {
 // ─── APP ─────────────────────────────────────────────────────────────────────
 
 function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, deletePlanHandler, mealLibraryRef }) {
-  const [menuTier, setMenuTier] = useState("SMALL");
-  const tierMenu = menu[menuTier] || {};
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"];
   const [menuTab,      setMenuTab]      = useState("library");
+  const [menuTier,     setMenuTier]     = useState("");
   const [showAddMeal,  setShowAddMeal]  = useState(false);
   const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",photoFile:null});
   const [draggingMeal, setDraggingMeal] = useState(null);
   const draggingMealRef = useRef(null);
   const [dragOver,     setDragOver]     = useState(null);
   const [extraRows,    setExtraRows]    = useState(()=>parseInt(localStorage.getItem("menuExtraRows")||"0"));
+  const [mealLibrary,  setMealLibrary]  = useState([]);
+  const [savingMeal,   setSavingMeal]   = useState(false);
+  const [libraryLoaded, setLibraryLoaded] = useState(false);
 
   const updateExtraRows = (fn) => {
     setExtraRows(prev => {
@@ -283,9 +285,45 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
       return next;
     });
   };
-  const [mealLibrary,  setMealLibrary]  = useState([]);
-  const [savingMeal,   setSavingMeal]   = useState(false);
-  const [libraryLoaded, setLibraryLoaded] = useState(false);
+
+  // Tiers derived from plans. menu{} keys can be "SMALL"/"BIG"/"VEG"
+  // OR "Lean Fit"/"Muscle Gain"/"Vegetarian" — we handle both via aliases.
+  const availableTiers = useMemo(()=>{
+    const mlKeys = {
+      "lean fit":"SMALL","small":"SMALL",
+      "muscle gain":"BIG","muscle":"BIG","big":"BIG",
+      "vegetarian":"VEG","veg":"VEG",
+    };
+    const seen = new Set();
+    const tiers = [];
+    (plans||[]).forEach(p=>{
+      if(!p.tier) return;
+      const shortKey = mlKeys[p.tier.toLowerCase()] || p.tier.toUpperCase().slice(0,5);
+      if(seen.has(shortKey)) return;
+      seen.add(shortKey);
+      // All possible keys this tier might be stored as in menu{}
+      const aliases = [shortKey, p.tier, p.tier.toLowerCase(), p.tier.toUpperCase()];
+      tiers.push({ tier:shortKey, label:p.tier, color:p.color||"#aaa", aliases });
+    });
+    const order = {SMALL:0,BIG:1,VEG:2};
+    tiers.sort((a,b)=>(order[a.tier]??99)-(order[b.tier]??99));
+    return tiers;
+  },[plans]);
+
+  // Active tier
+  const activeTier = menuTier || availableTiers[0]?.tier || "";
+
+  // Find the right menu key by trying all aliases (handles both SMALL and "Lean Fit" etc.)
+  // Also expose activeTierKey = the actual key found in menu{}, so upserts use the right value
+  const { tierMenu, activeTierKey } = useMemo(()=>{
+    const tierDef = availableTiers.find(t => t.tier === activeTier);
+    const aliases = tierDef?.aliases || [activeTier];
+    for (const alias of aliases) {
+      if (menu[alias]) return { tierMenu: menu[alias], activeTierKey: alias };
+    }
+    // Nothing found yet — default to first alias (will create new row on save)
+    return { tierMenu: {}, activeTierKey: aliases[0] || activeTier };
+  }, [menu, activeTier, availableTiers]);
 
   // Load meal library from Supabase on mount
   useEffect(()=>{
@@ -302,10 +340,16 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   const allMeals = useMemo(()=>{
     const tierOrder = {SMALL:0, BIG:1, VEG:2};
     const typeOrder = {meal:0, snack:1, sauce:2};
+    // All aliases for the active tier (e.g. ["SMALL","Lean Fit","lean fit","LEAN FIT"])
+    const activeTierAliases = new Set(
+      availableTiers.find(t=>t.tier===activeTier)?.aliases || [activeTier]
+    );
     return mealLibrary
       .filter(m => {
-        if (m.item_type === "sauce") return menuTab !== "planner"; // sauces only in library
-        if (menuTab === "planner" && m.item_type === "meal") return m.tier === menuTier;
+        if (m.item_type === "sauce") return menuTab !== "planner";
+        if (menuTab === "planner" && m.item_type === "meal") {
+          return activeTierAliases.has(m.tier) || activeTierAliases.has((m.tier||"").toUpperCase());
+        }
         return true;
       })
       .map(m=>({...m, source:m.item_type||"meal"}))
@@ -315,7 +359,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
         const od = (tierOrder[a.tier]||0)-(tierOrder[b.tier]||0);
         return od !== 0 ? od : a.name.localeCompare(b.name);
       });
-  },[mealLibrary, menuTier, menuTab]);
+  },[mealLibrary, menuTier, menuTab, activeTier, availableTiers]);
 
   const saveMealToLibrary = async () => {
     if(!mealForm.name.trim()){alert("Meal name is required");return;}
@@ -389,31 +433,48 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     const dm = tierMenu[day] || {mealIds:[], snack:"", snackId:""};
     const newIds = [...(dm.mealIds||[])];
     if(isSnack){
-      upsertMenuDay(day, menuTier, {mealIds:newIds, snackId:meal.id});
+      upsertMenuDay(day, activeTierKey, {mealIds:newIds, snackId:meal.id});
     } else {
       while(newIds.length <= si) newIds.push("");
       newIds[si] = meal.id;
-      upsertMenuDay(day, menuTier, {mealIds:newIds.filter(Boolean), snackId:dm.snackId||""});
+      upsertMenuDay(day, activeTierKey, {mealIds:newIds.filter(Boolean), snackId:dm.snackId||""});
     }
     draggingMealRef.current = null;
     setDraggingMeal(null); setDragOver(null);
   };
 
+  // Tier color lookup
+  const activeTierColor = availableTiers.find(t=>t.tier===activeTier)?.color || "#38bdf8";
+
   return <>
-    <div style={{display:"flex",gap:8,marginBottom:12}}>
-      <button className={`btn btn-sm ${menuTab==="library"?"btn-r":"btn-g"}`} onClick={()=>setMenuTab("library")} style={{flex:1}}>🍽️ Meal Library</button>
-      <button className={`btn btn-sm ${menuTab==="planner"?"btn-r":"btn-g"}`} onClick={()=>setMenuTab("planner")} style={{flex:1}}>📅 Weekly Planner</button>
-    </div>
-    {menuTab==="planner"&&<div style={{display:"flex",gap:6,marginBottom:16}}>
-      {[["SMALL","Lean Fit","#60a5fa"],["BIG","Muscle","#fb923c"],["VEG","Vegetarian","#4ade80"]].map(([t,lbl,col])=>(
-        <button key={t} onClick={()=>setMenuTier(t)}
-          style={{flex:1,padding:"8px",borderRadius:8,border:`2px solid ${menuTier===t?col:"var(--bdr)"}`,
-            background:menuTier===t?`${col}22`:"var(--s2)",color:menuTier===t?col:"var(--muted)",
-            fontWeight:700,fontSize:11,cursor:"pointer"}}>
-          {lbl}
+    {/* ── Top nav: Library vs Planner ── */}
+    <div style={{display:"flex",gap:2,marginBottom:0,borderBottom:"1px solid var(--bdr)"}}>
+      {[["library","Meal Library"],["planner","Weekly Planner"]].map(([key,label])=>(
+        <button key={key} onClick={()=>setMenuTab(key)}
+          style={{flex:1,padding:"9px 14px",background:"none",border:"none",borderBottom:`2px solid ${menuTab===key?"var(--red)":"transparent"}`,marginBottom:"-1px",
+            color:menuTab===key?"var(--red)":"var(--muted)",fontFamily:"'DM Sans',sans-serif",fontSize:11,fontWeight:600,cursor:"pointer",transition:"all .15s",letterSpacing:.3}}>
+          {label}
         </button>
       ))}
-    </div>}
+    </div>
+
+    {/* ── Planner: tier tabs directly below ── */}
+    {menuTab==="planner"&&(
+      <div style={{display:"flex",gap:0,marginBottom:16,borderBottom:"1px solid var(--bdr)",marginTop:0}}>
+        {availableTiers.map(({tier:t,label:lbl,color:col})=>(
+          <button key={t} onClick={()=>setMenuTier(t)}
+            style={{flex:1,padding:"10px 8px",background:activeTier===t?`${col}18`:"none",border:"none",
+              borderBottom:`2px solid ${activeTier===t?col:"transparent"}`,marginBottom:"-1px",
+              color:activeTier===t?col:"var(--muted)",fontFamily:"'DM Sans',sans-serif",
+              fontWeight:700,fontSize:12,cursor:"pointer",transition:"all .15s",letterSpacing:.3}}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+    )}
+
+    {/* ── Library: add a small top margin ── */}
+    {menuTab==="library"&&<div style={{marginTop:14}}/>}
 
     {menuTab==="library"&&<>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
@@ -421,32 +482,39 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
         <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",photoFile:null});setEditingMealId(null);setShowAddMeal(true);}}>+ Add Meal</button>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12}}>
-        {allMeals.map((m,i)=>(
+        {allMeals.map((m,i)=>{
+          const tierDef = m.item_type==="meal"
+            ? availableTiers.find(t=>t.aliases?.some(a=>a===m.tier||a?.toLowerCase()===m.tier?.toLowerCase()))
+            : null;
+          const tc = m.item_type==="sauce"?"#f87171":m.item_type==="snack"?"#4ade80":tierDef?.color||"#60a5fa";
+          const badgeLabel = m.item_type==="sauce"?"SAUCE":m.item_type==="snack"?"SNACK":tierDef?.label||m.tier||"—";
+          return (
           <div key={m.id||i} draggable onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}} onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
-            style={{overflow:"hidden",borderRadius:10,border:`1px solid ${m.item_type==="sauce"?"#78350f":m.item_type==="snack"?"#166534":m.tier==="BIG"?"#7c2d12":m.tier==="VEG"?"#14532d":"#1e3a5f"}`,background:"var(--s2)",cursor:"grab",userSelect:"none",position:"relative"}}>
+            style={{overflow:"hidden",borderRadius:10,border:`1px solid ${tc}55`,background:"var(--s2)",cursor:"grab",userSelect:"none",position:"relative"}}>
             {m.id&&<button onClick={e=>{e.stopPropagation();deleteMealFromLibrary(m.id,m.name);}}
-              style={{position:"absolute",top:5,left:5,background:"rgba(0,0,0,0.7)",border:"none",color:"#f87171",width:20,height:20,borderRadius:"50%",cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>✕</button>}
-            <div style={{width:"100%",height:90,background:"var(--s3)",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",borderBottom:"1px solid var(--bdr)"}}>
+              style={{position:"absolute",top:5,left:5,background:"rgba(0,0,0,0.75)",border:"none",color:"#f87171",width:20,height:20,borderRadius:"50%",cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>✕</button>}
+            <div style={{width:"100%",height:90,background:"var(--s3)",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",borderBottom:`1px solid ${tc}33`}}>
               {m.photo_url
                 ? <img src={m.photo_url} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={m.name}/>
                 : <span style={{fontSize:10,color:"var(--dim)"}}>No photo yet</span>}
-              <span style={{position:"absolute",top:5,right:5,fontSize:8,fontWeight:700,padding:"2px 6px",borderRadius:3,
-                background:m.item_type==="sauce"?"#451a03":m.item_type==="snack"?"#052e16":m.tier==="BIG"?"#431407":m.tier==="VEG"?"#052e16":"#0c1a2e",
-                color:m.item_type==="sauce"?"#fbbf24":m.item_type==="snack"?"#4ade80":m.tier==="BIG"?"#fb923c":m.tier==="VEG"?"#4ade80":"#60a5fa",
-              }}>{m.item_type==="sauce"?"SAUCE":m.item_type==="snack"?"SNACK":m.tier||"SMALL"}</span>
+              <span style={{position:"absolute",top:5,right:5,fontSize:8,fontWeight:700,padding:"2px 7px",borderRadius:3,
+                background:tc+"22",color:tc,letterSpacing:.5}}>
+                {badgeLabel}
+              </span>
             </div>
             <div style={{padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:600,color:"#fff",marginBottom:2}}>{m.name}</div>
               {m.sauce&&<div style={{fontSize:9,color:"var(--muted)",marginBottom:1}}>{m.sauce}</div>}
               {m.kcal>0&&<div style={{fontSize:9,color:"var(--dim)"}}>{m.kcal} kcal · {m.protein}P {m.carbs}C {m.fat}F</div>}
-              {!m.kcal&&<div style={{fontSize:9,color:"var(--muted)"}}>Drag to planner →</div>}
+              {!m.kcal&&<div style={{fontSize:9,color:"var(--muted)"}}>Drag to planner</div>}
               {m.id&&<button onClick={e=>{e.stopPropagation();openEditMeal(m);}}
-                style={{marginTop:6,background:"var(--s3)",border:"1px solid var(--bdr)",color:"var(--muted)",fontSize:9,padding:"3px 8px",borderRadius:5,cursor:"pointer",width:"100%"}}>
-                ✏️ Edit
+                style={{marginTop:6,background:"var(--s3)",border:`1px solid ${tc}44`,color:tc,fontSize:9,padding:"3px 8px",borderRadius:5,cursor:"pointer",width:"100%",opacity:.85}}>
+                Edit
               </button>}
             </div>
           </div>
-        ))}
+          );
+        })}
         {allMeals.length===0&&<div style={{color:"var(--dim)",fontSize:11,padding:20,gridColumn:"1/-1"}}>No meals yet. Click + Add Meal to get started.</div>}
       </div>
     </>}
@@ -455,31 +523,93 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
       {!libraryLoaded
         ? <div style={{padding:40,textAlign:"center",color:"var(--dim)"}}>Loading meals...</div>
         : <>
+      {/* ── Sidebar meals + grid ── */}
       <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-        <div style={{width:200,flexShrink:0}}>
-          <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:8,fontWeight:700}}>Drag meals →</div>
-          <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:560,overflowY:"auto",paddingRight:4}}>
-            {allMeals.map((m,i)=>(
-              <div key={i} draggable onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}} onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
-                style={{background:draggingMeal?.id===m.id?"var(--red)":"var(--s2)",border:`1px solid ${m.item_type==="sauce"?"#78350f":m.item_type==="snack"?"#166534":m.tier==="BIG"?"#7c2d12":m.tier==="VEG"?"#14532d":"#1e3a5f"}`,borderRadius:8,padding:"10px 12px",fontSize:11,color:draggingMeal?.id===m.id?"#fff":m.item_type==="sauce"?"#fbbf24":m.item_type==="snack"?"#4ade80":"#ccc",cursor:"grab",userSelect:"none",lineHeight:1.3,transition:"background .15s",wordBreak:"break-word"}}>
-                <span style={{fontSize:7,fontWeight:700,display:"block",marginBottom:2,letterSpacing:1,
-                color:m.item_type==="sauce"?"#fbbf24":m.item_type==="snack"?"#4ade80":m.tier==="BIG"?"#fb923c":m.tier==="VEG"?"#4ade80":"#60a5fa"}}>
-                {m.item_type==="sauce"?"SAUCE":m.item_type==="snack"?"SNACK":m.tier||"SMALL"}
-              </span>
-                {m.name}
-              </div>
-            ))}
-            {allMeals.length===0&&<div style={{fontSize:10,color:"var(--dim)",padding:8}}>Add meals in Library first</div>}
+
+        {/* ── Sidebar: meals for active tier ── */}
+        <div style={{width:210,flexShrink:0}}>
+          {/* Header with tier color accent */}
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,paddingBottom:8,borderBottom:`1px solid ${activeTierColor}44`}}>
+            <div style={{width:3,height:14,borderRadius:2,background:activeTierColor,flexShrink:0}}/>
+            <span style={{fontSize:9,color:activeTierColor,textTransform:"uppercase",letterSpacing:1.5,fontWeight:700}}>
+              Drag meals →
+            </span>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:5,maxHeight:560,overflowY:"auto",paddingRight:4}}>
+            {/* Meals for this tier */}
+            {(()=>{
+              const tierMeals = allMeals.filter(m => m.item_type === "meal");
+              const snacks    = allMeals.filter(m => m.item_type === "snack");
+              const getMealStyle = (m) => ({
+                background: draggingMeal?.id===m.id ? activeTierColor : "var(--s2)",
+                border: `1px solid ${draggingMeal?.id===m.id ? activeTierColor : activeTierColor+"44"}`,
+                borderRadius: 7,
+                padding: "9px 11px",
+                fontSize: 11,
+                color: draggingMeal?.id===m.id ? "#fff" : "#ccc",
+                cursor: "grab",
+                userSelect: "none",
+                lineHeight: 1.3,
+                transition: "background .15s, border-color .15s",
+                wordBreak: "break-word",
+              });
+              const getSnackStyle = (m) => ({
+                background: draggingMeal?.id===m.id ? "#166534" : "var(--s2)",
+                border: `1px solid ${draggingMeal?.id===m.id ? "#4ade80" : "#166534"}`,
+                borderRadius: 7,
+                padding: "9px 11px",
+                fontSize: 11,
+                color: draggingMeal?.id===m.id ? "#fff" : "#4ade80",
+                cursor: "grab",
+                userSelect: "none",
+                lineHeight: 1.3,
+                transition: "background .15s",
+                wordBreak: "break-word",
+              });
+              return <>
+                {tierMeals.length > 0 && <>
+                  <div style={{fontSize:8,color:"var(--dim)",textTransform:"uppercase",letterSpacing:1,fontWeight:700,padding:"2px 0 4px"}}>Meals</div>
+                  {tierMeals.map((m,i)=>(
+                    <div key={m.id||i} draggable
+                      onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}}
+                      onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
+                      style={getMealStyle(m)}>
+                      {m.name}
+                    </div>
+                  ))}
+                </>}
+                {snacks.length > 0 && <>
+                  <div style={{fontSize:8,color:"var(--dim)",textTransform:"uppercase",letterSpacing:1,fontWeight:700,padding:"8px 0 4px"}}>Snacks</div>
+                  {snacks.map((m,i)=>(
+                    <div key={m.id||i} draggable
+                      onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}}
+                      onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
+                      style={getSnackStyle(m)}>
+                      <span style={{fontSize:7,fontWeight:700,display:"block",marginBottom:2,letterSpacing:1,color:"#4ade80"}}>SNACK</span>
+                      {m.name}
+                    </div>
+                  ))}
+                </>}
+                {tierMeals.length===0 && snacks.length===0 && (
+                  <div style={{fontSize:10,color:"var(--dim)",padding:"12px 8px",textAlign:"center",lineHeight:1.5}}>
+                    No meals for this tier yet.<br/>
+                    <span style={{fontSize:9,color:"var(--dim)"}}>Add meals in Library first</span>
+                  </div>
+                )}
+              </>;
+            })()}
           </div>
         </div>
+
+        {/* ── Weekly grid ── */}
         <div style={{flex:1,overflowX:"auto"}}>
           <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
             <thead><tr>
-              <th style={{width:50,padding:"5px 6px",textAlign:"left",color:"var(--muted)",fontSize:9,fontWeight:700}}>Slot</th>
-              {DAYS.map(d=><th key={d} style={{padding:"5px 4px",color:"var(--red)",fontSize:9,fontWeight:700,textAlign:"center"}}>{d.slice(0,3)}</th>)}
+              <th style={{width:55,padding:"5px 6px",textAlign:"left",color:"var(--muted)",fontSize:9,fontWeight:700}}>SLOT</th>
+              {DAYS.map(d=><th key={d} style={{padding:"5px 4px",color:activeTierColor,fontSize:9,fontWeight:700,textAlign:"center",letterSpacing:.5}}>{d.slice(0,3).toUpperCase()}</th>)}
             </tr></thead>
             <tbody>
-              {[...["Meal 1","Meal 2","Meal 3"],...Array.from({length:extraRows},(_,i)=>`Meal ${4+i}`),"Snack"].map((slot,si)=>{
+              {[...["Meal 1","Meal 2","Meal 3"],...Array.from({length:extraRows},(_,i)=>`Meal ${4+i}`),"Snack"].map((slot)=>{
                 const isSnack=slot==="Snack";
                 const mealIdx=isSnack?null:parseInt(slot.replace("Meal ",""))-1;
                 return (
@@ -496,14 +626,23 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                         onDrop={()=>handleAssignMeal(day,slot)}
                         style={{padding:3}}>
                         <div title={val||""}
-                          style={{background:isOver?"rgba(232,52,42,0.15)":val?"var(--s2)":"var(--s3)",border:`1px ${isOver?"solid":"dashed"} ${isOver?"var(--red)":val?"var(--bdr)":"#333"}`,borderRadius:5,padding:"6px 5px",minHeight:56,fontSize:9,color:val?"#ccc":"var(--dim)",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}}>
-                          <span style={{width:"100%",textAlign:"center",lineHeight:1.3,wordBreak:"break-word"}}>{val||<span style={{fontSize:8,color:"#333"}}>Drop</span>}</span>
-                          {val&&<span style={{fontSize:8,color:"var(--dim)",cursor:"pointer",marginTop:2}}
+                          style={{
+                            background:isOver?`${activeTierColor}18`:val?"var(--s2)":"var(--s3)",
+                            border:`1px ${isOver?"solid":"dashed"} ${isOver?activeTierColor:val?`${activeTierColor}33`:"#2a2a2a"}`,
+                            borderRadius:6,padding:"7px 5px",minHeight:60,fontSize:9,
+                            color:val?"#ddd":"var(--dim)",textAlign:"center",
+                            display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3,
+                            transition:"background .1s,border-color .1s",
+                          }}>
+                          <span style={{width:"100%",textAlign:"center",lineHeight:1.4,wordBreak:"break-word",fontWeight:val?500:400}}>
+                            {val||<span style={{fontSize:8,color:"#333"}}>Drop</span>}
+                          </span>
+                          {val&&<span style={{fontSize:8,color:"var(--dim)",cursor:"pointer",marginTop:2,opacity:.7}}
                             onClick={()=>{
                               const dm=tierMenu[day]||{mealIds:[],snack:"",snackId:""};
                               const newIds=[...(dm.mealIds||[])];
-                              if(isSnack){upsertMenuDay(day,menuTier,{mealIds:newIds,snackId:""});}
-                              else{newIds[mealIdx]="";upsertMenuDay(day,menuTier,{mealIds:newIds.filter(Boolean),snackId:dm.snackId||""});}
+                              if(isSnack){upsertMenuDay(day,activeTierKey,{mealIds:newIds,snackId:""});}
+                              else{newIds[mealIdx]="";upsertMenuDay(day,activeTierKey,{mealIds:newIds.filter(Boolean),snackId:dm.snackId||""});}
                             }}>
                             ✕
                           </span>}
@@ -559,9 +698,9 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
             </div>
             {mealForm.itemType==="meal"&&<div>
               <div className="form-label">Plan</div>
-              <div style={{display:"flex",gap:6}}>
-                {[["SMALL","Lean Fit"],["BIG","Muscle"],["VEG","Vegetarian"]].map(([t,lbl])=>(
-                  <button key={t} type="button" className={`btn btn-sm ${mealForm.tier===t?"btn-r":"btn-g"}`} style={{flex:1}} onClick={()=>setMealForm(p=>({...p,tier:t}))}>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {availableTiers.map(({tier:t,label:lbl})=>(
+                  <button key={t} type="button" className={`btn btn-sm ${mealForm.tier===t?"btn-r":"btn-g"}`} style={{flex:1,minWidth:80}} onClick={()=>setMealForm(p=>({...p,tier:t}))}>
                     {lbl}
                   </button>
                 ))}
@@ -971,13 +1110,22 @@ export default function App() {
   const deletePlanHandler = async id => {
     if (!window.confirm("Delete this plan?")) return;
     setPlans(p=>p.filter(x=>x.id!==id));
-    try { await dbDeletePlan(id); flash(); } catch(e){ console.error(e); }
+    try {
+      await dbDeletePlan(id);
+      flash();
+    } catch(e) {
+      console.error(e);
+      // Revert if delete failed (e.g. clients using this plan)
+      const restored = await getPlans();
+      setPlans(restored||[]);
+      alert("Cannot delete — clients are assigned to this plan. Reassign them first.");
+    }
   };
 
   // ── Menu modal
   const openEditMenu = day => {
     setMenuEditDay(day);
-    const d0=menu.SMALL?.[day]||menu.BIG?.[day]||{};
+    const d0 = Object.values(menu).map(tm=>tm[day]).find(Boolean) || {};
     setMenuForm({meals:[...(d0.meals||[]).map(m=>typeof m==="object"?m.name:m),...["","",""]].slice(0,3),snack:d0.snack||""});
     setShowMenuModal(true);
   };
@@ -1054,62 +1202,112 @@ export default function App() {
   <meta charset="utf-8"/>
   <title>Delivery Sheet — ${dayName}</title>
   <style>
-    body { font-family: Arial, 'Microsoft YaHei', sans-serif; font-size: 9px; margin: 8px; color: #111; }
-    h1 { font-size: 14px; margin: 0 0 2px; }
-    h2 { font-size: 9px; color: #666; margin: 0 0 10px; font-weight: normal; }
+    @page { size: A4 landscape; margin: 8mm 10mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { font-family: Arial, 'Microsoft YaHei', sans-serif; font-size: 10px; margin: 0; color: #111; }
+
+    /* ── Header ── */
+    .page-header { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; border-bottom: 3px solid #e8342a; padding-bottom: 7px; }
+    .page-header h1 { font-size: 17px; font-weight: 900; margin: 0; letter-spacing: .5px; white-space: nowrap; }
+    .page-header h1 span { color: #e8342a; }
+    .page-header .meta { font-size: 10px; color: #555; white-space: nowrap; }
+    .page-header .stops { margin-left: auto; background: #e8342a; color: #fff; font-weight: 700; font-size: 11px; padding: 3px 10px; border-radius: 4px; white-space: nowrap; }
+
+    /* ── Table ── */
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    col.c0  { width: 3%; }
-    col.c1  { width: 5%; }
-    col.c2  { width: 8%; }
-    col.c3  { width: 8%; }
-    col.c4  { width: 13%; }
-    col.c5  { width: 6%; }
-    col.c6  { width: 20%; }
-    col.c7  { width: 7%; }
-    col.c8  { width: 8%; }
-    col.c9  { width: 13%; }
-    col.c10 { width: 5%; }
-    col.c11 { width: 4%; }
-    th { background: #111; color: #fff; padding: 4px 5px; text-align: left; font-size: 8px; text-transform: uppercase; letter-spacing: .5px; }
-    td { padding: 4px 5px; border-bottom: 1px solid #e0e0e0; vertical-align: top; font-size: 8.5px; word-wrap: break-word; }
-    tr:nth-child(even) td { background: #f7f7f7; }
-    .time { font-weight: bold; color: #e8342a; white-space: nowrap; }
-    .name { font-weight: bold; }
-    .note { color: #b45309; font-style: italic; }
-    .meal { display: block; line-height: 1.5; }
-    .sauce-cell { color: #6b7280; font-size: 8px; font-style: italic; display: block; line-height: 1.5; }
-    .check { width: 14px; height: 14px; border: 1.5px solid #aaa; display: inline-block; }
-    @media print { body { margin: 5px; } button { display: none; } }
+    col.cn  { width: 3%; }
+    col.ct  { width: 6%; }
+    col.cc  { width: 9%; }
+    col.ca  { width: 16%; }
+    col.cm  { width: 30%; }
+    col.cs  { width: 10%; }
+    col.cno { width: 22%; }
+    col.ck  { width: 4%; }
+
+    thead tr { background: #1a1a1a; }
+    th { color: #fff; padding: 6px 7px; text-align: left; font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; white-space: nowrap; }
+
+    tbody tr:nth-child(odd)  td { background: #ffffff; }
+    tbody tr:nth-child(even) td { background: #f0f2f5; }
+    tbody tr { page-break-inside: avoid; }
+
+    td { padding: 8px 7px; border-bottom: 1px solid #dde1e8; vertical-align: top; word-wrap: break-word; line-height: 1.35; }
+
+    /* ── Cell styles ── */
+    .cn-num  { font-weight: 900; font-size: 14px; color: #bbb; text-align: center; vertical-align: middle; }
+    .ct-time { font-weight: 800; font-size: 12px; color: #e8342a; white-space: nowrap; vertical-align: middle; }
+    .cc-name { font-weight: 800; font-size: 11.5px; }
+    .cc-plan { font-size: 9px; color: #777; margin-top: 2px; }
+    .ca-addr { font-size: 10.5px; font-weight: 600; }
+    .ca-acc  { font-size: 9.5px; color: #999; margin-top: 3px; font-style: italic; }
+    .meal-row { display: flex; align-items: baseline; gap: 4px; margin-bottom: 3px; }
+    .meal-row:last-child { margin-bottom: 0; }
+    .meal-bullet { color: #e8342a; font-weight: 900; font-size: 11px; line-height: 1; flex-shrink: 0; }
+    .meal-name { font-weight: 700; font-size: 10.5px; }
+    .meal-sauce { font-size: 9px; color: #999; font-style: italic; }
+    .snack-val { font-size: 10.5px; font-weight: 600; }
+    .note-block { font-size: 10px; }
+    .note-text { color: #92400e; font-weight: 700; }
+    .allergy-text { color: #b91c1c; font-weight: 800; font-size: 10px; margin-top: 3px; }
+    .allergy-label { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #b91c1c; opacity: .8; }
+    .dash { color: #ccc; }
+    .check-box { width: 16px; height: 16px; border: 2px solid #bbb; display: block; margin: auto; border-radius: 3px; }
   </style>
 </head>
 <body>
-  <h1>🔥 FIT IGNYTE — Delivery Sheet</h1>
-  <h2>${dayName} &nbsp;·&nbsp; ${dateStr} &nbsp;·&nbsp; ${rows.length} stop${rows.length!==1?"s":""}</h2>
+  <div class="page-header">
+    <h1>FIT <span>IGNYTE</span> — Delivery Sheet</h1>
+    <div class="meta">${dayName} &nbsp;·&nbsp; ${dateStr}</div>
+    <div class="stops">${rows.length} stop${rows.length!==1?"s":""}</div>
+  </div>
   <table>
     <colgroup>
-      <col class="c0"><col class="c1"><col class="c2"><col class="c3"><col class="c4">
-      <col class="c5"><col class="c6"><col class="c7"><col class="c8"><col class="c9"><col class="c10"><col class="c11">
+      <col class="cn"><col class="ct"><col class="cc"><col class="ca">
+      <col class="cm"><col class="cs"><col class="cno"><col class="ck">
     </colgroup>
     <thead>
-      <tr><th>#</th><th>Time</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Snack</th><th>Sauce</th><th>Notes</th><th>⚠️ Allergies</th><th>✓</th></tr>
+      <tr>
+        <th>#</th>
+        <th>Time</th>
+        <th>Client</th>
+        <th>Address &amp; Access</th>
+        <th>Meals</th>
+        <th>Snack</th>
+        <th>Notes &amp; Allergies</th>
+        <th>✓</th>
+      </tr>
     </thead>
     <tbody>
-      ${rows.map((r,i) => `
-        <tr>
-          <td>${i+1}</td>
-          <td class="time">${r.time}</td>
-          <td class="name">${r.name}</td>
-          <td>${r.plan}</td>
-          <td>${r.address}</td>
-          <td>${r.access}</td>
-          <td>${r.meals.map(m=>"<span class=\"meal\">\u2022 " + (m.name||m) + (m.sauce ? " <span style=\"color:#888;font-size:7.5px;font-style:italic\">(" + m.sauce + ")</span>" : "") + "</span>").join("") || "—"}</td>
-          <td>${r.snack}</td>
-          <td>${r.meals.some(m=>m.sauce) ? r.meals.map(m=>m.sauce ? "<span class=\"sauce-cell\">"+m.sauce+"</span>" : "").filter(Boolean).join("") : "—"}</td>
-          <td class="note" style="min-width:70px">${r.note}</td>
-          <td style="color:#dc2626;font-weight:bold;font-size:8px">${r.allergies||"—"}</td>
-          <td><span class="check"></span></td>
-        </tr>
-      `).join("")}
+      ${rows.map((r,i) => {
+        const hasMeals   = r.meals && r.meals.length > 0;
+        const hasNote    = r.note && r.note !== "—";
+        const hasAllergy = r.allergies && r.allergies.trim();
+        const noteHtml    = hasNote    ? "<div class=\"note-text\">" + r.note + "</div>" : "";
+        const allergyHtml = hasAllergy ? "<div class=\"allergy-label\">&#9888; Allergies</div><div class=\"allergy-text\">" + r.allergies + "</div>" : "";
+        const notesCell   = (hasNote || hasAllergy) ? "<div class=\"note-block\">" + noteHtml + allergyHtml + "</div>" : "<span class=\"dash\">&mdash;</span>";
+        const accessHtml  = (r.access && r.access !== "—") ? "<div class=\"ca-acc\">" + r.access + "</div>" : "";
+        const mealsHtml   = hasMeals
+          ? r.meals.map(m =>
+              "<div class=\"meal-row\">" +
+                "<span class=\"meal-bullet\">&bull;</span>" +
+                "<div>" +
+                  "<span class=\"meal-name\">" + (m.name||m) + "</span>" +
+                  (m.sauce ? "<span class=\"meal-sauce\"> &mdash; " + m.sauce + "</span>" : "") +
+                "</div>" +
+              "</div>"
+            ).join("")
+          : "<span class=\"dash\">&mdash;</span>";
+        return "<tr>" +
+          "<td class=\"cn-num\">" + (i+1) + "</td>" +
+          "<td class=\"ct-time\">" + r.time + "</td>" +
+          "<td><div class=\"cc-name\">" + r.name + "</div><div class=\"cc-plan\">" + r.plan + "</div></td>" +
+          "<td><div class=\"ca-addr\">" + r.address + "</div>" + accessHtml + "</td>" +
+          "<td>" + mealsHtml + "</td>" +
+          "<td class=\"snack-val\">" + (r.snack||"&mdash;") + "</td>" +
+          "<td>" + notesCell + "</td>" +
+          "<td style=\"text-align:center\"><span class=\"check-box\"></span></td>" +
+          "</tr>";
+      }).join("")}
     </tbody>
   </table>
 </body>
@@ -1117,11 +1315,7 @@ export default function App() {
 
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href     = url;
-    a.download = "delivery-" + dayName.toLowerCase() + ".html";
-    a.click();
-    URL.revokeObjectURL(url);
+    window.open(url, "_blank");
   };
 
   // ── Print Kitchen Prep sheet
@@ -1540,7 +1734,7 @@ export default function App() {
                               <label>Snack</label>
                               <select className="msel" value={slot.snackId||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"snackId",e.target.value)}>
                                 <option value="">— none —</option>
-                                {Object.values(DAYS.reduce((acc,d)=>{const s=menu.SMALL?.[d]?.snackObj||menu.BIG?.[d]?.snackObj||menu.VEG?.[d]?.snackObj;if(s?.id)acc[s.id]=s;return acc},{})).map(s=>(
+                                {Object.values(DAYS.reduce((acc,d)=>{const s=Object.values(menu).map(tm=>tm[d]?.snackObj).find(Boolean);if(s?.id)acc[s.id]=s;return acc},{})).map(s=>(
                                   <option key={s.id} value={s.id}>{s.name}</option>
                                 ))}
                               </select>
@@ -1854,9 +2048,9 @@ export default function App() {
                 {(()=>{
                   const lines = ["🔥 FIT IGNYTE — This Week's Menu", ""];
                   DAYS.forEach(day => {
-                    const allTiers = [...(menu.SMALL?.[day]?.meals||[]),...(menu.BIG?.[day]?.meals||[]),...(menu.VEG?.[day]?.meals||[])];
+                    const allTiers = Object.values(menu).flatMap(tm=>tm[day]?.meals||[]);
                     const meals = [...new Set(allTiers.map(m=>typeof m==="object"?m.name:m))].filter(Boolean);
-                    const snack = menu.SMALL?.[day]?.snack || menu.BIG?.[day]?.snack || "";
+                    const snack = Object.values(menu).map(tm=>tm[day]?.snack).find(Boolean) || "";
                     lines.push(`📅 ${day}`);
                     meals.forEach((m,i) => lines.push(`  Meal ${i+1}: ${m}`));
                     if (snack) lines.push(`  Snack: ${snack}`);

@@ -414,7 +414,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
 
   const openEditMeal = (m) => {
     setEditingMealId(m.id);
-    setMealForm({name:m.name,sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:m.photo_url||"",photoFile:null});
+    setMealForm({name:m.name,sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:m.photo_url||"",photoFile:null,itemType:m.item_type||"meal",tier:m.tier||""});
     setShowAddMeal(true);
   };
 
@@ -499,7 +499,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                 ? <img src={m.photo_url} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={m.name}/>
                 : <span style={{fontSize:10,color:"var(--dim)"}}>No photo yet</span>}
               <span style={{position:"absolute",top:5,right:5,fontSize:8,fontWeight:700,padding:"2px 7px",borderRadius:3,
-                background:tc+"22",color:tc,letterSpacing:.5}}>
+                background:tc,color:"#000",letterSpacing:.5,fontWeight:800}}>
                 {badgeLabel}
               </span>
             </div>

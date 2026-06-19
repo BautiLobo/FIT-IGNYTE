@@ -77,7 +77,8 @@ const G = `
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
 :root{--bg:#0a0a0a;--s1:#111;--s2:#1a1a1a;--s3:#242424;--bdr:#2a2a2a;--bdr2:#333;--txt:#e8e8e8;--muted:#666;--dim:#444;--red:#E8342A;--red2:#ff4438;--green:#22c55e;--amber:#f59e0b;--blue:#38bdf8}
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
+html,body{height:100%;width:100%;margin:0;padding:0}
+#root{height:100%;width:100%}
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt)}
 ::-webkit-scrollbar{width:3px;height:3px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -1670,15 +1671,13 @@ export default function App() {
                   <div className="empty-state-sub">{clients.length===0?"Click + New Client to add the first one":"Try a different search"}</div>
                 </div>
               ):(
-                <div className="tbl-wrap"><table>
-                  <thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Lang</th><th>District</th><th>Plan</th><th>¥/Wk</th><th>Status</th><th>Expiry</th><th>Paid</th><th>LTV</th><th>Actions</th></tr></thead>
+                <div className="tbl-wrap"><table style={{width:"100%"}}>
+                  <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Plan</th><th>¥/Wk</th><th>Status</th><th>Expiry</th><th>Paid</th><th>LTV</th><th>Actions</th></tr></thead>
                   <tbody>{filtered.map(c=>(
                     <tr key={c.id}>
-                      <td style={{color:"var(--dim)"}}>{c.id}</td>
-                      <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
+                      <td style={{color:"var(--dim)",fontSize:10}}>{c.id}</td>
+                      <td style={{color:"#fff",fontWeight:500,whiteSpace:"nowrap"}}>{c.name}</td>
                       <td style={{color:"var(--muted)"}}>{c.phone||"—"}</td>
-                      <td><span className="bx bx-gr">{c.language}</span></td>
-                      <td><span className="chip">{c.district||"—"}</span></td>
                       <td><PlanBadge planName={c.planName} plans={plans}/></td>
                       <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
                       <td>{(()=>{

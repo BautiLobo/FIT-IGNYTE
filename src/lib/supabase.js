@@ -40,7 +40,6 @@ export async function getClients() {
     acqChannel:     c.acq_channel     || "",
     wechatOpenid:   c.wechat_openid   || "",
     statusNote:     c.status_note     || "",
-    pausedUntil:    c.paused_until    || null,
   }));
 }
 export async function upsertClient(client) {
@@ -67,7 +66,6 @@ export async function upsertClient(client) {
     weeks:          client.weeks          || 0,
     wechat_openid:  client.wechatOpenid   || "",
     status_note:    client.statusNote     || "",
-    paused_until:   client.pausedUntil    || null,
   };
   if (client.id) mapped.id = client.id;
   return check(await supabase.from("clients").upsert(mapped).select().single(), "upsertClient");

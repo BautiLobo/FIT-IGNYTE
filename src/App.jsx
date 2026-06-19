@@ -40,6 +40,38 @@ const daysUntil = d => Math.round((new Date(d) - TODAY) / 86400000);
 const fmtDate   = d => { try { return new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}); } catch { return d||"—"; } };
 const todayIso  = () => TODAY.toISOString().split("T")[0];
 
+// Single source of truth for client status — always computed fresh from dates,
+// never read from a stored field. Mirrors the same logic used in the WeChat
+// Mini Program so both systems are always consistent.
+function getRealStatus(startDate, expiryDate) {
+  if (!startDate || !expiryDate) return "Inactive";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start  = new Date(startDate  + "T00:00:00");
+  const expiry = new Date(expiryDate + "T00:00:00");
+  if (today < start)  return "Upcoming";  // paid but plan hasn't started yet
+  if (today > expiry) return "Inactive";  // plan expired
+  return "Active";                         // plan running right now
+}
+
+// Returns true if the client is Active (by computed status) on the given
+// weekday name (e.g. "Monday"). Finds the closest occurrence of that weekday
+// (this week) and checks if it falls within start_date..expiry_date.
+const DAY_INDEX = {Monday:1,Tuesday:2,Wednesday:3,Thursday:4,Friday:5,Saturday:6,Sunday:0};
+function clientActiveOnDay(c, dayName) {
+  if (!c.startDate || !c.expiryDate) return false;
+  const todayIdx = TODAY.getDay(); // 0=Sun
+  const targetIdx = DAY_INDEX[dayName] ?? -1;
+  if (targetIdx === -1) return getRealStatus(c.startDate, c.expiryDate) === "Active";
+  const diff = (targetIdx - todayIdx + 7) % 7;
+  const targetDate = new Date(TODAY);
+  targetDate.setDate(TODAY.getDate() + diff);
+  targetDate.setHours(0,0,0,0);
+  const start  = new Date(c.startDate  + "T00:00:00");
+  const expiry = new Date(c.expiryDate + "T00:00:00");
+  return targetDate >= start && targetDate <= expiry;
+}
+
 // ─── STYLES ──────────────────────────────────────────────────────────────────
 const G = `
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
@@ -836,7 +868,7 @@ export default function App() {
   }, [cookTimes, customItems, loaded]);
 
   // ── Derived
-  const active   = useMemo(() => clients.filter(c=>c.status==="Active"), [clients]);
+  const active   = useMemo(() => clients.filter(c=>getRealStatus(c.startDate,c.expiryDate)==="Active"), [clients]);
   const unpaid   = useMemo(() => active.filter(c=>!c.paid), [active]);
   const renewDue = useMemo(() => active.filter(c=>{ const d=daysUntil(c.expiryDate); return d>=0&&d<=2; }), [active]);
   const overdue  = useMemo(() => active.filter(c=>daysUntil(c.expiryDate)<0), [active]);
@@ -845,7 +877,7 @@ export default function App() {
 
   const filtered = useMemo(() => {
     let l = clients;
-    if (filterSt!=="all") l=l.filter(c=>c.status===filterSt);
+    if (filterSt!=="all") l=l.filter(c=>getRealStatus(c.startDate,c.expiryDate)===filterSt);
     if (search) l=l.filter(c=>
       c.name.toLowerCase().includes(search.toLowerCase())||
       (c.district||"").toLowerCase().includes(search.toLowerCase())||
@@ -1075,7 +1107,6 @@ export default function App() {
         acqChannel:   rawSaved.acq_channel     || "",
         wechatOpenid: rawSaved.wechat_openid   || "",
         statusNote:   rawSaved.status_note     || "",
-        pausedUntil:  rawSaved.paused_until    || null,
       };
       if (editClientId) {
         setClients(p=>p.map(c=>c.id===editClientId?saved:c));
@@ -1497,8 +1528,8 @@ export default function App() {
                 <select className="fltr" value={filterSt} onChange={e=>setFilterSt(e.target.value)}>
                   <option value="all">All Status</option>
                   <option value="Active">Active</option>
+                  <option value="Upcoming">Upcoming</option>
                   <option value="Inactive">Inactive</option>
-                  <option value="Paused">Paused</option>
                 </select>
                 <button className="btn btn-r" onClick={openAddClient}>+ New Client</button>
               </>}
@@ -1531,7 +1562,7 @@ export default function App() {
               </div>:null}
               <div className="kpis">
                 {[
-                  {lbl:"Active Clients", val:active.length,  sub:`${clients.filter(c=>c.status!=="Active").length} inactive`, c:"var(--red)"},
+                  {lbl:"Active Clients", val:active.length,  sub:`${clients.filter(c=>getRealStatus(c.startDate,c.expiryDate)!=="Active").length} not active`, c:"var(--red)"},
                   {lbl:"Weekly Revenue", val:`¥${revenue}`,  sub:"this week",                                                  c:"var(--green)"},
                   {lbl:"Unpaid",         val:unpaid.length,  sub:unpaid.length?"Follow up":"All paid ✓",                      c:unpaid.length?"var(--amber)":"var(--green)"},
                   {lbl:"Renewals ≤2d",   val:renewDue.length+overdue.length, sub:"includes overdue",                          c:"var(--amber)"},
@@ -1650,7 +1681,12 @@ export default function App() {
                       <td><span className="chip">{c.district||"—"}</span></td>
                       <td><PlanBadge planName={c.planName} plans={plans}/></td>
                       <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
-                      <td>{c.status==="Active"?<span className="bx bx-g">Active</span>:c.status==="Paused"?<span className="bx bx-a">Paused</span>:<span className="bx bx-gr">Inactive</span>}</td>
+                      <td>{(()=>{
+                        const rs = getRealStatus(c.startDate, c.expiryDate);
+                        if (rs === "Active")   return <span className="bx bx-g">Active</span>;
+                        if (rs === "Upcoming") return <span className="bx bx-a">Upcoming</span>;
+                        return <span className="bx bx-gr">Inactive</span>;
+                      })()}</td>
                       <td><RenewalBadge c={c}/></td>
                       <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓":"Unpaid"}</button></td>
                       <td style={{color:"var(--amber)"}}>¥{c.ltv}</td>
@@ -1672,10 +1708,15 @@ export default function App() {
               <div className="tabs">
                 {DAYS.map(d=><button key={d} className={`tab${mealDay===d?" on":""}`} onClick={()=>setMealDay(d)}>{d}</button>)}
               </div>
-              {active.length===0?(
-                <div className="empty-state"><div className="empty-state-icon">🍱</div><div className="empty-state-title">No active clients</div><div className="empty-state-sub">Add clients to manage their meals</div></div>
-              ):(
-                active.map(c => {
+              {(()=>{
+                const visibleClients = active.filter(c => clientActiveOnDay(c, mealDay));
+                if (active.length === 0) return (
+                  <div className="empty-state"><div className="empty-state-icon">🍱</div><div className="empty-state-title">No active clients</div><div className="empty-state-sub">Add clients to manage their meals</div></div>
+                );
+                if (visibleClients.length === 0) return (
+                  <div className="empty-state"><div className="empty-state-icon">📅</div><div className="empty-state-title">No clients active on {mealDay}</div><div className="empty-state-sub">All active clients either haven't started yet or have expired for this day</div></div>
+                );
+                return visibleClients.map(c => {
                   const slots = meals[c.id]?.[mealDay] || [];
                   return (
                     <div className="client-card" key={c.id}>
@@ -1760,8 +1801,8 @@ export default function App() {
                       </div>
                     </div>
                   );
-                })
-              )}
+                });
+              })()}
             </>}
 
             {/* ═══ KITCHEN ════════════════════════════ */}
@@ -2225,10 +2266,11 @@ export default function App() {
                       {plans.map(p=><option key={p.id} value={p.id}>{p.name} · ¥{p.price}/wk</option>)}
                     </select>
                   </div>
-                  <div className="fl"><label>Status</label>
-                    <select className="sel" value={clientForm.status||"Active"} onChange={e=>cfld("status",e.target.value)}>
-                      {["Active","Inactive","Paused","Trial"].map(s=><option key={s} value={s}>{s}</option>)}
-                    </select>
+                  <div className="fl">
+                    <label>Status</label>
+                    <div style={{padding:"8px 10px",fontSize:11,color:"var(--dim)",background:"var(--s3)",borderRadius:6,border:"1px solid var(--bdr)"}}>
+                      Auto-calculated from dates
+                    </div>
                   </div>
                   <div className="fl"><label>Start Date</label><input className="inp" type="date" value={clientForm.startDate||""} onChange={e=>cfld("startDate",e.target.value)}/></div>
                   <div className="fl"><label>Expiry Date</label><input className="inp" type="date" value={clientForm.expiryDate||""} onChange={e=>cfld("expiryDate",e.target.value)}/></div>

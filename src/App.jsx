@@ -35,8 +35,16 @@ const BLANK_PLAN = { id:"", name:"", kcal:0, meals:1, price:0, tier:"", color:"#
 // A delivery slot for a client on a given day
 // { id, clientId, day, time, meals:[], snack:"", note:"" }
 
-const TODAY     = new Date();
-const daysUntil = d => Math.round((new Date(d) - TODAY) / 86400000);
+// TODAY is normalized to local midnight so all date-diff math (daysUntil,
+// getRealStatus, clientActiveOnDay) agrees consistently — no more off-by-one
+// or "Active" vs "Expired" mismatches caused by time-of-day drift.
+const TODAY = new Date();
+TODAY.setHours(0, 0, 0, 0);
+const daysUntil = d => {
+  if (!d) return NaN;
+  const target = new Date(d + "T00:00:00");
+  return Math.round((target - TODAY) / 86400000);
+};
 const fmtDate   = d => { try { return new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}); } catch { return d||"—"; } };
 const todayIso  = () => TODAY.toISOString().split("T")[0];
 
@@ -45,12 +53,10 @@ const todayIso  = () => TODAY.toISOString().split("T")[0];
 // Mini Program so both systems are always consistent.
 function getRealStatus(startDate, expiryDate) {
   if (!startDate || !expiryDate) return "Inactive";
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
   const start  = new Date(startDate  + "T00:00:00");
   const expiry = new Date(expiryDate + "T00:00:00");
-  if (today < start)  return "Upcoming";  // paid but plan hasn't started yet
-  if (today > expiry) return "Inactive";  // plan expired
+  if (TODAY < start)  return "Upcoming";  // paid but plan hasn't started yet
+  if (TODAY > expiry) return "Inactive";  // plan expired
   return "Active";                         // plan running right now
 }
 
@@ -248,6 +254,7 @@ function RenewalBadge({ c }) {
   const d = daysUntil(c.expiryDate);
   if (isNaN(d)) return <span className="bx bx-gr">—</span>;
   if (d < 0)  return <span className="bx bx-r">Expired {Math.abs(d)}d</span>;
+  if (d === 0) return <span className="bx bx-r">Last day</span>;
   if (d <= 3) return <span className="bx bx-r">Expires {d}d</span>;
   if (d <= 7) return <span className="bx bx-a">Renew {d}d</span>;
   return <span className="bx bx-g">Active {d}d</span>;
@@ -1708,12 +1715,17 @@ export default function App() {
                 {DAYS.map(d=><button key={d} className={`tab${mealDay===d?" on":""}`} onClick={()=>setMealDay(d)}>{d}</button>)}
               </div>
               {(()=>{
-                const visibleClients = active.filter(c => clientActiveOnDay(c, mealDay));
-                if (active.length === 0) return (
-                  <div className="empty-state"><div className="empty-state-icon">🍱</div><div className="empty-state-title">No active clients</div><div className="empty-state-sub">Add clients to manage their meals</div></div>
+                // Meal Selections is a planning screen: show Active AND Upcoming clients
+                // (Max needs to load meals ahead of time for clients who haven't started yet).
+                // Kitchen Prep and Delivery Sheet stay strictly Active-only since they're
+                // execution screens for "what happens today/this specific day".
+                const planningClients = clients.filter(c => getRealStatus(c.startDate, c.expiryDate) !== "Inactive");
+                const visibleClients  = planningClients.filter(c => clientActiveOnDay(c, mealDay));
+                if (planningClients.length === 0) return (
+                  <div className="empty-state"><div className="empty-state-icon">🍱</div><div className="empty-state-title">No active or upcoming clients</div><div className="empty-state-sub">Add clients to manage their meals</div></div>
                 );
                 if (visibleClients.length === 0) return (
-                  <div className="empty-state"><div className="empty-state-icon">📅</div><div className="empty-state-title">No clients active on {mealDay}</div><div className="empty-state-sub">All active clients either haven't started yet or have expired for this day</div></div>
+                  <div className="empty-state"><div className="empty-state-icon">📅</div><div className="empty-state-title">No clients scheduled for {mealDay}</div><div className="empty-state-sub">All clients either haven't started yet or have expired for this day</div></div>
                 );
                 return visibleClients.map(c => {
                   const slots = meals[c.id]?.[mealDay] || [];
@@ -1722,6 +1734,8 @@ export default function App() {
                       <div className="client-card-hd">
                         <div className="client-card-name">{c.name}</div>
                         <PlanBadge planName={c.planName} plans={plans}/>
+                        {getRealStatus(c.startDate,c.expiryDate)==="Upcoming"&&
+                          <span className="bx bx-a" style={{fontSize:9}}>Upcoming · starts {fmtDate(c.startDate)}</span>}
                         {c.customizations&&<span style={{fontSize:10,color:"#fcd34d"}}>⚠️ {c.customizations}</span>}
                       </div>
 

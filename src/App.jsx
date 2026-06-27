@@ -7,6 +7,9 @@ import {
   getMealSelections, upsertMealSelection,
   getChecklist, toggleChecklistItem,
   signIn, signOut, getSession, onAuthChange,
+  getPendingOrders, approveOrder, rejectOrder,
+  getPendingAddressChanges, approveAddressChange, rejectAddressChange,
+  getNotifications, sendNotification, deleteNotification,
 } from "./lib/supabase";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -48,6 +51,15 @@ const daysUntil = d => {
 };
 const fmtDate   = d => { try { return new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}); } catch { return d||"—"; } };
 const todayIso  = () => TODAY.toISOString().split("T")[0];
+
+const NOTIF_TEMPLATES = [
+  {label:"Custom",              title:"",                    message:""},
+  {label:"Delivery delayed",    title:"Delivery delayed",    message:"Your delivery today is running a bit late. Thanks for your patience!"},
+  {label:"Payment reminder",    title:"Payment reminder",    message:"Your plan payment is due. Please confirm at your earliest convenience."},
+  {label:"Plan expiring soon",  title:"Plan expiring soon",  message:"Your meal plan is expiring soon — renew now to avoid any interruption."},
+  {label:"Menu update",         title:"New weekly menu",     message:"This week's menu has been updated. Check the app for details."},
+  {label:"Holiday schedule",    title:"Holiday schedule",    message:"Delivery schedule will be adjusted for the upcoming holiday. See details in the app."},
+];
 
 // Single source of truth for client status — always computed fresh from dates,
 // never read from a stored field. Mirrors the same logic used in the WeChat
@@ -493,8 +505,8 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     <div style={{display:"flex",gap:2,marginBottom:0,borderBottom:"1px solid var(--bdr)"}}>
       {[["library","Meal Library"],["planner","Weekly Planner"]].map(([key,label])=>(
         <button key={key} onClick={()=>setMenuTab(key)}
-          style={{flex:1,padding:"9px 14px",background:"none",border:"none",borderBottom:`2px solid ${menuTab===key?"var(--red)":"transparent"}`,marginBottom:"-1px",
-            color:menuTab===key?"var(--red)":"var(--muted)",fontFamily:"'DM Sans',sans-serif",fontSize:11,fontWeight:600,cursor:"pointer",transition:"all .15s",letterSpacing:.3}}>
+          style={{flex:1,padding:"13px 16px",background:"none",border:"none",borderBottom:`2px solid ${menuTab===key?"var(--red)":"transparent"}`,marginBottom:"-1px",
+            color:menuTab===key?"var(--red)":"var(--muted)",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:600,cursor:"pointer",transition:"all .15s",letterSpacing:.3}}>
           {label}
         </button>
       ))}
@@ -505,10 +517,10 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
       <div style={{display:"flex",gap:0,marginBottom:16,borderBottom:"1px solid var(--bdr)",marginTop:0}}>
         {availableTiers.map(({tier:t,label:lbl,color:col})=>(
           <button key={t} onClick={()=>setMenuTier(t)}
-            style={{flex:1,padding:"10px 8px",background:activeTier===t?`${col}18`:"none",border:"none",
+            style={{flex:1,padding:"14px 10px",background:activeTier===t?`${col}18`:"none",border:"none",
               borderBottom:`2px solid ${activeTier===t?col:"transparent"}`,marginBottom:"-1px",
               color:activeTier===t?col:"var(--muted)",fontFamily:"'DM Sans',sans-serif",
-              fontWeight:700,fontSize:12,cursor:"pointer",transition:"all .15s",letterSpacing:.3}}>
+              fontWeight:700,fontSize:15,cursor:"pointer",transition:"all .15s",letterSpacing:.3}}>
             {lbl}
           </button>
         ))}
@@ -569,15 +581,15 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
       <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
 
         {/* ── Sidebar: meals for active tier ── */}
-        <div style={{width:210,flexShrink:0}}>
+        <div style={{width:260,flexShrink:0}}>
           {/* Header with tier color accent */}
-          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,paddingBottom:8,borderBottom:`1px solid ${activeTierColor}44`}}>
-            <div style={{width:3,height:14,borderRadius:2,background:activeTierColor,flexShrink:0}}/>
-            <span style={{fontSize:9,color:activeTierColor,textTransform:"uppercase",letterSpacing:1.5,fontWeight:700}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,paddingBottom:10,borderBottom:`1px solid ${activeTierColor}44`}}>
+            <div style={{width:4,height:16,borderRadius:2,background:activeTierColor,flexShrink:0}}/>
+            <span style={{fontSize:11,color:activeTierColor,textTransform:"uppercase",letterSpacing:1.5,fontWeight:700}}>
               Drag meals →
             </span>
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:5,maxHeight:560,overflowY:"auto",paddingRight:4}}>
+          <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:640,overflowY:"auto",paddingRight:4}}>
             {/* Meals for this tier */}
             {(()=>{
               const tierMeals = allMeals.filter(m => m.item_type === "meal");
@@ -585,32 +597,32 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
               const getMealStyle = (m) => ({
                 background: draggingMeal?.id===m.id ? activeTierColor : "var(--s2)",
                 border: `1px solid ${draggingMeal?.id===m.id ? activeTierColor : activeTierColor+"44"}`,
-                borderRadius: 7,
-                padding: "9px 11px",
-                fontSize: 11,
+                borderRadius: 8,
+                padding: "13px 14px",
+                fontSize: 14,
                 color: draggingMeal?.id===m.id ? "#fff" : "#ccc",
                 cursor: "grab",
                 userSelect: "none",
-                lineHeight: 1.3,
+                lineHeight: 1.35,
                 transition: "background .15s, border-color .15s",
                 wordBreak: "break-word",
               });
               const getSnackStyle = (m) => ({
                 background: draggingMeal?.id===m.id ? "#166534" : "var(--s2)",
                 border: `1px solid ${draggingMeal?.id===m.id ? "#4ade80" : "#166534"}`,
-                borderRadius: 7,
-                padding: "9px 11px",
-                fontSize: 11,
+                borderRadius: 8,
+                padding: "13px 14px",
+                fontSize: 14,
                 color: draggingMeal?.id===m.id ? "#fff" : "#4ade80",
                 cursor: "grab",
                 userSelect: "none",
-                lineHeight: 1.3,
+                lineHeight: 1.35,
                 transition: "background .15s",
                 wordBreak: "break-word",
               });
               return <>
                 {tierMeals.length > 0 && <>
-                  <div style={{fontSize:8,color:"var(--dim)",textTransform:"uppercase",letterSpacing:1,fontWeight:700,padding:"2px 0 4px"}}>Meals</div>
+                  <div style={{fontSize:11,color:"var(--dim)",textTransform:"uppercase",letterSpacing:1,fontWeight:700,padding:"3px 0 6px"}}>Meals</div>
                   {tierMeals.map((m,i)=>(
                     <div key={m.id||i} draggable
                       onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}}
@@ -621,21 +633,21 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                   ))}
                 </>}
                 {snacks.length > 0 && <>
-                  <div style={{fontSize:8,color:"var(--dim)",textTransform:"uppercase",letterSpacing:1,fontWeight:700,padding:"8px 0 4px"}}>Snacks</div>
+                  <div style={{fontSize:11,color:"var(--dim)",textTransform:"uppercase",letterSpacing:1,fontWeight:700,padding:"10px 0 6px"}}>Snacks</div>
                   {snacks.map((m,i)=>(
                     <div key={m.id||i} draggable
                       onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}}
                       onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
                       style={getSnackStyle(m)}>
-                      <span style={{fontSize:7,fontWeight:700,display:"block",marginBottom:2,letterSpacing:1,color:"#4ade80"}}>SNACK</span>
+                      <span style={{fontSize:10,fontWeight:700,display:"block",marginBottom:3,letterSpacing:1,color:"#4ade80"}}>SNACK</span>
                       {m.name}
                     </div>
                   ))}
                 </>}
                 {tierMeals.length===0 && snacks.length===0 && (
-                  <div style={{fontSize:10,color:"var(--dim)",padding:"12px 8px",textAlign:"center",lineHeight:1.5}}>
+                  <div style={{fontSize:13,color:"var(--dim)",padding:"16px 10px",textAlign:"center",lineHeight:1.5}}>
                     No meals for this tier yet.<br/>
-                    <span style={{fontSize:9,color:"var(--dim)"}}>Add meals in Library first</span>
+                    <span style={{fontSize:12,color:"var(--dim)"}}>Add meals in Library first</span>
                   </div>
                 )}
               </>;
@@ -647,8 +659,8 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
         <div style={{flex:1,overflowX:"auto"}}>
           <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
             <thead><tr>
-              <th style={{width:55,padding:"5px 6px",textAlign:"left",color:"var(--muted)",fontSize:9,fontWeight:700}}>SLOT</th>
-              {DAYS.map(d=><th key={d} style={{padding:"5px 4px",color:activeTierColor,fontSize:9,fontWeight:700,textAlign:"center",letterSpacing:.5}}>{d.slice(0,3).toUpperCase()}</th>)}
+              <th style={{width:75,padding:"8px 10px",textAlign:"left",color:"var(--muted)",fontSize:12,fontWeight:700}}>SLOT</th>
+              {DAYS.map(d=><th key={d} style={{padding:"8px 6px",color:activeTierColor,fontSize:12,fontWeight:700,textAlign:"center",letterSpacing:.5}}>{d.slice(0,3).toUpperCase()}</th>)}
             </tr></thead>
             <tbody>
               {[...["Meal 1","Meal 2","Meal 3"],...Array.from({length:extraRows},(_,i)=>`Meal ${4+i}`),"Snack"].map((slot)=>{
@@ -656,7 +668,7 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                 const mealIdx=isSnack?null:parseInt(slot.replace("Meal ",""))-1;
                 return (
                 <tr key={slot}>
-                  <td style={{padding:"3px 6px",color:"var(--dim)",fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>{slot}</td>
+                  <td style={{padding:"6px 10px",color:"var(--dim)",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>{slot}</td>
                   {DAYS.map(day=>{
                     const mealObj = isSnack ? tierMenu[day]?.snackObj : (tierMenu[day]?.meals?.[mealIdx]||null);
                     const val = mealObj?.name || (isSnack ? tierMenu[day]?.snack : "") || "";
@@ -666,20 +678,20 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                         onDragOver={e=>{e.preventDefault();setDragOver(`${day}-${slot}`);}}
                         onDragLeave={()=>setDragOver(null)}
                         onDrop={()=>handleAssignMeal(day,slot)}
-                        style={{padding:3}}>
+                        style={{padding:5}}>
                         <div title={val||""}
                           style={{
                             background:isOver?`${activeTierColor}18`:val?"var(--s2)":"var(--s3)",
                             border:`1px ${isOver?"solid":"dashed"} ${isOver?activeTierColor:val?`${activeTierColor}33`:"#2a2a2a"}`,
-                            borderRadius:6,padding:"7px 5px",minHeight:60,fontSize:9,
+                            borderRadius:8,padding:"14px 10px",minHeight:92,fontSize:13,
                             color:val?"#ddd":"var(--dim)",textAlign:"center",
-                            display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3,
+                            display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5,
                             transition:"background .1s,border-color .1s",
                           }}>
-                          <span style={{width:"100%",textAlign:"center",lineHeight:1.4,wordBreak:"break-word",fontWeight:val?500:400}}>
-                            {val||<span style={{fontSize:8,color:"#333"}}>Drop</span>}
+                          <span style={{width:"100%",textAlign:"center",lineHeight:1.45,wordBreak:"break-word",fontWeight:val?500:400}}>
+                            {val||<span style={{fontSize:12,color:"#333"}}>Drop</span>}
                           </span>
-                          {val&&<span style={{fontSize:8,color:"var(--dim)",cursor:"pointer",marginTop:2,opacity:.7}}
+                          {val&&<span style={{fontSize:11,color:"var(--dim)",cursor:"pointer",marginTop:3,opacity:.7}}
                             onClick={()=>{
                               const dm=tierMenu[day]||{mealIds:[],snack:"",snackId:""};
                               const newIds=[...(dm.mealIds||[])];
@@ -859,6 +871,90 @@ export default function App() {
   const [search,   setSearch]   = useState("");
   const [filterSt, setFilterSt] = useState("all");
 
+  const [pendingOrders,      setPendingOrders]      = useState([]);
+  const [pendingAddrChanges, setPendingAddrChanges]  = useState([]);
+  const [ordersBusyId,       setOrdersBusyId]        = useState(null);
+
+  const [notifications,    setNotifications]    = useState([]);
+  const [notifBusy,        setNotifBusy]        = useState(false);
+  const [notifForm,        setNotifForm]        = useState({recipientMode:"select", statusFilter:"Active", clientIds:[], title:"", message:""});
+
+  const refreshOrders = async () => {
+    const [ords, addrs] = await Promise.all([getPendingOrders(), getPendingAddressChanges()]);
+    setPendingOrders(ords || []);
+    setPendingAddrChanges(addrs || []);
+  };
+
+  const refreshNotifications = async () => {
+    setNotifications(await getNotifications());
+  };
+
+  const handleDeleteNotification = async (id) => {
+    try {
+      await deleteNotification(id);
+      setNotifications(ns => ns.filter(n => n.id !== id));
+    } catch (e) { console.error(e); alert("Could not delete notification."); }
+  };
+
+  const notifRecipients = useMemo(() => {
+    if (notifForm.recipientMode === "all") return clients.map(c => c.id);
+    if (notifForm.recipientMode === "status") {
+      if (notifForm.statusFilter === "Expired") return clients.filter(c => c.expiryDate && daysUntil(c.expiryDate) < 0).map(c => c.id);
+      return clients.filter(c => c.status === notifForm.statusFilter).map(c => c.id);
+    }
+    return notifForm.clientIds;
+  }, [notifForm.recipientMode, notifForm.statusFilter, notifForm.clientIds, clients]);
+
+  const toggleNotifClient = (id) => {
+    setNotifForm(f => ({...f, clientIds: f.clientIds.includes(id) ? f.clientIds.filter(x=>x!==id) : [...f.clientIds, id]}));
+  };
+
+  const applyNotifTemplate = (label) => {
+    const t = NOTIF_TEMPLATES.find(t => t.label === label);
+    if (t) setNotifForm(f => ({...f, title: t.title, message: t.message}));
+  };
+
+  const handleSendNotification = async (e) => {
+    e.preventDefault();
+    if (notifRecipients.length===0 || !notifForm.title.trim()) return;
+    setNotifBusy(true);
+    try {
+      for (const clientId of notifRecipients) {
+        await sendNotification(clientId, notifForm.title.trim(), notifForm.message.trim());
+      }
+      setNotifForm(f => ({...f, clientIds:[], title:"", message:""}));
+      await refreshNotifications();
+    } catch (e) { console.error(e); alert("Could not send notification."); }
+    finally { setNotifBusy(false); }
+  };
+
+  const handleApproveOrder = async (order) => {
+    setOrdersBusyId(order.id);
+    try { await approveOrder(order); await refreshOrders(); }
+    catch (e) { console.error(e); alert("Could not approve order."); }
+    finally { setOrdersBusyId(null); }
+  };
+  const handleRejectOrder = async (order) => {
+    const note = prompt("Reason for rejection (optional):") || "";
+    setOrdersBusyId(order.id);
+    try { await rejectOrder(order.id, note); await refreshOrders(); }
+    catch (e) { console.error(e); alert("Could not reject order."); }
+    finally { setOrdersBusyId(null); }
+  };
+  const handleApproveAddrChange = async (change) => {
+    setOrdersBusyId(change.id);
+    try { await approveAddressChange(change); await refreshOrders(); }
+    catch (e) { console.error(e); alert("Could not approve address change."); }
+    finally { setOrdersBusyId(null); }
+  };
+  const handleRejectAddrChange = async (change) => {
+    const note = prompt("Reason for rejection (optional):") || "";
+    setOrdersBusyId(change.id);
+    try { await rejectAddressChange(change, note); await refreshOrders(); }
+    catch (e) { console.error(e); alert("Could not reject address change."); }
+    finally { setOrdersBusyId(null); }
+  };
+
   // ── Auth
   useEffect(() => {
     getSession().then(setSession).catch(e => { console.error(e); setSession(null); });
@@ -877,6 +973,8 @@ export default function App() {
           getSettings(["brochure_en","brochure_cn"]),
           getMealLibrary(),
         ]);
+        refreshOrders().catch(e => console.error(e));
+        refreshNotifications().catch(e => console.error(e));
         // Populate ref immediately so mealName() works in useMemos
         mealLibraryRef.current = lib || [];
         setMealLibraryState(lib || []);
@@ -1511,21 +1609,6 @@ export default function App() {
 
 
 
-  const CHECKLIST = [
-    {k:"f1",day:"FRIDAY",   t:"Send WeChat to all clients — confirm next week attendance"},
-    {k:"f2",day:"FRIDAY",   t:"Ask clients if they want to swap meals next week"},
-    {k:"f3",day:"FRIDAY",   t:"Flag renewals due — check Renewals tab"},
-    {k:"f4",day:"FRIDAY",   t:"Send payment reminders for unpaid clients"},
-    {k:"s1",day:"SAT / SUN",t:"Update Meal Selections with confirmed client choices"},
-    {k:"s2",day:"SAT / SUN",t:"Confirm all payments received — mark paid"},
-    {k:"s3",day:"SAT / SUN",t:"Add new clients to system with full details"},
-    {k:"m1",day:"MONDAY",   t:"Print Kitchen Prep sheet and give to kitchen team"},
-    {k:"m2",day:"MONDAY",   t:"Print Delivery Sheet and give to driver (sorted by time)"},
-    {k:"m3",day:"MONDAY",   t:"Confirm all boxes labeled: name + meal + day"},
-    {k:"d1",day:"DAILY",    t:"Mark deliveries done — note any issues"},
-    {k:"d2",day:"DAILY",    t:"Respond to client messages within 2 hours"},
-  ];
-
   const nowStr = TODAY.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
 
   if (session === undefined) return (
@@ -1573,12 +1656,12 @@ export default function App() {
               {id:"meals",    ic:"🍱",lbl:"Meal Selections"},
               {id:"kitchen",  ic:"👨‍🍳",lbl:"Kitchen Prep"},
               {id:"delivery", ic:"🛵",lbl:"Delivery Sheet"},
+              {id:"orders",   ic:"◧",lbl:"Orders",         badge:(pendingOrders.length+pendingAddrChanges.length)||null},
+              {id:"notifications",ic:"◔",lbl:"Notifications"},
               {id:"renewals", ic:"🔄",lbl:"Renewals",       badge:(renewDue.length+overdue.length)||null},
               {id:"payments", ic:"💳",lbl:"Payments",       badge:unpaid.length||null},
               {id:"plans",    ic:"🗂️", lbl:"Plans"},
               {id:"menu",     ic:"📋",lbl:"Menu Reference"},
-              {id:"workflow", ic:"✅",lbl:"Weekly Checklist"},
-              {id:"wechat",   ic:"💬",lbl:"WeChat Messages"},
             ].map(n=>(
               <button key={n.id} className={`ni${tab===n.id?" on":""}`} onClick={()=>navTo(n.id)}>
                 <span className="ni-ic">{n.ic}</span>{n.lbl}
@@ -1597,7 +1680,7 @@ export default function App() {
         <div className="main">
           <div className="topbar">
             <div className="tb-title">
-              {{dashboard:"Operations Dashboard",clients:"Client Master List",meals:"Weekly Meal Selections",kitchen:"Kitchen Prep Summary",delivery:"Delivery Sheet",renewals:"Renewal Tracker",payments:"Payment Tracker",plans:"Plans",menu:"Menu Reference",workflow:"Weekly Checklist"}[tab]}
+              {{dashboard:"Operations Dashboard",clients:"Client Master List",meals:"Weekly Meal Selections",kitchen:"Kitchen Prep Summary",delivery:"Delivery Sheet",orders:"Orders",notifications:"Notifications",renewals:"Renewal Tracker",payments:"Payment Tracker",plans:"Plans",menu:"Menu Reference"}[tab]}
             </div>
             <div className="tb-right">
               {tab==="clients"&&<>
@@ -2031,6 +2114,156 @@ export default function App() {
               ))}
             </>}
 
+            {/* ═══ ORDERS ══════════════════════════════ */}
+            {tab==="orders"&&<>
+              <div className="sec-title" style={{marginTop:0}}>New Orders</div>
+              {pendingOrders.length===0?(
+                <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No pending orders</div></div>
+              ):(
+                <div className="tbl-wrap" style={{marginBottom:24}}><table>
+                  <thead><tr><th>Client</th><th>Contact</th><th>Address</th><th>Plan</th><th>Goal / Allergies</th><th>Submitted</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {pendingOrders.map(o=>(
+                      <tr key={o.id}>
+                        <td style={{color:"#fff",fontWeight:500}}>{o.name}</td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{o.phone||"—"}</td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{o.district} {o.address}</td>
+                        <td><span className="bx bx-b">{plans.find(p=>p.id===o.plan_id)?.name||o.plan_id||"—"}</span></td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{o.goal||"—"} / {o.allergies||"—"}</td>
+                        <td style={{color:"var(--dim)",fontSize:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</td>
+                        <td>
+                          <div style={{display:"flex",gap:6}}>
+                            <button className="btn btn-r btn-sm" disabled={ordersBusyId===o.id} onClick={()=>handleApproveOrder(o)}>
+                              {ordersBusyId===o.id?"Working…":"Approve"}
+                            </button>
+                            <button className="btn btn-g btn-sm" disabled={ordersBusyId===o.id} onClick={()=>handleRejectOrder(o)}>Reject</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              )}
+
+              <div className="sec-title">Address Change Requests</div>
+              {pendingAddrChanges.length===0?(
+                <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No pending address changes</div></div>
+              ):(
+                <div className="tbl-wrap"><table>
+                  <thead><tr><th>Client</th><th>Current Address</th><th>Requested Address</th><th>Submitted</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {pendingAddrChanges.map(ch=>(
+                      <tr key={ch.id}>
+                        <td style={{color:"#fff",fontWeight:500}}>{ch.client?.name||`Client #${ch.client_id}`}</td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{ch.old_district} {ch.old_address}</td>
+                        <td style={{color:"#ccc",fontSize:11,fontWeight:500}}>{ch.new_district} {ch.new_address}</td>
+                        <td style={{color:"var(--dim)",fontSize:10}}>{ch.created_at?new Date(ch.created_at).toLocaleDateString():"—"}</td>
+                        <td>
+                          <div style={{display:"flex",gap:6}}>
+                            <button className="btn btn-r btn-sm" disabled={ordersBusyId===ch.id} onClick={()=>handleApproveAddrChange(ch)}>
+                              {ordersBusyId===ch.id?"Working…":"Approve"}
+                            </button>
+                            <button className="btn btn-g btn-sm" disabled={ordersBusyId===ch.id} onClick={()=>handleRejectAddrChange(ch)}>Reject</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              )}
+            </>}
+
+            {/* ═══ NOTIFICATIONS ═══════════════════════ */}
+            {tab==="notifications"&&<>
+              <div className="sec-title" style={{marginTop:0,textAlign:"center",fontSize:18}}>Send Notification</div>
+              <form onSubmit={handleSendNotification} style={{maxWidth:920,margin:"0 auto 40px",background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:14,padding:44,display:"flex",flexDirection:"column",gap:28,fontSize:16}}>
+
+                <div className="fl">
+                  <label style={{fontSize:15}}>Send To</label>
+                  <div style={{display:"flex",gap:14}}>
+                    {[{id:"select",lbl:"Specific clients"},{id:"status",lbl:"By status"},{id:"all",lbl:"All clients"}].map(m=>(
+                      <button key={m.id} type="button" className={`btn ${notifForm.recipientMode===m.id?"btn-r":"btn-g"}`} style={{padding:"14px 24px",fontSize:16}}
+                        onClick={()=>setNotifForm(f=>({...f,recipientMode:m.id}))}>{m.lbl}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {notifForm.recipientMode==="status"&&(
+                  <div className="fl">
+                    <label style={{fontSize:15}}>Status Filter</label>
+                    <select className="sel" style={{fontSize:16,padding:"16px 18px"}} value={notifForm.statusFilter} onChange={e=>setNotifForm(f=>({...f,statusFilter:e.target.value}))}>
+                      <option value="Active">Active</option>
+                      <option value="Inactive">Inactive</option>
+                      <option value="Paused">Paused</option>
+                      <option value="Trial">Trial</option>
+                      <option value="Expired">Expired</option>
+                    </select>
+                  </div>
+                )}
+
+                {notifForm.recipientMode==="select"&&(
+                  <div className="fl">
+                    <label style={{fontSize:15}}>Clients ({notifForm.clientIds.length} selected)</label>
+                    <div style={{maxHeight:280,overflowY:"auto",border:"1px solid var(--bdr)",borderRadius:8,padding:18,display:"flex",flexDirection:"column",gap:14}}>
+                      {clients.map(c=>(
+                        <label key={c.id} style={{display:"flex",alignItems:"center",gap:14,fontSize:16,color:"var(--muted)",cursor:"pointer"}}>
+                          <input type="checkbox" style={{width:20,height:20}} checked={notifForm.clientIds.includes(c.id)} onChange={()=>toggleNotifClient(c.id)}/>
+                          {c.name}
+                        </label>
+                      ))}
+                      {clients.length===0&&<span style={{fontSize:16,color:"var(--dim)"}}>No clients yet.</span>}
+                    </div>
+                  </div>
+                )}
+
+                <div className="fl">
+                  <label style={{fontSize:15}}>Template</label>
+                  <select className="sel" style={{fontSize:16,padding:"16px 18px"}} defaultValue="Custom" onChange={e=>applyNotifTemplate(e.target.value)}>
+                    {NOTIF_TEMPLATES.map(t=><option key={t.label} value={t.label}>{t.label}</option>)}
+                  </select>
+                </div>
+
+                <div className="fl">
+                  <label style={{fontSize:15}}>Title</label>
+                  <input className="inp" style={{fontSize:16,padding:"16px 18px"}} value={notifForm.title} onChange={e=>setNotifForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Delivery delayed" required/>
+                </div>
+
+                <div className="fl">
+                  <label style={{fontSize:15}}>Message</label>
+                  <input className="inp" style={{fontSize:16,padding:"16px 18px"}} value={notifForm.message} onChange={e=>setNotifForm(f=>({...f,message:e.target.value}))} placeholder="Message shown to the client"/>
+                </div>
+
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <span style={{fontSize:15,color:"var(--dim)"}}>{notifRecipients.length} recipient{notifRecipients.length===1?"":"s"}</span>
+                  <button className="btn btn-r" style={{padding:"16px 32px",fontSize:17}} type="submit" disabled={notifBusy||notifRecipients.length===0}>{notifBusy?"Sending…":"Send Notification"}</button>
+                </div>
+              </form>
+
+              <div className="sec-title">Sent Notifications</div>
+              {notifications.length===0?(
+                <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No notifications sent yet</div></div>
+              ):(
+                <div className="tbl-wrap"><table>
+                  <thead><tr><th>Client</th><th>Title</th><th>Message</th><th>Status</th><th>Sent</th><th></th></tr></thead>
+                  <tbody>
+                    {notifications.map(n=>(
+                      <tr key={n.id}>
+                        <td style={{color:"#fff",fontWeight:500}}>{n.client?.name||`Client #${n.client_id}`}</td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{n.title}</td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{n.message||"—"}</td>
+                        <td><span className={`bx ${n.is_read?"bx-g":"bx-gr"}`}>{n.is_read?"Read":"Unread"}</span></td>
+                        <td style={{color:"var(--dim)",fontSize:10}}>{n.created_at?new Date(n.created_at).toLocaleString():"—"}</td>
+                        <td>
+                          <button className="btn btn-sm" style={{background:"#450a0a",color:"#f87171",border:"none"}}
+                            onClick={()=>handleDeleteNotification(n.id)}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              )}
+            </>}
+
             {/* ═══ RENEWALS ═══════════════════════════ */}
             {tab==="renewals"&&<>
               {overdue.length>0&&<>
@@ -2162,142 +2395,6 @@ export default function App() {
               openEditPlan={openEditPlan} deletePlanHandler={deletePlanHandler}
               mealLibraryRef={mealLibraryRef}
             />}
-
-            {/* ═══ WECHAT ═════════════════════════════ */}
-            {tab==="wechat"&&<>
-              {/* ── MSG 1: Weekly Menu Broadcast ── */}
-              <div className="sec-title" style={{marginTop:0}}>📋 Weekly Menu Broadcast</div>
-              <div style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:16,marginBottom:20}}>
-                <p style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>Copy this message and send it to all clients on Friday to confirm next week.</p>
-                {(()=>{
-                  const lines = ["🔥 FIT IGNYTE — This Week's Menu", ""];
-                  DAYS.forEach(day => {
-                    const allTiers = Object.values(menu).flatMap(tm=>tm[day]?.meals||[]);
-                    const meals = [...new Set(allTiers.map(m=>typeof m==="object"?m.name:m))].filter(Boolean);
-                    const snack = Object.values(menu).map(tm=>tm[day]?.snack).find(Boolean) || "";
-                    lines.push(`📅 ${day}`);
-                    meals.forEach((m,i) => lines.push(`  Meal ${i+1}: ${m}`));
-                    if (snack) lines.push(`  Snack: ${snack}`);
-                    lines.push("");
-                  });
-                  lines.push("Reply with your choices by Friday! 💪");
-                  lines.push("Any customizations? Let us know 🙏");
-                  const text = lines.join("\n");
-                  return (
-                    <div>
-                      <pre style={{background:"var(--s3)",border:"1px solid var(--bdr)",borderRadius:6,padding:14,fontSize:11,color:"#ccc",whiteSpace:"pre-wrap",wordBreak:"break-word",marginBottom:12,lineHeight:1.6}}>{text}</pre>
-                      <button className="btn btn-r" onClick={()=>{navigator.clipboard.writeText(text);alert("Copied to clipboard!");}}>📋 Copy Message</button>
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* ── MSG 2: Payment Reminder per client ── */}
-              <div className="sec-title">💳 Payment Reminder Messages</div>
-              <div style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:16,marginBottom:20}}>
-                <p style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>One message per unpaid client. Copy and send individually on WeChat.</p>
-                {unpaid.length===0?(
-                  <div style={{color:"var(--green)",fontSize:11,fontWeight:600}}>✓ All clients have paid this week!</div>
-                ):(
-                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                    {unpaid.map(c=>{
-                      const price = plans.find(p=>p.name===c.planName)?.price||0;
-                      const lines = [
-                        `Hi ${c.name.split(" ")[0]}! 👋`,
-                        ``,
-                        `Just a reminder that your FIT IGNYTE payment is due.`,
-                        ``,
-                        `📋 Plan: ${c.planName}`,
-                        `💰 Amount: ¥${price}`,
-                        ``,
-                        `Please transfer before Monday so we can confirm your meals for next week.`,
-                        `Thank you! 🙏💪`,
-                      ].join("");
-                      return (
-                        <div key={c.id} style={{background:"var(--s3)",border:"1px solid var(--bdr)",borderRadius:6,padding:12}}>
-                          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                            <span style={{color:"#fff",fontWeight:600,fontSize:12}}>{c.name}</span>
-                            <PlanBadge planName={c.planName} plans={plans}/>
-                            <span style={{color:"#f87171",fontSize:11,fontWeight:600}}>¥{price}</span>
-                          </div>
-                          <pre style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:5,padding:10,fontSize:11,color:"#ccc",whiteSpace:"pre-wrap",wordBreak:"break-word",marginBottom:8,lineHeight:1.6}}>{lines}</pre>
-                          <button className="btn btn-g btn-sm" onClick={()=>{navigator.clipboard.writeText(lines);alert("Copied!");}}>📋 Copy</button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* ── MSG 3: Delivery Confirmation per client ── */}
-              <div className="sec-title">🛵 Delivery Confirmation Messages</div>
-              <p style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>Send to each client when their delivery is on the way. Select a day first.</p>
-              <div className="tabs" style={{marginBottom:16}}>
-                {DAYS.map(d=><button key={d} className={`tab${mealDay===d?" on":""}`} onClick={()=>setMealDay(d)}>{d}</button>)}
-              </div>
-              {active.length===0?(
-                <div className="empty-state"><div className="empty-state-icon">💬</div><div className="empty-state-title">No active clients</div></div>
-              ):(
-                <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                  {active.map(c=>{
-                    const slots = meals[c.id]?.[mealDay]||[];
-                    if (!slots.length) return null;
-                    return slots.map(slot=>{
-                      const mealsList = (slot.meals||[]).filter(Boolean);
-                      const lines = [
-                        `🛵 Your FIT IGNYTE delivery is on the way!`,
-                        ``,
-                        `Hi ${c.name.split(" ")[0]}! 👋`,
-                        ``,
-                        `📦 Today's order:`,
-                        ...mealsList.map(m=>`  • ${m}`),
-                        slot.snackId ? `  • Snack: ${mealName(slot.snackId)}` : slot.snack ? `  • Snack: ${slot.snack}` : "",
-                        slot.time  ? `⏰ ETA: ${slot.time}` : "",
-                        ``,
-                        `Enjoy your meal! 💪🔥`,
-                      ].filter(l=>l!==undefined);
-                      const text = lines.join("\n");
-                      return (
-                        <div key={slot.id} style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:14}}>
-                          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-                            <span style={{color:"#fff",fontWeight:600,fontSize:12}}>{c.name}</span>
-                            <PlanBadge planName={c.planName} plans={plans}/>
-                            {slot.time&&<span className="bx bx-b">🕐 {slot.time}</span>}
-                          </div>
-                          <pre style={{background:"var(--s3)",border:"1px solid var(--bdr)",borderRadius:6,padding:12,fontSize:11,color:"#ccc",whiteSpace:"pre-wrap",wordBreak:"break-word",marginBottom:10,lineHeight:1.6}}>{text}</pre>
-                          <button className="btn btn-g btn-sm" onClick={()=>{navigator.clipboard.writeText(text);alert("Copied!");}}>📋 Copy</button>
-                        </div>
-                      );
-                    });
-                  })}
-                  {active.every(c=>!(meals[c.id]?.[mealDay]||[]).length)&&(
-                    <div style={{color:"var(--dim)",fontSize:11,padding:20,textAlign:"center"}}>No delivery slots added for {mealDay} yet.</div>
-                  )}
-                </div>
-              )}
-            </>}
-
-            {/* ═══ WORKFLOW ════════════════════════════ */}
-            {tab==="workflow"&&<>
-              <div className="alert-bar" style={{background:"#0a1020",borderColor:"#1e3a5f",color:"#93c5fd"}}>
-                ✅ Click circles to check off tasks. Saved automatically.
-              </div>
-              {["FRIDAY","SAT / SUN","MONDAY","DAILY"].map(day=>(
-                <div key={day} style={{marginBottom:20}}>
-                  <div className="sec-title" style={{marginTop:0}}>{day}</div>
-                  <div className="tbl-wrap" style={{padding:"2px 14px"}}>
-                    {CHECKLIST.filter(t=>t.day===day).map(t=>(
-                      <div key={t.k} className="chkrow">
-                        <div className={`chk${checks[t.k]?" done":""}`} onClick={()=>toggleCheck(t.k)}>
-                          {checks[t.k]&&<span style={{color:"#fff",fontSize:9}}>✓</span>}
-                        </div>
-                        <span style={{textDecoration:checks[t.k]?"line-through":"none",color:checks[t.k]?"var(--dim)":"var(--muted)"}}>{t.t}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </>}
 
           </div>
         </div>

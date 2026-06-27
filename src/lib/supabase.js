@@ -212,6 +212,129 @@ export async function updateOrderStatus(id, status, note) {
   check(await supabase.from("new_orders").update({ status, note: note||"" }).eq("id", id), "updateOrderStatus");
 }
 
+const ORDER_DAY_KEYS = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday" };
+
+// Approve a pending new_order: upsert the client, sync its weekly meal
+// selections, mark the order approved, then push-notify the client.
+export async function approveOrder(order) {
+  const existing = order.phone
+    ? check(await supabase.from("clients").select("id").eq("phone", order.phone).maybeSingle(), "approveOrder:findClient")
+    : null;
+
+  const clientFields = {
+    name:           order.name,
+    phone:          order.phone          || "",
+    district:       order.district       || "",
+    address:        order.address        || "",
+    access:         order.access         || "",
+    allergies:      order.allergies      || "",
+    goal:           order.goal           || "",
+    plan_id:        order.plan_id        || null,
+    status:         "Pending Payment",
+    wechat_openid:  order.wechat_openid  || "",
+  };
+
+  let clientId;
+  if (existing) {
+    clientId = existing.id;
+    check(await supabase.from("clients").update({
+      ...clientFields,
+      expiry_date: order.expiry_date || null,
+    }).eq("id", clientId), "approveOrder:updateClient");
+  } else {
+    const created = check(await supabase.from("clients").insert({
+      ...clientFields,
+      start_date: new Date().toISOString().slice(0,10),
+      paid: false,
+    }).select().single(), "approveOrder:createClient");
+    clientId = created.id;
+  }
+
+  const meals = order.meals || {};
+  for (const [key, dayName] of Object.entries(ORDER_DAY_KEYS)) {
+    const slot = meals[key];
+    if (!slot) continue;
+    check(await supabase.from("meal_selections").upsert({
+      client_id:     clientId,
+      day:           dayName,
+      slot:          1,
+      meals_json:    slot.meal_ids || [],
+      delivery_time: slot.time || "",
+      snack_id:      slot.snack_id || null,
+      note:          slot.notes || "",
+    }, { onConflict: "client_id,day,slot" }), "approveOrder:syncMealSelection");
+  }
+
+  check(await supabase.from("new_orders").update({ status: "approved" }).eq("id", order.id), "approveOrder:markApproved");
+
+  await pushNotify(clientId, "FIT IGNYTE", "Order approved!");
+  return clientId;
+}
+
+export async function rejectOrder(id, note) {
+  check(await supabase.from("new_orders").update({ status: "rejected", note: note || "" }).eq("id", id), "rejectOrder");
+}
+
+// ── ADDRESS CHANGES ──────────────────────────────────────────
+export async function getPendingAddressChanges() {
+  return check(await supabase.from("address_changes").select("*, client:client_id(id,name)").eq("status","pending").order("created_at"), "getPendingAddressChanges");
+}
+export async function approveAddressChange(change) {
+  check(await supabase.from("clients").update({
+    district: change.new_district || "",
+    address:  change.new_address  || "",
+  }).eq("id", change.client_id), "approveAddressChange:updateClient");
+  check(await supabase.from("address_changes").update({ status: "approved" }).eq("id", change.id), "approveAddressChange:markApproved");
+  await createNotification(change.client_id, "Address change approved", `Your new address (${change.new_district} — ${change.new_address}) has been confirmed.`);
+  await pushNotify(change.client_id, "FIT IGNYTE", "Address approved");
+}
+export async function rejectAddressChange(change, note) {
+  check(await supabase.from("address_changes").update({ status: "rejected", rejection_note: note || "" }).eq("id", change.id), "rejectAddressChange");
+  await createNotification(change.client_id, "Address change rejected", note || "Your address change request was not approved.");
+  await pushNotify(change.client_id, "FIT IGNYTE", "Address rejected");
+}
+
+// ── NOTIFICATIONS (in-app) ───────────────────────────────────
+export async function createNotification(clientId, title, message) {
+  check(await supabase.from("notifications").insert({ client_id: clientId, title, message, is_read: false }), "createNotification");
+}
+export async function getNotifications() {
+  return check(await supabase
+    .from("notifications")
+    .select("*, client:client_id(id,name)")
+    .order("created_at", { ascending: false })
+    .limit(100), "getNotifications");
+}
+export async function deleteNotification(id) {
+  check(await supabase.from("notifications").delete().eq("id", id), "deleteNotification");
+}
+export async function sendNotification(clientId, title, message) {
+  await createNotification(clientId, title, message);
+  await pushNotify(clientId, "FIT IGNYTE", title);
+}
+
+// ── WECHAT PUSH ───────────────────────────────────────────────
+// Best-effort: never throws, never blocks the calling flow.
+export async function pushNotify(clientId, writer, content) {
+  try {
+    await fetch(`${SUPABASE_URL}/functions/v1/wx-notify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: clientId,
+        template_id: "A7o5PTcftFBe1nYsidWchFofz2z_DN9Whn_96H60x2M",
+        data: {
+          name1:  { value: String(writer).slice(0,10) },
+          thing2: { value: String(content).slice(0,20) },
+          time4:  { value: new Date().toISOString().slice(0,16).replace("T"," ") },
+        },
+      }),
+    });
+  } catch (e) {
+    console.error("[pushNotify]", e);
+  }
+}
+
 // ── SETTINGS ─────────────────────────────────────────────────
 export async function getSettings(keys) {
   const data = check(await supabase.from("settings").select("*").in("key", keys), "getSettings");

@@ -6,6 +6,7 @@ import {
   getMenu, updateMenuDay,
   getMealSelections, upsertMealSelection,
   getChecklist, toggleChecklistItem,
+  signIn, signOut, getSession, onAuthChange,
 } from "./lib/supabase";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -765,7 +766,55 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   </>;
 }
 
+function LoginScreen({ onLogin }) {
+  const [email,    setEmail]    = useState("");
+  const [password, setPassword] = useState("");
+  const [error,    setError]    = useState("");
+  const [busy,     setBusy]     = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError(""); setBusy(true);
+    try {
+      const session = await signIn(email.trim(), password);
+      onLogin(session);
+    } catch {
+      setError("Invalid email or password.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <style>{G}</style>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0a0a0a"}}>
+        <form onSubmit={submit} style={{width:320,background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:10,padding:28}}>
+          <div style={{textAlign:"center",marginBottom:20}}>
+            <div className="sb-brand" style={{fontSize:26}}><span>FIT</span> IGNYTE</div>
+            <div className="sb-sub">Operations System</div>
+          </div>
+          <div className="fl" style={{marginBottom:12}}>
+            <label>Email</label>
+            <input className="inp" type="email" autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} required/>
+          </div>
+          <div className="fl" style={{marginBottom:16}}>
+            <label>Password</label>
+            <input className="inp" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required/>
+          </div>
+          {error && <div className="alert-bar" style={{marginBottom:14,fontSize:11}}>{error}</div>}
+          <button className="btn btn-r" type="submit" disabled={busy} style={{width:"100%"}}>
+            {busy ? "Signing in…" : "Sign In"}
+          </button>
+        </form>
+      </div>
+    </>
+  );
+}
+
 export default function App() {
+  const [session,    setSession]    = useState(undefined); // undefined = checking, null = signed out
+
   const [clients,    setClients]    = useState([]);
   // meals: { [clientId]: { [day]: [ {id, time, meals:[], snack, note} ] } }
   // Each day can have MULTIPLE delivery slots per client
@@ -810,8 +859,16 @@ export default function App() {
   const [search,   setSearch]   = useState("");
   const [filterSt, setFilterSt] = useState("all");
 
+  // ── Auth
+  useEffect(() => {
+    getSession().then(setSession).catch(e => { console.error(e); setSession(null); });
+    const sub = onAuthChange(setSession);
+    return () => sub?.unsubscribe();
+  }, []);
+
   // ── Load
   useEffect(() => {
+    if (!session) return;
     (async () => {
       try {
         const {getSettings, getMealLibrary} = await import("./lib/supabase");
@@ -864,7 +921,7 @@ export default function App() {
         setLoaded(true);
       }
     })();
-  }, []);
+  }, [session]);
 
   const flash = () => { setSaving(true); setTimeout(() => setSaving(false), 1800); };
 
@@ -1471,6 +1528,17 @@ export default function App() {
 
   const nowStr = TODAY.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
 
+  if (session === undefined) return (
+    <>
+      <style>{G}</style>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0a0a0a",color:"#666",fontFamily:"'DM Sans',sans-serif",gap:10}}>
+        <span style={{color:"#E8342A",fontFamily:"'Rajdhani',sans-serif",fontSize:18,fontWeight:700}}>FIT IGNYTE</span> Loading…
+      </div>
+    </>
+  );
+
+  if (!session) return <LoginScreen onLogin={setSession}/>;
+
   if (!loaded) return (
     <>
       <style>{G}</style>
@@ -1521,6 +1589,7 @@ export default function App() {
           <div className="sb-footer">
             <div className="sb-stat">Active clients: <strong>{active.length}</strong></div>
             <div className="sb-stat" style={{marginTop:4}}>Weekly revenue: <strong style={{color:"#22c55e"}}>¥{revenue}</strong></div>
+            <button className="btn btn-g btn-sm" style={{width:"100%",marginTop:10}} onClick={async()=>{await signOut(); setSession(null);}}>Log Out</button>
           </div>
         </div>
 

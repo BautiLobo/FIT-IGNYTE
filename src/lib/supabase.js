@@ -6,6 +6,24 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY;
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// ── AUTH ─────────────────────────────────────────────────────
+export async function signIn(email, password) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data.session;
+}
+export async function signOut() {
+  await supabase.auth.signOut();
+}
+export async function getSession() {
+  const { data } = await supabase.auth.getSession();
+  return data.session;
+}
+export function onAuthChange(callback) {
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => callback(session));
+  return data.subscription;
+}
+
 const check = ({ data, error }, label) => {
   if (error) { console.error(`[${label}]`, error.message); throw error; }
   return data;

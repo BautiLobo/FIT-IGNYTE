@@ -90,6 +90,29 @@ npm run dev
 
 ---
 
+## Step 6 — Enable Login (Supabase Auth)
+
+The app now requires sign-in before showing any data. Real auth (not a
+hardcoded password) — Supabase issues a session token and Row Level
+Security enforces it on every table.
+
+1. In Supabase, go to **Authentication → Providers** and make sure
+   **Email** is enabled.
+2. Go to **Authentication → Users → Add user** and create one user per
+   person who should have access (email + password). Disable public
+   sign-ups under **Authentication → Settings** so no one else can
+   register.
+3. Re-run `schema.sql` (or just the RLS section at the bottom) — the
+   policies now require `auth.role() = 'authenticated'` instead of
+   allowing anonymous access.
+4. If you created `meal_library`, `new_orders`, or `settings` tables
+   outside `schema.sql`, apply the same RLS pattern to them (see the
+   comment at the bottom of `schema.sql`) — otherwise they stay open.
+5. Open the app — you'll see a login screen. Sign in with the email/
+   password you created in step 2.
+
+---
+
 ## Database Tables Overview
 
 | Table | Purpose |
@@ -105,9 +128,15 @@ npm run dev
 
 ## Notes
 
-- **Row Level Security (RLS)** is enabled with open policies (all access).
-  Once you add user authentication, replace the policies to restrict access
-  to authenticated users only.
+- **Row Level Security (RLS)** is enabled on every table. Reads (`SELECT`)
+  are open — the mini-program needs to read client/menu/plan data without
+  its own login. Writes (`INSERT`/`UPDATE`/`DELETE`) require an
+  authenticated Supabase session, which is what the web login (Step 6)
+  provides. `new_orders` and `address_changes` also allow anonymous
+  `INSERT` (so a new client can submit a request), but only an
+  authenticated admin can read/approve/reject them. Add/remove web users
+  from the Supabase dashboard — there's no separate user table to manage
+  in this app.
 - The `plans` table uses a custom text `id` (e.g. `"lf"`, `"ab"`).
   You can add more plans directly from the app's Menu tab.
 - Meal selections are upserted (insert or update) so you can safely

@@ -105,22 +105,22 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt)}
 .app{display:flex;height:100vh;overflow:hidden}
 .hamburger{display:none;position:fixed;top:12px;left:12px;z-index:400;background:var(--s2);border:1px solid var(--bdr2);border-radius:6px;padding:8px 10px;cursor:pointer;color:var(--txt);font-size:18px;line-height:1}
 .sb-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:150}
-.sb{width:220px;min-width:220px;background:var(--s1);border-right:1px solid var(--bdr);display:flex;flex-direction:column;transition:transform .25s;z-index:200}
-.sb-logo{padding:22px 18px 16px;border-bottom:1px solid var(--bdr)}
-.sb-brand{font-family:'Rajdhani',sans-serif;font-size:26px;font-weight:700;letter-spacing:2px}
+.sb{width:280px;min-width:280px;background:var(--s1);border-right:1px solid var(--bdr);display:flex;flex-direction:column;transition:transform .25s;z-index:200}
+.sb-logo{padding:30px 24px 22px;border-bottom:1px solid var(--bdr)}
+.sb-brand{font-family:'Rajdhani',sans-serif;font-size:32px;font-weight:700;letter-spacing:2px}
 .sb-brand span{color:var(--red)}
-.sb-sub{font-size:9px;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin-top:1px}
-.sb-week{margin:14px 18px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:9px 12px}
-.sb-week-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
-.sb-week-val{font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:600;color:var(--red);margin-top:2px}
-.nav{flex:1;overflow-y:auto;padding:6px 0}
-.ni{display:flex;align-items:center;gap:9px;width:100%;padding:10px 18px;background:none;border:none;border-left:3px solid transparent;color:var(--muted);font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;text-align:left}
+.sb-sub{font-size:11px;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin-top:3px}
+.sb-week{margin:18px 24px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;padding:13px 16px}
+.sb-week-lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.sb-week-val{font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;color:var(--red);margin-top:3px}
+.nav{flex:1;overflow-y:auto;padding:10px 0}
+.ni{display:flex;align-items:center;gap:13px;width:100%;padding:14px 24px;background:none;border:none;border-left:3px solid transparent;color:var(--muted);font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;cursor:pointer;transition:all .15s;text-align:left}
 .ni:hover{color:var(--txt);background:var(--s2)}
 .ni.on{color:#fff;background:var(--s2);border-left-color:var(--red)}
-.ni-ic{font-size:15px;flex-shrink:0}
-.ni-badge{margin-left:auto;background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px}
-.sb-footer{padding:14px 18px;border-top:1px solid var(--bdr)}
-.sb-stat{font-size:10px;color:var(--dim)}
+.ni-ic{font-size:19px;flex-shrink:0}
+.ni-badge{margin-left:auto;background:var(--red);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px}
+.sb-footer{padding:20px 24px;border-top:1px solid var(--bdr)}
+.sb-stat{font-size:13px;color:var(--dim)}
 .sb-stat strong{color:var(--green)}
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 .topbar{height:54px;min-height:54px;background:var(--s1);border-bottom:1px solid var(--bdr);display:flex;align-items:center;padding:0 20px;gap:10px}
@@ -1671,8 +1671,8 @@ export default function App() {
           </nav>
           <div className="sb-footer">
             <div className="sb-stat">Active clients: <strong>{active.length}</strong></div>
-            <div className="sb-stat" style={{marginTop:4}}>Weekly revenue: <strong style={{color:"#22c55e"}}>¥{revenue}</strong></div>
-            <button className="btn btn-g btn-sm" style={{width:"100%",marginTop:10}} onClick={async()=>{await signOut(); setSession(null);}}>Log Out</button>
+            <div className="sb-stat" style={{marginTop:6}}>Weekly revenue: <strong style={{color:"#22c55e"}}>¥{revenue}</strong></div>
+            <button className="btn btn-g" style={{width:"100%",marginTop:14,padding:"11px 0",fontSize:13}} onClick={async()=>{await signOut(); setSession(null);}}>Log Out</button>
           </div>
         </div>
 

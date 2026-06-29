@@ -154,6 +154,7 @@ export async function getMealSelections() {
       snack:        row.snack?.name || "",
       snackObj:     row.snack || null,
       note:         row.note || "",
+      sauceIds:     row.sauce_ids || [],
     });
     // Sort by slot
     out[cid][row.day].sort((a,b) => a.slot - b.slot);
@@ -161,7 +162,7 @@ export async function getMealSelections() {
   return out;
 }
 
-export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, snackId, note }) {
+export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, snackId, note, sauceIds }) {
   check(await supabase.from("meal_selections").upsert({
     client_id:     clientId,
     day,
@@ -170,6 +171,7 @@ export async function upsertMealSelection(clientId, day, slot, { mealIds, delive
     delivery_time: deliveryTime || "",
     snack_id:      snackId || null,
     note:          note || "",
+    sauce_ids:     sauceIds || [],
   }, { onConflict: "client_id,day,slot" }), "upsertMealSelection");
 }
 

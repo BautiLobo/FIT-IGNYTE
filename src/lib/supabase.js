@@ -203,6 +203,17 @@ export async function deleteMealLibrary(id) {
   check(await supabase.from("meal_library").delete().eq("id", id), "deleteMealLibrary");
 }
 
+// Returns how many saved client meal_selections reference this meal/snack/sauce id —
+// used to warn before deleting a meal_library row that's already "locked in" for clients.
+export async function getMealUsageCount(id) {
+  const [inMeals, inSnack, inSauce] = await Promise.all([
+    supabase.from("meal_selections").select("id", { count: "exact", head: true }).contains("meals_json", [id]),
+    supabase.from("meal_selections").select("id", { count: "exact", head: true }).eq("snack_id", id),
+    supabase.from("meal_selections").select("id", { count: "exact", head: true }).contains("sauce_ids", [id]),
+  ]);
+  return (inMeals.count || 0) + (inSnack.count || 0) + (inSauce.count || 0);
+}
+
 // ── NEW ORDERS ───────────────────────────────────────────────
 export async function createNewOrder(order) {
   return check(await supabase.from("new_orders").insert(order).select().single(), "createNewOrder");

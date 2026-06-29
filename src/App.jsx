@@ -442,9 +442,20 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   };
 
   const deleteMealFromLibrary = async (id, name) => {
-    if(!confirm(`Delete "${name}"?`)) return;
     try {
-      const {deleteMealLibrary} = await import("./lib/supabase");
+      const {deleteMealLibrary, getMealUsageCount} = await import("./lib/supabase");
+      const usageCount = await getMealUsageCount(id);
+      if (usageCount > 0) {
+        const proceed = confirm(
+          `⚠️ ATENCIÓN: "${name}" ya está guardado en ${usageCount} selección(es) de clientes.\n\n` +
+          `Si la borrás, esos clientes van a quedar con esa comida en blanco/rota en su pedido.\n\n` +
+          `Recomendado: en vez de borrarla, sacala del menú semanal (Planner) y dejala viva en la biblioteca.\n\n` +
+          `¿Borrar "${name}" de todos modos?`
+        );
+        if (!proceed) return;
+      } else {
+        if (!confirm(`Delete "${name}"?`)) return;
+      }
       await deleteMealLibrary(id);
       setMealLibrary(p=>p.filter(m=>m.id!==id));
       flash();

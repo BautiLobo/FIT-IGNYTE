@@ -538,7 +538,7 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
     {/* ── Planner: week selector + rotation order (drag to reorder) ── */}
     {menuTab==="planner"&&(
       <div style={{display:"flex",gap:8,alignItems:"center",marginTop:14,marginBottom:10,flexWrap:"wrap"}}>
-        <span style={{fontSize:12,color:"var(--muted)",fontWeight:600}}>Semana:</span>
+        <span style={{fontSize:12,color:"var(--muted)",fontWeight:600}}>Week:</span>
         {rotationOrder.map((w,pos)=>(
           <div key={pos}
             draggable
@@ -557,7 +557,7 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
             className={`btn btn-sm ${effectivePlannerWeek===w?"btn-r":"btn-g"}`}
             style={{minWidth:64,cursor:"grab",opacity:draggingWeekPos===pos?0.5:1}}
           >
-            Semana {w}
+            Week {w}
           </div>
         ))}
       </div>

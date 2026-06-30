@@ -93,6 +93,8 @@ export async function deleteClient(id) {
 }
 
 // ── MENU ─────────────────────────────────────────────────────
+// out[weekIndex][tier][day] — weekIndex is "1".."4" (the rotating menu slot),
+// tier is whatever string is stored in menu.tier
 export async function getMenu() {
   const [menuData, libData] = await Promise.all([
     supabase.from("menu").select("*"),
@@ -104,14 +106,15 @@ export async function getMenu() {
   const libById = {};
   for (const m of (libData.data || [])) libById[m.id] = m;
 
-  // out[tier][day] — tier is whatever string is stored in menu.tier
-  const out = {};
+  const out = {1:{},2:{},3:{},4:{}};
   for (const row of (menuData.data || [])) {
     const tier = row.tier || "SMALL";
-    if (!out[tier]) out[tier] = {};
+    const week = row.week_index || 1;
+    if (!out[week]) out[week] = {};
+    if (!out[week][tier]) out[week][tier] = {};
     const mealIds = row.meals_json || [];
     const snackObj = row.snack_id ? libById[row.snack_id] : null;
-    out[tier][row.day] = {
+    out[week][tier][row.day] = {
       meals:    mealIds.map(id => libById[id]).filter(Boolean),
       mealIds,
       snack:    snackObj?.name || "",
@@ -122,13 +125,57 @@ export async function getMenu() {
   return out;
 }
 
-export async function updateMenuDay(day, tier, { mealIds, snackId }) {
+export async function updateMenuDay(day, tier, weekIndex, { mealIds, snackId }) {
   check(await supabase.from("menu").upsert({
     day,
-    tier: tier || "SMALL",
+    tier:       tier || "SMALL",
+    week_index: weekIndex || 1,
     meals_json: mealIds || [],
     snack_id:   snackId || null,
-  }, { onConflict: "day,tier" }), "updateMenuDay");
+  }, { onConflict: "day,tier,week_index" }), "updateMenuDay");
+}
+
+// ── MENU ROTATION ────────────────────────────────────────────
+// The "live" week (1-4) is computed from an anchor date stored in settings,
+// so nobody has to manually flip a switch every week. The order in which the
+// 4 menu variants play (e.g. 4,2,3,1 instead of 1,2,3,4) is itself
+// configurable via menu_rotation_order, so the cycle can be rearranged.
+function parseRotationOrder(raw) {
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.length === 4 && [1,2,3,4].every(w => arr.includes(w))) return arr;
+  } catch { /* fall through to default */ }
+  return [1,2,3,4];
+}
+
+export async function getMenuRotationOrder() {
+  const settings = await getSettings(["menu_rotation_order"]);
+  return parseRotationOrder(settings.menu_rotation_order);
+}
+
+export async function setMenuRotationOrder(order) {
+  await upsertSetting("menu_rotation_order", JSON.stringify(order));
+}
+
+export async function getCurrentWeekIndex() {
+  const settings = await getSettings(["menu_rotation_anchor", "menu_rotation_order"]);
+  const anchor = settings.menu_rotation_anchor ? new Date(settings.menu_rotation_anchor + "T00:00:00") : new Date();
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  const weeksSinceAnchor = Math.floor((Date.now() - anchor.getTime()) / msPerWeek);
+  const slot = ((weeksSinceAnchor % 4) + 4) % 4;
+  const order = parseRotationOrder(settings.menu_rotation_order);
+  return order[slot];
+}
+
+// Shifts the live week forward/backward by `delta` weeks (e.g. +1 to advance
+// to next week's menu, -1 to go back) by moving the anchor date.
+export async function shiftMenuRotation(delta) {
+  const settings = await getSettings(["menu_rotation_anchor"]);
+  const anchor = settings.menu_rotation_anchor ? new Date(settings.menu_rotation_anchor + "T00:00:00") : new Date();
+  anchor.setDate(anchor.getDate() - delta * 7);
+  const y = anchor.getFullYear(), m = String(anchor.getMonth()+1).padStart(2,"0"), d = String(anchor.getDate()).padStart(2,"0");
+  await upsertSetting("menu_rotation_anchor", `${y}-${m}-${d}`);
+  return getCurrentWeekIndex();
 }
 
 // ── MEAL SELECTIONS ──────────────────────────────────────────

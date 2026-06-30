@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import {
   getPlans, upsertPlan, deletePlan as dbDeletePlan,
   getClients, upsertClient, deleteClient as dbDeleteClient,
-  getMenu, updateMenuDay,
+  getMenu, updateMenuDay, getCurrentWeekIndex, getMenuRotationOrder, setMenuRotationOrder,
   getMealSelections, upsertMealSelection,
   getChecklist, toggleChecklistItem,
   signIn, signOut, getSession, onAuthChange,
@@ -273,6 +273,23 @@ function RenewalBadge({ c }) {
   return <span className="bx bx-g">Active {d}d</span>;
 }
 
+// Merges all 4 rotating weeks into one {tier:{day:{meals:[...]}}} shape so
+// Meal Selections can offer every meal ever loaded for a plan, regardless of
+// which week is currently "live" — rotation only matters in the Planner.
+function mergeAllWeeksMenu(menu) {
+  const out = {};
+  for (const week of Object.values(menu || {})) {
+    for (const [tier, days] of Object.entries(week || {})) {
+      if (!out[tier]) out[tier] = {};
+      for (const [day, slot] of Object.entries(days || {})) {
+        if (!out[tier][day]) out[tier][day] = { meals: [] };
+        out[tier][day].meals = out[tier][day].meals.concat(slot.meals || []);
+      }
+    }
+  }
+  return out;
+}
+
 // ─── MEAL OPTIONS BUILDER ─────────────────────────────────────────────────────
 // Returns grouped <optgroup> options filtered by the client's plan tier.
 // menu{} keys are whatever string is stored in Supabase (e.g. "Lean Fit", "Muscle Gain").
@@ -317,10 +334,17 @@ function MealOptions({ menu, day, clientTier = null, extraItems = [] }) {
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
 
-function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, deletePlanHandler, mealLibraryRef }) {
+function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRotationOrder, upsertMenuDay, flash, openEditPlan, deletePlanHandler, mealLibraryRef }) {
+  const [draggingWeekPos, setDraggingWeekPos] = useState(null);
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"];
   const [menuTab,      setMenuTab]      = useState("library");
   const [menuTier,     setMenuTier]     = useState("");
+  // null until the staff member explicitly picks a week; until then it
+  // follows whichever week is currently live.
+  const [plannerWeek,  setPlannerWeek]  = useState(null);
+  const effectivePlannerWeek = plannerWeek || currentWeekIndex || 1;
+
+  const weekMenu = menu[effectivePlannerWeek] || {};
   const [showAddMeal,  setShowAddMeal]  = useState(false);
   const [showSaucePicker, setShowSaucePicker] = useState(false);
   const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",photoFile:null});
@@ -364,12 +388,12 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
   // Find the matching menu key case-insensitively
   // activeTierKey = the actual key in menu{} used for upserts
   const { tierMenu, activeTierKey } = useMemo(()=>{
-    const match = Object.keys(menu).find(k =>
+    const match = Object.keys(weekMenu).find(k =>
       k === activeTier || k.toLowerCase() === activeTier.toLowerCase()
     );
-    if (match) return { tierMenu: menu[match], activeTierKey: match };
+    if (match) return { tierMenu: weekMenu[match], activeTierKey: match };
     return { tierMenu: {}, activeTierKey: activeTier };
-  }, [menu, activeTier, availableTiers]);
+  }, [weekMenu, activeTier, availableTiers]);
 
   // Load meal library from Supabase on mount
   useEffect(()=>{
@@ -486,11 +510,11 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
     const dm = tierMenu[day] || {mealIds:[], snack:"", snackId:""};
     const newIds = [...(dm.mealIds||[])];
     if(isSnack){
-      upsertMenuDay(day, activeTierKey, {mealIds:newIds, snackId:meal.id});
+      upsertMenuDay(day, activeTierKey, effectivePlannerWeek, {mealIds:newIds, snackId:meal.id});
     } else {
       while(newIds.length <= si) newIds.push("");
       newIds[si] = meal.id;
-      upsertMenuDay(day, activeTierKey, {mealIds:newIds.filter(Boolean), snackId:dm.snackId||""});
+      upsertMenuDay(day, activeTierKey, effectivePlannerWeek, {mealIds:newIds.filter(Boolean), snackId:dm.snackId||""});
     }
     draggingMealRef.current = null;
     setDraggingMeal(null); setDragOver(null);
@@ -510,6 +534,34 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
         </button>
       ))}
     </div>
+
+    {/* ── Planner: week selector + rotation order (drag to reorder) ── */}
+    {menuTab==="planner"&&(
+      <div style={{display:"flex",gap:8,alignItems:"center",marginTop:14,marginBottom:10,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,color:"var(--muted)",fontWeight:600}}>Semana:</span>
+        {rotationOrder.map((w,pos)=>(
+          <div key={pos}
+            draggable
+            onDragStart={()=>setDraggingWeekPos(pos)}
+            onDragOver={e=>e.preventDefault()}
+            onDrop={()=>{
+              if (draggingWeekPos===null || draggingWeekPos===pos) return;
+              const next = [...rotationOrder];
+              const [moved] = next.splice(draggingWeekPos,1);
+              next.splice(pos,0,moved);
+              saveRotationOrder(next);
+              setDraggingWeekPos(null);
+            }}
+            onDragEnd={()=>setDraggingWeekPos(null)}
+            onClick={()=>setPlannerWeek(w)}
+            className={`btn btn-sm ${effectivePlannerWeek===w?"btn-r":"btn-g"}`}
+            style={{minWidth:64,cursor:"grab",opacity:draggingWeekPos===pos?0.5:1}}
+          >
+            Semana {w}
+          </div>
+        ))}
+      </div>
+    )}
 
     {/* ── Planner: tier tabs directly below ── */}
     {menuTab==="planner"&&(
@@ -726,8 +778,8 @@ function MenuTab({ menu, plans, active, upsertMenuDay, flash, openEditPlan, dele
                             onClick={()=>{
                               const dm=tierMenu[day]||{mealIds:[],snack:"",snackId:""};
                               const newIds=[...(dm.mealIds||[])];
-                              if(isSnack){upsertMenuDay(day,activeTierKey,{mealIds:newIds,snackId:""});}
-                              else{newIds[mealIdx]="";upsertMenuDay(day,activeTierKey,{mealIds:newIds.filter(Boolean),snackId:dm.snackId||""});}
+                              if(isSnack){upsertMenuDay(day,activeTierKey,effectivePlannerWeek,{mealIds:newIds,snackId:""});}
+                              else{newIds[mealIdx]="";upsertMenuDay(day,activeTierKey,effectivePlannerWeek,{mealIds:newIds.filter(Boolean),snackId:dm.snackId||""});}
                             }}>
                             ✕
                           </span>}
@@ -895,7 +947,9 @@ export default function App() {
   // meals: { [clientId]: { [day]: [ {id, time, meals:[], snack, note} ] } }
   // Each day can have MULTIPLE delivery slots per client
   const [meals,      setMeals]      = useState({});
-  const [menu,       setMenu]       = useState({});
+  const [menu,       setMenu]       = useState({1:{},2:{},3:{},4:{}});
+  const [currentWeekIndex, setCurrentWeekIndex] = useState(1);
+  const [rotationOrder, setRotationOrder] = useState([1,2,3,4]);
   const [plans,      setPlans]      = useState([]);
   const [checks,     setChecks]     = useState({});
   // cookTimes: { Monday: "10:00", Tuesday: "09:30", ... }
@@ -1032,10 +1086,12 @@ export default function App() {
     (async () => {
       try {
         const {getSettings, getMealLibrary} = await import("./lib/supabase");
-        const [pl, cl, mn, ms, ch, st, lib] = await Promise.all([
+        const [pl, cl, mn, ms, ch, st, lib, curWeek, rotOrder] = await Promise.all([
           getPlans(), getClients(), getMenu(), getMealSelections(), getChecklist(),
           getSettings(["brochure_en","brochure_cn"]),
           getMealLibrary(),
+          getCurrentWeekIndex(),
+          getMenuRotationOrder(),
         ]);
         refreshOrders().catch(e => console.error(e));
         refreshNotifications().catch(e => console.error(e));
@@ -1046,6 +1102,8 @@ export default function App() {
         setPlans(pl);
         setClients(cl);
         setMenu(mn);
+        setCurrentWeekIndex(curWeek);
+        setRotationOrder(rotOrder);
         // New schema: getMealSelections already returns {cid: {day: [slots]}}
         // Each slot has: {id, slot, mealIds, deliveryTime, snackId, snack, snackObj, note}
         // Convert to internal format used by App: {id, time, meals, snack, note}
@@ -1410,25 +1468,38 @@ export default function App() {
     } catch(e){ console.error(e); }
   };
 
-  const upsertMenuDay = async (day, tier, {mealIds, snackId}) => {
+  const upsertMenuDay = async (day, tier, weekIndex, {mealIds, snackId}) => {
     try {
-      await updateMenuDay(day, tier, {mealIds, snackId});
+      await updateMenuDay(day, tier, weekIndex, {mealIds, snackId});
       const lib = mealLibraryRef.current;
       const mealObjs = mealIds.map(id => lib.find(m=>m.id===id)).filter(Boolean);
       const snackObj = lib.find(m=>m.id===snackId) || null;
       setMenu(p=>({
         ...p,
-        [tier]: {
-          ...p[tier],
-          [day]: {
-            meals:   mealObjs,
-            mealIds,
-            snack:   snackObj?.name || "",
-            snackId: snackId||"",
-            snackObj,
+        [weekIndex]: {
+          ...p[weekIndex],
+          [tier]: {
+            ...p[weekIndex]?.[tier],
+            [day]: {
+              meals:   mealObjs,
+              mealIds,
+              snack:   snackObj?.name || "",
+              snackId: snackId||"",
+              snackObj,
+            }
           }
         }
       }));
+      flash();
+    } catch(e){ console.error(e); }
+  };
+
+  const saveRotationOrder = async (order) => {
+    try {
+      await setMenuRotationOrder(order);
+      setRotationOrder(order);
+      const newWeek = await getCurrentWeekIndex();
+      setCurrentWeekIndex(newWeek);
       flash();
     } catch(e){ console.error(e); }
   };
@@ -1976,7 +2047,7 @@ export default function App() {
                                 {(slot.meals||[""]).map((meal,mi)=>(
                                   <div key={mi} style={{display:"flex",gap:4,alignItems:"center"}}>
                                     <select className="msel" value={meal||""} onChange={e=>updateSlotMeal(c.id,mealDay,slot.id,mi,e.target.value)} style={{flex:2}}>
-                                      <MealOptions menu={menu} clientTier={c.planObj?.tier||""} extraItems={customItems}/>
+                                      <MealOptions menu={mergeAllWeeksMenu(menu)} clientTier={c.planObj?.tier||""} extraItems={customItems}/>
                                     </select>
                                     <select className="msel" style={{flex:1,fontSize:10}}
                                       value={(slot.sauceIds||[])[mi]||""}
@@ -2459,7 +2530,8 @@ export default function App() {
 
             {/* ═══ MENU ════════════════════════════════ */}
             {tab==="menu"&&<MenuTab
-              menu={menu} plans={plans} active={active}
+              menu={menu} plans={plans} active={active} currentWeekIndex={currentWeekIndex}
+              rotationOrder={rotationOrder} saveRotationOrder={saveRotationOrder}
               upsertMenuDay={upsertMenuDay} flash={flash}
               openEditPlan={openEditPlan} deletePlanHandler={deletePlanHandler}
               mealLibraryRef={mealLibraryRef}

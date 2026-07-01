@@ -40,6 +40,17 @@ export async function deletePlan(id) {
   check(await supabase.from("plans").delete().eq("id", id), "deletePlan");
 }
 
+// ── TIERS ────────────────────────────────────────────────────
+export async function getTiers() {
+  return check(await supabase.from("tiers").select("*").order("name"), "getTiers");
+}
+export async function upsertTier(tier) {
+  return check(await supabase.from("tiers").upsert(tier).select().single(), "upsertTier");
+}
+export async function deleteTier(id) {
+  check(await supabase.from("tiers").delete().eq("id", id), "deleteTier");
+}
+
 // ── CLIENTS ──────────────────────────────────────────────────
 export async function getClients() {
   const data = check(await supabase

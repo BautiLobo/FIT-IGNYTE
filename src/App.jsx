@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
   getPlans, upsertPlan, deletePlan as dbDeletePlan,
+  getTiers, upsertTier, deleteTier as dbDeleteTier,
   getClients, upsertClient, deleteClient as dbDeleteClient,
   getMenu, updateMenuDay, getCurrentWeekIndex, getMenuRotationOrder, setMenuRotationOrder,
   getMealSelections, upsertMealSelection,
@@ -34,7 +35,7 @@ const BLANK_CLIENT = {
   startDate:"", expiryDate:"", paid:false,
   goal:"", allergies:"", customizations:"", ltv:0, weeks:0,
 };
-const BLANK_PLAN = { id:"", name:"", kcal:0, meals:1, price:0, tier:"", color:"#38BDF8" };
+const BLANK_PLAN = { id:"", name:"", name_zh:"", kcal:0, meals:1, price:0, tier:"", tier_zh:"", color:"#38BDF8" };
 
 // A delivery slot for a client on a given day
 // { id, clientId, day, time, meals:[], snack:"", note:"" }
@@ -347,7 +348,7 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
   const weekMenu = menu[effectivePlannerWeek] || {};
   const [showAddMeal,  setShowAddMeal]  = useState(false);
   const [showSaucePicker, setShowSaucePicker] = useState(false);
-  const [mealForm,     setMealForm]     = useState({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",photoFile:null});
+  const [mealForm,     setMealForm]     = useState({name:"",nameZh:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",photoFile:null});
   const [draggingMeal, setDraggingMeal] = useState(null);
   const draggingMealRef = useRef(null);
   const [dragOver,     setDragOver]     = useState(null);
@@ -433,6 +434,7 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
       const {upsertMealLibrary, uploadMealPhoto, supabase} = await import("./lib/supabase");
       const payload = {
         name: mealForm.name.trim(),
+        name_zh: mealForm.nameZh.trim()||null,
         sauce: mealForm.sauce||"",
         kcal: parseInt(mealForm.kcal)||0,
         protein: parseInt(mealForm.protein)||0,
@@ -490,7 +492,7 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
 
   const openEditMeal = (m) => {
     setEditingMealId(m.id);
-    setMealForm({name:m.name,sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:m.photo_url||"",photoFile:null,itemType:m.item_type||"meal",tier:m.tier||"",availableSauceIds:m.available_sauce_ids||[]});
+    setMealForm({name:m.name,nameZh:m.name_zh||"",sauce:m.sauce||"",kcal:m.kcal||"",protein:m.protein||"",carbs:m.carbs||"",fat:m.fat||"",photoUrl:m.photo_url||"",photoFile:null,itemType:m.item_type||"meal",tier:m.tier||"",availableSauceIds:m.available_sauce_ids||[]});
     setShowAddMeal(true);
   };
 
@@ -584,7 +586,7 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
     {menuTab==="library"&&<>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
         <div className="sec-title" style={{marginBottom:0}}>All Meals ({allMeals.length})</div>
-        <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",photoFile:null});setEditingMealId(null);setShowAddMeal(true);}}>+ Add Meal</button>
+        <button className="btn btn-r btn-sm" onClick={()=>{setMealForm({name:"",nameZh:"",sauce:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",photoFile:null});setEditingMealId(null);setShowAddMeal(true);}}>+ Add Meal</button>
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
         <button className={`btn btn-sm ${libraryTierFilter==="ALL"?"btn-r":"btn-g"}`} onClick={()=>setLibraryTierFilter("ALL")}>All</button>
@@ -824,6 +826,7 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
             </div>
             <div style={{display:"grid",gap:12}}>
               <div><div className="form-label">Name *</div><input className="form-inp" style={{fontSize:14,padding:"9px 11px"}} value={mealForm.name} onChange={e=>setMealForm(p=>({...p,name:e.target.value}))} placeholder="e.g. Minced Beef Bowl"/></div>
+              <div><div className="form-label">Name (Chinese)</div><input className="form-inp" style={{fontSize:14,padding:"9px 11px"}} value={mealForm.nameZh} onChange={e=>setMealForm(p=>({...p,nameZh:e.target.value}))} placeholder="e.g. 牛肉碗"/></div>
               <div>
                 <div className="form-label">Type</div>
                 <div style={{display:"flex",gap:6}}>
@@ -951,6 +954,11 @@ export default function App() {
   const [currentWeekIndex, setCurrentWeekIndex] = useState(1);
   const [rotationOrder, setRotationOrder] = useState([1,2,3,4]);
   const [plans,      setPlans]      = useState([]);
+  const [tiers,      setTiers]      = useState([]);
+  const [selectedTierId,  setSelectedTierId]  = useState(null);
+  const [showTierModal,   setShowTierModal]   = useState(false);
+  const [editTierId,      setEditTierId]      = useState(null);
+  const [tierForm,        setTierForm]        = useState({name:"", name_zh:"", color:"#38BDF8"});
   const [checks,     setChecks]     = useState({});
   // cookTimes: { Monday: "10:00", Tuesday: "09:30", ... }
   const [cookTimes,  setCookTimes]  = useState({});
@@ -1086,12 +1094,13 @@ export default function App() {
     (async () => {
       try {
         const {getSettings, getMealLibrary} = await import("./lib/supabase");
-        const [pl, cl, mn, ms, ch, st, lib, curWeek, rotOrder] = await Promise.all([
+        const [pl, cl, mn, ms, ch, st, lib, curWeek, rotOrder, tiersData] = await Promise.all([
           getPlans(), getClients(), getMenu(), getMealSelections(), getChecklist(),
           getSettings(["brochure_en","brochure_cn"]),
           getMealLibrary(),
           getCurrentWeekIndex(),
           getMenuRotationOrder(),
+          getTiers().catch(() => []),
         ]);
         refreshOrders().catch(e => console.error(e));
         refreshNotifications().catch(e => console.error(e));
@@ -1100,6 +1109,7 @@ export default function App() {
         setMealLibraryState(lib || []);
         setPdfUrls({en: st.brochure_en||"", cn: st.brochure_cn||""});
         setPlans(pl);
+        setTiers(tiersData || []);
         setClients(cl);
         setMenu(mn);
         setCurrentWeekIndex(curWeek);
@@ -1410,14 +1420,20 @@ export default function App() {
   };
 
   // ── Plan modal
-  const openAddPlan  = () => { setEditPlanId(null); setPlanForm({...BLANK_PLAN,id:uid()}); setShowPlanModal(true); };
+  const openAddPlan  = () => { setEditPlanId(null); setPlanForm({...BLANK_PLAN,id:uid(), tier_id: selectedTierId||""}); setShowPlanModal(true); };
   const openEditPlan = p  => { setEditPlanId(p.id); setPlanForm({...p}); setShowPlanModal(true); };
   const pfld = (k,v) => setPlanForm(p=>({...p,[k]:v}));
 
   const savePlan = async () => {
     if (!planForm.name.trim()) return;
     try {
-      const saved = await upsertPlan(planForm);
+      const tierObj = tiers.find(t => t.id === planForm.tier_id);
+      const payload = {
+        ...planForm,
+        tier: tierObj?.name || planForm.tier || "",
+        tier_zh: tierObj?.name_zh || planForm.tier_zh || null,
+      };
+      const saved = await upsertPlan(payload);
       if (editPlanId) setPlans(p=>p.map(x=>x.id===editPlanId?saved:x));
       else setPlans(p=>[...p,saved]);
       setShowPlanModal(false); flash();
@@ -1437,6 +1453,31 @@ export default function App() {
       setPlans(restored||[]);
       alert("Cannot delete — clients are assigned to this plan. Reassign them first.");
     }
+  };
+
+  // ── Tier handlers
+  const openAddTier  = () => { setEditTierId(null); setTierForm({name:"", name_zh:"", color:"#38BDF8"}); setShowTierModal(true); };
+  const openEditTier = t  => { setEditTierId(t.id); setTierForm({name:t.name, name_zh:t.name_zh||"", color:t.color||"#38BDF8"}); setShowTierModal(true); };
+  const tfld = (k,v) => setTierForm(p=>({...p,[k]:v}));
+
+  const saveTier = async () => {
+    if (!tierForm.name.trim()) return;
+    try {
+      const payload = editTierId ? {id:editTierId, ...tierForm} : {id:uid(), ...tierForm};
+      const saved = await upsertTier(payload);
+      if (editTierId) setTiers(p=>p.map(x=>x.id===editTierId?saved:x));
+      else setTiers(p=>[...p,saved]);
+      setShowTierModal(false); flash();
+    } catch(e){ console.error(e); }
+  };
+
+  const deleteTierHandler = async id => {
+    const inUse = plans.some(p => p.tier_id === id);
+    if (inUse) { alert("Cannot delete — plans are assigned to this tier. Remove them first."); return; }
+    if (!window.confirm("Delete this tier?")) return;
+    setTiers(p=>p.filter(x=>x.id!==id));
+    try { await dbDeleteTier(id); flash(); }
+    catch(e){ console.error(e); const restored = await getTiers(); setTiers(restored||[]); }
   };
 
   // ── Menu modal
@@ -1831,7 +1872,9 @@ export default function App() {
               {tab==="meals"&&<>
                 <button className="btn btn-g btn-sm" onClick={()=>setShowCustomItemModal(true)}>+ Custom Meal</button>
               </>}
-              {tab==="plans"&&<button className="btn btn-r" onClick={openAddPlan}>+ New Plan</button>}
+              {tab==="plans"&&selectedTierId&&<button className="btn btn-g" onClick={()=>setSelectedTierId(null)}>&#8592; Back</button>}
+              {tab==="plans"&&!selectedTierId&&<button className="btn btn-r" onClick={openAddTier}>+ New Tier</button>}
+              {tab==="plans"&&selectedTierId&&<button className="btn btn-r" onClick={openAddPlan}>+ New Plan</button>}
               {tab==="kitchen"&&(
                 <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
                   {DAYS.map(d=><button key={d} className={`tab${kitDay===d?" on":""}`} onClick={()=>setKitDay(d)}>{d.slice(0,3)}</button>)}
@@ -2081,7 +2124,7 @@ export default function App() {
                               <label>Snack</label>
                               <select className="msel" value={slot.snackId||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"snackId",e.target.value)}>
                                 <option value="">— none —</option>
-                                {Object.values(DAYS.reduce((acc,d)=>{const s=Object.values(menu).map(tm=>tm[d]?.snackObj).find(Boolean);if(s?.id)acc[s.id]=s;return acc},{})).map(s=>(
+                                {mealLibraryState.filter(m=>m.is_snack).map(s=>(
                                   <option key={s.id} value={s.id}>{s.name}</option>
                                 ))}
                               </select>
@@ -2506,26 +2549,62 @@ export default function App() {
 
             {/* ═══ PLANS ════════════════════════════════ */}
             {tab==="plans"&&<>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
-                {plans.map(pd=>(
-                  <div key={pd.id} className="plan-card" style={{"--pc":pd.color}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-                      <div>
-                        <div style={{fontSize:9,color:pd.color,textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>{pd.tier}</div>
-                        <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:17,fontWeight:700,color:"#fff"}}>{pd.name}</div>
-                        <div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>~{pd.kcal?.toLocaleString()} kcal · {pd.meals} meal{pd.meals>1?"s":""}/day</div>
+              {!selectedTierId ? (
+                // ── Tier grid ──
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16}}>
+                  {tiers.map(t=>{
+                    const tierPlans = plans.filter(p=>p.tier_id===t.id);
+                    const c = t.color||"#38BDF8";
+                    return (
+                      <div key={t.id} className="plan-card" style={{"--pc":c,cursor:"pointer",padding:20}} onClick={()=>setSelectedTierId(t.id)}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                          <div>
+                            <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:22,fontWeight:700,color:"#fff",lineHeight:1.1}}>{t.name}</div>
+                            {t.name_zh&&<div style={{fontSize:13,color:"var(--muted)",marginTop:3}}>{t.name_zh}</div>}
+                          </div>
+                          <div style={{width:14,height:14,borderRadius:"50%",background:c,flexShrink:0,marginTop:4}}/>
+                        </div>
+                        <div style={{fontSize:11,color:"var(--dim)",marginBottom:14}}>{tierPlans.length} plan{tierPlans.length!==1?"s":""}</div>
+                        <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
+                          <button className="btn btn-g btn-xs" onClick={()=>openEditTier(t)}>Edit</button>
+                          <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>deleteTierHandler(t.id)}>Delete</button>
+                        </div>
                       </div>
-                      <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:800,color:pd.color}}>¥{pd.price}</div>
+                    );
+                  })}
+                  {tiers.length===0&&<div style={{color:"var(--dim)",fontSize:11,padding:20}}>No tiers yet. Click + New Tier to get started.</div>}
+                </div>
+              ) : (
+                // ── Plans for selected tier ──
+                <>
+                  {(()=>{ const t=tiers.find(x=>x.id===selectedTierId); return t&&(
+                    <div style={{marginBottom:14}}>
+                      <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:20,fontWeight:700,color:"#fff"}}>{t.name}</div>
+                      {t.name_zh&&<div style={{fontSize:13,color:"var(--muted)"}}>{t.name_zh}</div>}
                     </div>
-                    <div style={{fontSize:10,color:"var(--dim)",marginTop:6}}>{active.filter(c=>c.planName===pd.name).length} active client{active.filter(c=>c.planName===pd.name).length!==1?"s":""}</div>
-                    <div style={{display:"flex",gap:6,marginTop:10}}>
-                      <button className="btn btn-g btn-xs" onClick={()=>openEditPlan(pd)}>Edit</button>
-                      <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>deletePlanHandler(pd.id)}>Delete</button>
-                    </div>
+                  ); })()}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
+                    {plans.filter(p=>p.tier_id===selectedTierId).map(pd=>(
+                      <div key={pd.id} className="plan-card" style={{"--pc":pd.color}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                          <div>
+                            <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:17,fontWeight:700,color:"#fff"}}>{pd.name}</div>
+                            {pd.name_zh&&<div style={{fontSize:11,color:"var(--muted)",marginTop:1}}>{pd.name_zh}</div>}
+                            <div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>~{pd.kcal?.toLocaleString()} kcal · {pd.meals} meal{pd.meals>1?"s":""}/day</div>
+                          </div>
+                          <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:24,fontWeight:800,color:pd.color}}>&#165;{pd.price}</div>
+                        </div>
+                        <div style={{fontSize:10,color:"var(--dim)",marginTop:6}}>{active.filter(c=>c.planName===pd.name).length} active client{active.filter(c=>c.planName===pd.name).length!==1?"s":""}</div>
+                        <div style={{display:"flex",gap:6,marginTop:10}}>
+                          <button className="btn btn-g btn-xs" onClick={()=>openEditPlan(pd)}>Edit</button>
+                          <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>deletePlanHandler(pd.id)}>Delete</button>
+                        </div>
+                      </div>
+                    ))}
+                    {plans.filter(p=>p.tier_id===selectedTierId).length===0&&<div style={{color:"var(--dim)",fontSize:11,padding:20}}>No plans in this tier yet. Click + New Plan to add one.</div>}
                   </div>
-                ))}
-                {plans.length===0&&<div style={{color:"var(--dim)",fontSize:11,padding:20}}>No plans yet.</div>}
-              </div>
+                </>
+              )}
             </>}
 
             {/* ═══ MENU ════════════════════════════════ */}
@@ -2633,7 +2712,13 @@ export default function App() {
             <div className="mo-body">
               <div className="fg">
                 <div className="fl fg-full"><label>Plan Name *</label><input className="inp" value={planForm.name} onChange={e=>pfld("name",e.target.value)} placeholder="e.g. Light Fuel"/></div>
-                <div className="fl"><label>Tier / Category</label><input className="inp" value={planForm.tier} onChange={e=>pfld("tier",e.target.value)} placeholder="e.g. Lean Fit"/></div>
+                <div className="fl fg-full"><label>Plan Name (Chinese)</label><input className="inp" value={planForm.name_zh||""} onChange={e=>pfld("name_zh",e.target.value||null)} placeholder="e.g. 轻燃计划"/></div>
+                <div className="fl"><label>Tier</label>
+                  <select className="sel" value={planForm.tier_id||""} onChange={e=>pfld("tier_id",e.target.value)}>
+                    <option value="">&#8212; select tier &#8212;</option>
+                    {tiers.map(t=><option key={t.id} value={t.id}>{t.name}{t.name_zh?` / ${t.name_zh}`:""}</option>)}
+                  </select>
+                </div>
                 <div className="fl"><label>Weekly Price (¥)</label><input className="inp" type="number" value={planForm.price} onChange={e=>pfld("price",Number(e.target.value))}/></div>
                 <div className="fl"><label>Calories (~kcal)</label><input className="inp" type="number" value={planForm.kcal} onChange={e=>pfld("kcal",Number(e.target.value))}/></div>
                 <div className="fl"><label>Meals per Day</label>
@@ -2690,6 +2775,29 @@ export default function App() {
             <div className="mo-ft">
               <button className="btn btn-g" onClick={()=>setShowMenuModal(false)}>Cancel</button>
               <button className="btn btn-r" onClick={saveMenu}>Save Menu</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ TIER MODAL ══════════════════════════════ */}
+      {showTierModal&&(
+        <div className="mo" onClick={e=>{if(e.target===e.currentTarget)setShowTierModal(false);}}>
+          <div className="mo-box" style={{maxWidth:420}}>
+            <div className="mo-hd">
+              <div className="mo-title">{editTierId?"Edit Tier":"New Tier"}</div>
+              <button className="btn btn-g btn-sm" onClick={()=>setShowTierModal(false)}>&#x2715;</button>
+            </div>
+            <div className="mo-body">
+              <div className="fg">
+                <div className="fl fg-full"><label>Tier Name *</label><input className="inp" value={tierForm.name} onChange={e=>tfld("name",e.target.value)} placeholder="e.g. Lean Fit"/></div>
+                <div className="fl fg-full"><label>Tier Name (Chinese)</label><input className="inp" value={tierForm.name_zh||""} onChange={e=>tfld("name_zh",e.target.value)} placeholder="e.g. 精瘦计划"/></div>
+                <div className="fl fg-full"><label>Color</label><div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>{PLAN_COLORS.map(c=><div key={c} className={`color-dot${tierForm.color===c?" sel":""}`} style={{background:c}} onClick={()=>tfld("color",c)}/>)}</div></div>
+              </div>
+            </div>
+            <div className="mo-ft">
+              <button className="btn btn-g" onClick={()=>setShowTierModal(false)}>Cancel</button>
+              <button className="btn btn-r" onClick={saveTier}>{editTierId?"Save Changes":"Create Tier"}</button>
             </div>
           </div>
         </div>

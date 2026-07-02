@@ -854,8 +854,8 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
                 onClick={()=>setShowSaucePicker(v=>!v)}>
                 <span>
                   {(mealForm.availableSauceIds||[]).length>0
-                    ? `${mealForm.availableSauceIds.length} sauce${mealForm.availableSauceIds.length>1?"s":""} selected`
-                    : "Select sauces..."}
+                    ? `${mealForm.availableSauceIds.length}/6 sauces selected`
+                    : "Select sauces (max 6)"}
                 </span>
                 <span style={{fontSize:11,color:"var(--dim)"}}>{showSaucePicker?"▲":"▼"}</span>
               </button>
@@ -869,6 +869,7 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
                         <input type="checkbox" checked={checked}
                           onChange={()=>setMealForm(p=>{
                             const cur = p.availableSauceIds||[];
+                            if (!cur.includes(s.id) && cur.length >= 6) return p;
                             return {...p, availableSauceIds: cur.includes(s.id) ? cur.filter(x=>x!==s.id) : [...cur, s.id]};
                           })}/>
                         {s.name}

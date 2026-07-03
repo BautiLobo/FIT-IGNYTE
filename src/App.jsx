@@ -80,13 +80,15 @@ function getRealStatus(startDate, expiryDate) {
 const DAY_INDEX = {Monday:1,Tuesday:2,Wednesday:3,Thursday:4,Friday:5,Saturday:6,Sunday:0};
 function clientActiveOnDay(c, dayName) {
   if (!c.startDate || !c.expiryDate) return false;
-  const todayIdx = TODAY.getDay(); // 0=Sun
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const todayIdx = now.getDay(); // 0=Sun
   const targetIdx = DAY_INDEX[dayName] ?? -1;
   if (targetIdx === -1) return getRealStatus(c.startDate, c.expiryDate) === "Active";
+  // diff=0 means today, 1-6 means that many days ahead (always forward-looking)
   const diff = (targetIdx - todayIdx + 7) % 7;
-  const targetDate = new Date(TODAY);
-  targetDate.setDate(TODAY.getDate() + diff);
-  targetDate.setHours(0,0,0,0);
+  const targetDate = new Date(now);
+  targetDate.setDate(now.getDate() + diff);
   const start  = new Date(c.startDate  + "T00:00:00");
   const expiry = new Date(c.expiryDate + "T00:00:00");
   return targetDate >= start && targetDate <= expiry;
@@ -1200,6 +1202,12 @@ export default function App() {
   };
   const getMealObj = (id) => id ? mealLibraryRef.current.find(m => m.id === id) || null : null;
 
+  // Active + Upcoming clients — used by Kitchen Prep and Delivery Sheet
+  const deliveryClients = useMemo(
+    () => clients.filter(c => ["Active","Upcoming"].includes(getRealStatus(c.startDate,c.expiryDate))),
+    [clients]
+  );
+
   // Kitchen: aggregate meals by batch + size for each day
   const kitchen = useMemo(() => {
     const d = {};
@@ -1208,7 +1216,7 @@ export default function App() {
       const batches = {};
       BATCHES.forEach(b => { batches[b] = {}; });
 
-      active.forEach(c => {
+      deliveryClients.filter(c => clientActiveOnDay(c, day)).forEach(c => {
         const slots = meals[c.id]?.[day] || [];
         const size = getPlanSize(c.planName);
         const name = c.name.split(" ")[0];
@@ -1243,12 +1251,12 @@ export default function App() {
       })).filter(b => b.items.length > 0);
     });
     return d;
-  }, [active, meals, plans, mealLibraryState]);
+  }, [deliveryClients, meals, plans, mealLibraryState]);
 
   // Delivery: group by time, filtered by selected day
   const delivery = useMemo(() => {
     const allSlots = [];
-    active.forEach(c => {
+    deliveryClients.filter(c => clientActiveOnDay(c, deliveryDay)).forEach(c => {
       (meals[c.id]?.[deliveryDay]||[]).forEach(slot => {
         allSlots.push({ client: c, day: deliveryDay, slot });
       });
@@ -1260,7 +1268,7 @@ export default function App() {
       (g[t]=g[t]||[]).push(x);
     });
     return g;
-  }, [active, meals, deliveryDay, mealLibraryState]);
+  }, [deliveryClients, meals, deliveryDay, mealLibraryState]);
 
   // ── Handlers
   const togglePaid = async id => {
@@ -1464,7 +1472,7 @@ export default function App() {
   const saveTier = async () => {
     if (!tierForm.name.trim()) return;
     try {
-      const payload = editTierId ? {id:editTierId, ...tierForm} : {id:uid(), ...tierForm};
+      const payload = editTierId ? {id:editTierId, ...tierForm} : {...tierForm};
       const saved = await upsertTier(payload);
       if (editTierId) setTiers(p=>p.map(x=>x.id===editTierId?saved:x));
       else setTiers(p=>[...p,saved]);
@@ -2714,12 +2722,14 @@ export default function App() {
               <div className="fg">
                 <div className="fl fg-full"><label>Plan Name *</label><input className="inp" value={planForm.name} onChange={e=>pfld("name",e.target.value)} placeholder="e.g. Light Fuel"/></div>
                 <div className="fl fg-full"><label>Plan Name (Chinese)</label><input className="inp" value={planForm.name_zh||""} onChange={e=>pfld("name_zh",e.target.value||null)} placeholder="e.g. 轻燃计划"/></div>
-                <div className="fl"><label>Tier</label>
-                  <select className="sel" value={planForm.tier_id||""} onChange={e=>pfld("tier_id",e.target.value)}>
-                    <option value="">&#8212; select tier &#8212;</option>
-                    {tiers.map(t=><option key={t.id} value={t.id}>{t.name}{t.name_zh?` / ${t.name_zh}`:""}</option>)}
-                  </select>
-                </div>
+                {!selectedTierId&&(
+                  <div className="fl"><label>Tier</label>
+                    <select className="sel" value={planForm.tier_id||""} onChange={e=>pfld("tier_id",e.target.value)}>
+                      <option value="">&#8212; select tier &#8212;</option>
+                      {tiers.map(t=><option key={t.id} value={t.id}>{t.name}{t.name_zh?` / ${t.name_zh}`:""}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div className="fl"><label>Weekly Price (¥)</label><input className="inp" type="number" value={planForm.price} onChange={e=>pfld("price",Number(e.target.value))}/></div>
                 <div className="fl"><label>Calories (~kcal)</label><input className="inp" type="number" value={planForm.kcal} onChange={e=>pfld("kcal",Number(e.target.value))}/></div>
                 <div className="fl"><label>Meals per Day</label>

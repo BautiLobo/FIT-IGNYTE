@@ -262,10 +262,19 @@ export async function deleteMealLibrary(id) {
 }
 
 export async function renameMealLibraryTier(oldName, newName) {
-  if (!oldName || !newName || oldName === newName) return;
+  if (!oldName || oldName === newName) return;
+  const target = newName || "";
+  if (target === "") {
+    // Deleting a tier: remove duplicate-named meals first, then clear tier
+    const { data: orphans } = await supabase.from("meal_library").select("id,name").eq("tier", oldName);
+    const { data: existing } = await supabase.from("meal_library").select("name").neq("tier", oldName);
+    const existingNames = new Set((existing||[]).map(r=>r.name));
+    const toDelete = (orphans||[]).filter(r => existingNames.has(r.name)).map(r=>r.id);
+    if (toDelete.length) await supabase.from("meal_library").delete().in("id", toDelete);
+  }
   await Promise.all([
-    supabase.from("meal_library").update({ tier: newName }).eq("tier", oldName),
-    supabase.from("menu").update({ tier: newName }).eq("tier", oldName),
+    supabase.from("meal_library").update({ tier: target }).eq("tier", oldName),
+    supabase.from("menu").update({ tier: target }).eq("tier", oldName),
   ]);
 }
 
@@ -286,6 +295,13 @@ export async function createNewOrder(order) {
 }
 export async function getPendingOrders() {
   return check(await supabase.from("new_orders").select("*").eq("status","pending").order("created_at"), "getPendingOrders");
+}
+export async function getRejectedOrders() {
+  return check(await supabase.from("new_orders").select("*").eq("status","rejected").order("created_at", {ascending:false}), "getRejectedOrders");
+}
+export async function reApproveOrder(order) {
+  await supabase.from("new_orders").update({ status: "pending", note: "" }).eq("id", order.id);
+  return approveOrder({...order, status:"pending", note:""});
 }
 export async function updateOrderStatus(id, status, note) {
   check(await supabase.from("new_orders").update({ status, note: note||"" }).eq("id", id), "updateOrderStatus");

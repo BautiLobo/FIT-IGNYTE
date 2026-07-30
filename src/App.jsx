@@ -8,7 +8,7 @@ import {
   getMealSelections, upsertMealSelection,
   getChecklist, toggleChecklistItem,
   signIn, signOut, getSession, onAuthChange,
-  getPendingOrders, approveOrder, rejectOrder,
+  getPendingOrders, getRejectedOrders, approveOrder, rejectOrder, reApproveOrder,
   getPendingAddressChanges, approveAddressChange, rejectAddressChange,
   getNotifications, sendNotification, deleteNotification,
 } from "./lib/supabase";
@@ -895,6 +895,7 @@ export default function App() {
   const [filterSt, setFilterSt] = useState("all");
 
   const [pendingOrders,      setPendingOrders]      = useState([]);
+  const [rejectedOrders,     setRejectedOrders]     = useState([]);
   const [pendingAddrChanges, setPendingAddrChanges]  = useState([]);
   const [ordersBusyId,       setOrdersBusyId]        = useState(null);
 
@@ -903,8 +904,9 @@ export default function App() {
   const [notifForm,        setNotifForm]        = useState({recipientMode:"select", statusFilter:"Active", clientIds:[], title:"", message:""});
 
   const refreshOrders = async () => {
-    const [ords, addrs] = await Promise.all([getPendingOrders(), getPendingAddressChanges()]);
+    const [ords, rejected, addrs] = await Promise.all([getPendingOrders(), getRejectedOrders(), getPendingAddressChanges()]);
     setPendingOrders(ords || []);
+    setRejectedOrders(rejected || []);
     setPendingAddrChanges(addrs || []);
   };
 
@@ -962,6 +964,12 @@ export default function App() {
     setOrdersBusyId(order.id);
     try { await rejectOrder(order.id, note); await refreshOrders(); }
     catch (e) { console.error(e); alert("Could not reject order."); }
+    finally { setOrdersBusyId(null); }
+  };
+  const handleReApproveOrder = async (order) => {
+    setOrdersBusyId(order.id);
+    try { await reApproveOrder(order); await refreshOrders(); }
+    catch (e) { console.error(e); alert("Could not approve order."); }
     finally { setOrdersBusyId(null); }
   };
   const handleApproveAddrChange = async (change) => {
@@ -2220,6 +2228,33 @@ export default function App() {
                             </button>
                             <button className="btn btn-g btn-sm" disabled={ordersBusyId===o.id} onClick={()=>handleRejectOrder(o)}>Reject</button>
                           </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              )}
+
+              <div className="sec-title">Rejected Orders</div>
+              {rejectedOrders.length===0?(
+                <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No rejected orders</div></div>
+              ):(
+                <div className="tbl-wrap" style={{marginBottom:24}}><table>
+                  <thead><tr><th>Client</th><th>Contact</th><th>Address</th><th>Plan</th><th>Goal / Allergies</th><th>Rejected</th><th>Reason</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {rejectedOrders.map(o=>(
+                      <tr key={o.id}>
+                        <td style={{color:"#fff",fontWeight:500}}>{o.name}</td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{o.phone||"—"}</td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{o.district} {o.address}</td>
+                        <td><span className="bx bx-b">{plans.find(p=>p.id===o.plan_id)?.name||o.plan_id||"—"}</span></td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{o.goal||"—"} / {o.allergies||"—"}</td>
+                        <td style={{color:"var(--dim)",fontSize:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</td>
+                        <td style={{color:"#fcd34d",fontSize:10}}>{o.note||"—"}</td>
+                        <td>
+                          <button className="btn btn-r btn-sm" disabled={ordersBusyId===o.id} onClick={()=>handleReApproveOrder(o)}>
+                            {ordersBusyId===o.id?"Working…":"Approve"}
+                          </button>
                         </td>
                       </tr>
                     ))}

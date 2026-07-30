@@ -117,7 +117,7 @@ export async function getMenu() {
   const libById = {};
   for (const m of (libData.data || [])) libById[m.id] = m;
 
-  const out = {1:{},2:{},3:{},4:{}};
+  const out = {1:{},2:{}};
   for (const row of (menuData.data || [])) {
     const tier = row.tier || "SMALL";
     const week = row.week_index || 1;
@@ -154,9 +154,9 @@ export async function updateMenuDay(day, tier, weekIndex, { mealIds, snackId }) 
 function parseRotationOrder(raw) {
   try {
     const arr = JSON.parse(raw);
-    if (Array.isArray(arr) && arr.length === 4 && [1,2,3,4].every(w => arr.includes(w))) return arr;
+    if (Array.isArray(arr) && arr.length === 2 && [1,2].every(w => arr.includes(w))) return arr;
   } catch { /* fall through to default */ }
-  return [1,2,3,4];
+  return [1,2];
 }
 
 export async function getMenuRotationOrder() {
@@ -173,7 +173,7 @@ export async function getCurrentWeekIndex() {
   const anchor = settings.menu_rotation_anchor ? new Date(settings.menu_rotation_anchor + "T00:00:00") : new Date();
   const msPerWeek = 7 * 24 * 60 * 60 * 1000;
   const weeksSinceAnchor = Math.floor((Date.now() - anchor.getTime()) / msPerWeek);
-  const slot = ((weeksSinceAnchor % 4) + 4) % 4;
+  const slot = ((weeksSinceAnchor % 2) + 2) % 2;
   const order = parseRotationOrder(settings.menu_rotation_order);
   return order[slot];
 }
@@ -259,6 +259,14 @@ export async function upsertMealLibrary(meal) {
 }
 export async function deleteMealLibrary(id) {
   check(await supabase.from("meal_library").delete().eq("id", id), "deleteMealLibrary");
+}
+
+export async function renameMealLibraryTier(oldName, newName) {
+  if (!oldName || !newName || oldName === newName) return;
+  await Promise.all([
+    supabase.from("meal_library").update({ tier: newName }).eq("tier", oldName),
+    supabase.from("menu").update({ tier: newName }).eq("tier", oldName),
+  ]);
 }
 
 // Returns how many saved client meal_selections reference this meal/snack/sauce id —

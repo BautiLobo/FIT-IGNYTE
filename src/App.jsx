@@ -9,6 +9,7 @@ import {
   getChecklist, toggleChecklistItem,
   signIn, signOut, getSession, onAuthChange,
   getPendingOrders, getRejectedOrders, approveOrder, rejectOrder, reApproveOrder,
+  getCoaches, createCoach, deleteCoach,
   getPendingAddressChanges, approveAddressChange, rejectAddressChange,
   getNotifications, sendNotification, deleteNotification,
 } from "./lib/supabase";
@@ -898,6 +899,9 @@ export default function App() {
   const [rejectedOrders,     setRejectedOrders]     = useState([]);
   const [pendingAddrChanges, setPendingAddrChanges]  = useState([]);
   const [ordersBusyId,       setOrdersBusyId]        = useState(null);
+  const [coaches,            setCoaches]            = useState([]);
+  const [coachForm,          setCoachForm]          = useState({name:"",code:""});
+  const [coachBusy,          setCoachBusy]          = useState(false);
 
   const [notifications,    setNotifications]    = useState([]);
   const [notifBusy,        setNotifBusy]        = useState(false);
@@ -972,6 +976,19 @@ export default function App() {
     catch (e) { console.error(e); alert("Could not approve order."); }
     finally { setOrdersBusyId(null); }
   };
+  const refreshCoaches = async () => setCoaches(await getCoaches());
+  const handleAddCoach = async (e) => {
+    e.preventDefault();
+    if (!coachForm.name.trim() || !coachForm.code.trim()) return;
+    setCoachBusy(true);
+    try { await createCoach(coachForm.name.trim(), coachForm.code.trim()); setCoachForm({name:"",code:""}); await refreshCoaches(); }
+    catch (err) { alert(err.message?.includes("unique") ? "That code is already in use." : "Could not add coach."); }
+    finally { setCoachBusy(false); }
+  };
+  const handleDeleteCoach = async (id) => {
+    if (!window.confirm("Remove this coach?")) return;
+    await deleteCoach(id); await refreshCoaches();
+  };
   const handleApproveAddrChange = async (change) => {
     setOrdersBusyId(change.id);
     try { await approveAddressChange(change); await refreshOrders(); }
@@ -1009,6 +1026,7 @@ export default function App() {
         ]);
         refreshOrders().catch(e => console.error(e));
         refreshNotifications().catch(e => console.error(e));
+        refreshCoaches().catch(e => console.error(e));
         // Populate ref immediately so mealName() works in useMemos
         mealLibraryRef.current = lib || [];
         setMealLibraryState(lib || []);
@@ -1758,6 +1776,7 @@ export default function App() {
               {id:"kitchen",  ic:"👨‍🍳",lbl:"Kitchen Prep"},
               {id:"delivery", ic:"🛵",lbl:"Delivery Sheet"},
               {id:"orders",   ic:"◧",lbl:"Orders",         badge:(pendingOrders.length+pendingAddrChanges.length)||null},
+              {id:"referrals",    ic:"⬡",lbl:"Referrals"},
               {id:"notifications",ic:"◔",lbl:"Notifications"},
               {id:"renewals", ic:"🔄",lbl:"Renewals",       badge:(renewDue.length+overdue.length)||null},
               {id:"payments", ic:"💳",lbl:"Payments",       badge:unpaid.length||null},
@@ -2283,6 +2302,42 @@ export default function App() {
                             <button className="btn btn-g btn-sm" disabled={ordersBusyId===ch.id} onClick={()=>handleRejectAddrChange(ch)}>Reject</button>
                           </div>
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              )}
+            </>}
+
+            {/* ═══ REFERRALS ═══════════════════════════ */}
+            {tab==="referrals"&&<>
+              <div className="sec-title" style={{marginTop:0}}>Coaches & Referral Codes</div>
+              <form onSubmit={handleAddCoach} style={{display:"flex",gap:10,marginBottom:24,alignItems:"flex-end",flexWrap:"wrap"}}>
+                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                  <label style={{fontSize:10,color:"var(--muted)",textTransform:"uppercase",letterSpacing:.5}}>Coach Name</label>
+                  <input className="inp" style={{width:200}} placeholder="e.g. Dave" value={coachForm.name} onChange={e=>setCoachForm(f=>({...f,name:e.target.value}))}/>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                  <label style={{fontSize:10,color:"var(--muted)",textTransform:"uppercase",letterSpacing:.5}}>Promo Code</label>
+                  <input className="inp" style={{width:220}} placeholder="e.g. davefitignyte" value={coachForm.code} onChange={e=>setCoachForm(f=>({...f,code:e.target.value.toLowerCase().replace(/\s/g,"")}))}/>
+                </div>
+                <button className="btn btn-r" type="submit" disabled={coachBusy||!coachForm.name.trim()||!coachForm.code.trim()}>
+                  {coachBusy?"Adding…":"+ Add Coach"}
+                </button>
+              </form>
+              {coaches.length===0?(
+                <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No coaches yet</div><div className="empty-state-sub">Add a coach above to start tracking referrals</div></div>
+              ):(
+                <div className="tbl-wrap"><table>
+                  <thead><tr><th>Coach</th><th>Promo Code</th><th>Referrals</th><th>Added</th><th></th></tr></thead>
+                  <tbody>
+                    {coaches.sort((a,b)=>b.referrals-a.referrals).map(c=>(
+                      <tr key={c.id}>
+                        <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
+                        <td><span style={{fontFamily:"monospace",background:"var(--s3)",padding:"2px 8px",borderRadius:4,fontSize:11,color:"var(--red)",border:"1px solid var(--bdr2)"}}>{c.code}</span></td>
+                        <td><span style={{fontFamily:"'Rajdhani',sans-serif",fontSize:20,fontWeight:700,color:c.referrals>0?"var(--green)":"var(--dim)"}}>{c.referrals}</span></td>
+                        <td style={{color:"var(--dim)",fontSize:10}}>{new Date(c.created_at).toLocaleDateString()}</td>
+                        <td><button className="btn btn-g btn-sm" onClick={()=>handleDeleteCoach(c.id)}>Remove</button></td>
                       </tr>
                     ))}
                   </tbody>

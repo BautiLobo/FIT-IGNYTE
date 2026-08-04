@@ -389,6 +389,23 @@ export async function rejectAddressChange(change, note) {
   await pushNotify(change.client_id, "FIT IGNYTE", "Address rejected");
 }
 
+// ── COACHES / REFERRALS ──────────────────────────────────────
+export async function getCoaches() {
+  const coaches = check(await supabase.from("coaches").select("*").order("name"), "getCoaches") || [];
+  const counts  = check(await supabase.from("new_orders").select("referral_code").neq("referral_code",""), "getCoaches:counts") || [];
+  const map = {};
+  for (const { referral_code } of counts) {
+    if (referral_code) map[referral_code] = (map[referral_code] || 0) + 1;
+  }
+  return coaches.map(c => ({ ...c, referrals: map[c.code] || 0 }));
+}
+export async function createCoach(name, code) {
+  return check(await supabase.from("coaches").insert({ name, code: code.toLowerCase().trim() }).select().single(), "createCoach");
+}
+export async function deleteCoach(id) {
+  check(await supabase.from("coaches").delete().eq("id", id), "deleteCoach");
+}
+
 // ── NOTIFICATIONS (in-app) ───────────────────────────────────
 export async function createNotification(clientId, title, message) {
   check(await supabase.from("notifications").insert({ client_id: clientId, title, message, is_read: false }), "createNotification");

@@ -69,6 +69,8 @@ export async function getClients() {
     acqChannel:     c.acq_channel     || "",
     wechatOpenid:   c.wechat_openid   || "",
     statusNote:     c.status_note     || "",
+    renewalCount:   c.renewal_count   || 0,
+    cutlery:        c.cutlery         ?? false,
   }));
 }
 export async function upsertClient(client) {
@@ -95,9 +97,14 @@ export async function upsertClient(client) {
     weeks:          client.weeks          || 0,
     wechat_openid:  client.wechatOpenid   || "",
     status_note:    client.statusNote     || "",
+    renewal_count:  client.renewalCount   ?? 0,
+    cutlery:        client.cutlery        ?? false,
   };
   if (client.id) mapped.id = client.id;
   return check(await supabase.from("clients").upsert(mapped).select().single(), "upsertClient");
+}
+export async function incrementRenewalCount(id) {
+  await supabase.rpc("increment_renewal_count", { client_id: id });
 }
 export async function deleteClient(id) {
   check(await supabase.from("clients").delete().eq("id", id), "deleteClient");

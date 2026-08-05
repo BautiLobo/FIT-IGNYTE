@@ -10,6 +10,7 @@ import {
   signIn, signOut, getSession, onAuthChange,
   getPendingOrders, getRejectedOrders, approveOrder, rejectOrder, reApproveOrder,
   getCoaches, createCoach, deleteCoach,
+  incrementRenewalCount,
   getPendingAddressChanges, approveAddressChange, rejectAddressChange,
   getNotifications, sendNotification, deleteNotification,
 } from "./lib/supabase";
@@ -1192,6 +1193,14 @@ export default function App() {
     try { await upsertClient(updated); flash(); } catch(e){ console.error(e); }
   };
 
+  const toggleCutlery = async id => {
+    const c = clients.find(x=>x.id===id);
+    if (!c) return;
+    const updated = {...c, cutlery:!c.cutlery, planId: c.planId||c.plan_id||""};
+    setClients(p=>p.map(x=>x.id===id?updated:x));
+    try { await upsertClient(updated); } catch(e){ console.error(e); }
+  };
+
   const toggleCheck = async k => {
     const next = !checks[k];
     setChecks(p=>({...p,[k]:next}));
@@ -1326,6 +1335,11 @@ export default function App() {
         statusNote:   rawSaved.status_note     || "",
       };
       if (editClientId) {
+        const prev = clients.find(c=>c.id===editClientId);
+        if (prev && clientForm.expiryDate && prev.expiryDate !== clientForm.expiryDate) {
+          incrementRenewalCount(editClientId).catch(()=>{});
+          saved.renewalCount = (prev.renewalCount||0) + 1;
+        }
         setClients(p=>p.map(c=>c.id===editClientId?saved:c));
       } else {
         setClients(p=>[...p,saved]);
@@ -1775,9 +1789,9 @@ export default function App() {
               {id:"meals",    ic:"🍱",lbl:"Meal Selections"},
               {id:"kitchen",  ic:"👨‍🍳",lbl:"Kitchen Prep"},
               {id:"delivery", ic:"🛵",lbl:"Delivery Sheet"},
-              {id:"orders",   ic:"◧",lbl:"Orders",         badge:(pendingOrders.length+pendingAddrChanges.length)||null},
-              {id:"referrals",    ic:"⬡",lbl:"Referrals"},
-              {id:"notifications",ic:"◔",lbl:"Notifications"},
+              {id:"orders",   ic:"📦",lbl:"Orders",         badge:(pendingOrders.length+pendingAddrChanges.length)||null},
+              {id:"referrals",    ic:"🤝",lbl:"Referrals"},
+              {id:"notifications",ic:"🔔",lbl:"Notifications"},
               {id:"renewals", ic:"🔄",lbl:"Renewals",       badge:(renewDue.length+overdue.length)||null},
               {id:"payments", ic:"💳",lbl:"Payments",       badge:unpaid.length||null},
               {id:"plans",    ic:"🗂️", lbl:"Plans"},
@@ -1953,7 +1967,7 @@ export default function App() {
                 </div>
               ):(
                 <div className="tbl-wrap"><table style={{width:"100%"}}>
-                  <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Plan</th><th>¥/Wk</th><th>Status</th><th>Expiry</th><th>Paid</th><th>LTV</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Plan</th><th>¥/Wk</th><th>Status</th><th>Expiry</th><th>Renewals</th><th>Paid</th><th>LTV</th><th>Actions</th></tr></thead>
                   <tbody>{filtered.map(c=>(
                     <tr key={c.id}>
                       <td style={{color:"var(--dim)",fontSize:10}}>{c.id}</td>
@@ -1968,6 +1982,7 @@ export default function App() {
                         return <span className="bx bx-gr">Inactive</span>;
                       })()}</td>
                       <td><RenewalBadge c={c}/></td>
+                      <td style={{textAlign:"center"}}><span style={{fontFamily:"'Rajdhani',sans-serif",fontSize:16,fontWeight:700,color:c.renewalCount>0?"var(--green)":"var(--dim)"}}>{c.renewalCount||0}</span></td>
                       <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓":"Unpaid"}</button></td>
                       <td style={{color:"var(--amber)"}}>¥{c.ltv}</td>
                       <td style={{display:"flex",gap:5}}>
@@ -2011,6 +2026,12 @@ export default function App() {
                         {getRealStatus(c.startDate,c.expiryDate)==="Upcoming"&&
                           <span className="bx bx-a" style={{fontSize:9}}>Upcoming · starts {fmtDate(c.startDate)}</span>}
                         {c.customizations&&<span style={{fontSize:10,color:"#fcd34d"}}>⚠️ {c.customizations}</span>}
+                        <button
+                          onClick={()=>toggleCutlery(c.id)}
+                          className={`bx bx-clk ${c.cutlery?"bx-g":"bx-gr"}`}
+                          style={{marginLeft:"auto",fontSize:10}}
+                          title="Toggle cutlery"
+                        >🍴 {c.cutlery?"Cutlery":"No cutlery"}</button>
                       </div>
 
                       {slots.length===0&&(
@@ -2230,7 +2251,7 @@ export default function App() {
                 <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No pending orders</div></div>
               ):(
                 <div className="tbl-wrap" style={{marginBottom:24}}><table>
-                  <thead><tr><th>Client</th><th>Contact</th><th>Address</th><th>Plan</th><th>Goal / Allergies</th><th>Submitted</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Client</th><th>Contact</th><th>Address</th><th>Plan</th><th>Goal / Allergies</th><th>Start Date</th><th>Submitted</th><th>Action</th></tr></thead>
                   <tbody>
                     {pendingOrders.map(o=>(
                       <tr key={o.id}>
@@ -2239,6 +2260,7 @@ export default function App() {
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.district} {o.address}</td>
                         <td><span className="bx bx-b">{plans.find(p=>p.id===o.plan_id)?.name||o.plan_id||"—"}</span></td>
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.goal||"—"} / {o.allergies||"—"}</td>
+                        <td style={{color:"var(--green)",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{o.start_date?new Date(o.start_date).toLocaleDateString():"—"}</td>
                         <td style={{color:"var(--dim)",fontSize:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</td>
                         <td>
                           <div style={{display:"flex",gap:6}}>
@@ -2259,7 +2281,7 @@ export default function App() {
                 <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No rejected orders</div></div>
               ):(
                 <div className="tbl-wrap" style={{marginBottom:24}}><table>
-                  <thead><tr><th>Client</th><th>Contact</th><th>Address</th><th>Plan</th><th>Goal / Allergies</th><th>Rejected</th><th>Reason</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Client</th><th>Contact</th><th>Address</th><th>Plan</th><th>Goal / Allergies</th><th>Start Date</th><th>Rejected</th><th>Reason</th><th>Action</th></tr></thead>
                   <tbody>
                     {rejectedOrders.map(o=>(
                       <tr key={o.id}>
@@ -2268,6 +2290,7 @@ export default function App() {
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.district} {o.address}</td>
                         <td><span className="bx bx-b">{plans.find(p=>p.id===o.plan_id)?.name||o.plan_id||"—"}</span></td>
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.goal||"—"} / {o.allergies||"—"}</td>
+                        <td style={{color:"var(--green)",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{o.start_date?new Date(o.start_date).toLocaleDateString():"—"}</td>
                         <td style={{color:"var(--dim)",fontSize:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</td>
                         <td style={{color:"#fcd34d",fontSize:10}}>{o.note||"—"}</td>
                         <td>

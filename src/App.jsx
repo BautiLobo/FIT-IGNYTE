@@ -165,6 +165,7 @@ tbody tr:hover{background:#1e1e1e}
 .bx{display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;letter-spacing:.2px;white-space:nowrap}
 .bx-g{background:#052e16;color:#4ade80}
 .bx-r{background:#450a0a;color:#f87171}
+.bx-exp{background:#7f1d1d;color:#fca5a5;border:1px solid #ef4444}
 .bx-a{background:#431407;color:#fb923c}
 .bx-b{background:#0c1a2e;color:#60a5fa}
 .bx-gr{background:#1a1a1a;color:var(--dim)}
@@ -270,12 +271,10 @@ function PlanBadge({ planName, plans }) {
 }
 function RenewalBadge({ c }) {
   const d = daysUntil(c.expiryDate);
-  if (isNaN(d)) return <span className="bx bx-gr">—</span>;
-  if (d < 0)  return <span className="bx bx-r">Expired {Math.abs(d)}d</span>;
-  if (d === 0) return <span className="bx bx-r">Last day</span>;
-  if (d <= 3) return <span className="bx bx-r">Expires {d}d</span>;
-  if (d <= 7) return <span className="bx bx-a">Renew {d}d</span>;
-  return <span className="bx bx-g">Active {d}d</span>;
+  if (isNaN(d)) return null;
+  if (d < 0)  return <span className="bx bx-exp">Expired {Math.abs(d)}d ago</span>;
+  if (d <= 1) return <span className="bx bx-a">Expires in {d}d</span>;
+  return <span className="bx bx-g">{d}d left</span>;
 }
 
 // Merges all 4 rotating weeks into one {tier:{day:{meals:[...]}}} shape so
@@ -1089,7 +1088,7 @@ export default function App() {
   // ── Derived
   const active   = useMemo(() => clients.filter(c=>getRealStatus(c.startDate,c.expiryDate)==="Active"), [clients]);
   const unpaid   = useMemo(() => active.filter(c=>!c.paid), [active]);
-  const renewDue = useMemo(() => active.filter(c=>{ const d=daysUntil(c.expiryDate); return d>=0&&d<=2; }), [active]);
+  const renewDue = useMemo(() => active.filter(c=>{ const d=daysUntil(c.expiryDate); return d>=0&&d<=1; }), [active]);
   const overdue  = useMemo(() => active.filter(c=>daysUntil(c.expiryDate)<0), [active]);
   const revenue  = useMemo(() => active.reduce((s,c)=>s+(c.planObj?.price||0),0), [active,plans]);
   const totalMl  = useMemo(() => active.reduce((s,c)=>s+(c.planObj?.meals||0),0)*5, [active,plans]);
@@ -1861,7 +1860,7 @@ export default function App() {
                   {lbl:"Active Clients", val:active.length,  sub:`${clients.filter(c=>getRealStatus(c.startDate,c.expiryDate)!=="Active").length} not active`, c:"var(--red)"},
                   {lbl:"Weekly Revenue", val:`¥${revenue}`,  sub:"this week",                                                  c:"var(--green)"},
                   {lbl:"Unpaid",         val:unpaid.length,  sub:unpaid.length?"Follow up":"All paid ✓",                      c:unpaid.length?"var(--amber)":"var(--green)"},
-                  {lbl:"Renewals ≤2d",   val:renewDue.length+overdue.length, sub:"includes overdue",                          c:"var(--amber)"},
+                  {lbl:"Renewals ≤1d",   val:renewDue.length+overdue.length, sub:"includes overdue",                          c:"var(--amber)"},
                   {lbl:"Meals / Week",   val:totalMl,        sub:"total portions",                                             c:"var(--blue)"},
                   {lbl:"Deliveries/Wk",  val:active.reduce((s,c)=>s+c.deliveries,0)*5, sub:"Mon–Fri",                         c:"#a78bfa"},
                 ].map((k,i)=>(

@@ -299,7 +299,7 @@ function mergeAllWeeksMenu(menu) {
 // menu{} keys are whatever string is stored in Supabase (e.g. "Lean Fit", "Muscle Gain").
 // clientTier comes directly from c.planObj.tier — same string — so we match by exact key
 // and also case-insensitive fallback to handle any casing inconsistencies.
-function MealOptions({ menu, day, clientTier = null, extraItems = [], mealLibrary = [] }) {
+function MealOptions({ clientTier = null, extraItems = [], mealLibrary = [] }) {
   // Show all meals from the library for this tier (not just what's in the weekly planner)
   const tierMeals = mealLibrary
     .filter(m => m.item_type === "meal" && (
@@ -328,7 +328,7 @@ function MealOptions({ menu, day, clientTier = null, extraItems = [], mealLibrar
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
 
-function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRotationOrder, upsertMenuDay, flash, openEditPlan, deletePlanHandler, mealLibraryRef }) {
+function MenuTab({ menu, plans, currentWeekIndex, rotationOrder, saveRotationOrder, upsertMenuDay, flash, mealLibraryRef }) {
   const [draggingWeekPos, setDraggingWeekPos] = useState(null);
   const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"];
   const [menuTab,      setMenuTab]      = useState("library");
@@ -340,7 +340,6 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
 
   const weekMenu = menu[effectivePlannerWeek] || {};
   const [showAddMeal,  setShowAddMeal]  = useState(false);
-  const [showSaucePicker, setShowSaucePicker] = useState(false);
   const [mealForm,     setMealForm]     = useState({name:"",nameZh:"",kcal:"",protein:"",carbs:"",fat:"",photoUrl:"",photoFile:null});
   const [draggingMeal, setDraggingMeal] = useState(null);
   const draggingMealRef = useRef(null);
@@ -420,7 +419,7 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
     if(!mealForm.name.trim()){alert("Meal name is required");return;}
     setSavingMeal(true);
     try {
-      const {upsertMealLibrary, uploadMealPhoto, supabase} = await import("./lib/supabase");
+      const {upsertMealLibrary, uploadMealPhoto} = await import("./lib/supabase");
       const payload = {
         name: mealForm.name.trim(),
         name_zh: mealForm.nameZh.trim()||null,
@@ -604,7 +603,7 @@ function MenuTab({ menu, plans, active, currentWeekIndex, rotationOrder, saveRot
               {m.photo_url
                 ? <img src={m.photo_url} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={m.name}/>
                 : <span style={{fontSize:12,color:"var(--dim)"}}>No photo yet</span>}
-              <span style={{position:"absolute",top:8,right:8,fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:4,
+              <span style={{position:"absolute",top:8,right:8,fontSize:10,padding:"3px 9px",borderRadius:4,
                 background:tc,color:"#000",letterSpacing:.5,fontWeight:800}}>
                 {badgeLabel}
               </span>
@@ -886,7 +885,7 @@ export default function App() {
   const [planForm,      setPlanForm]      = useState({...BLANK_PLAN});
 
   const [showMenuModal, setShowMenuModal] = useState(false);
-  const [menuEditDay,   setMenuEditDay]   = useState("Monday");
+  const [menuEditDay] = useState("Monday");
   const [menuForm,      setMenuForm]      = useState({meals:["","",""],snack:""});
 
   const [showCustomItemModal, setShowCustomItemModal] = useState(false);
@@ -929,7 +928,10 @@ export default function App() {
     if (notifForm.recipientMode === "all") return clients.map(c => c.id);
     if (notifForm.recipientMode === "status") {
       if (notifForm.statusFilter === "Expired") return clients.filter(c => c.expiryDate && daysUntil(c.expiryDate) < 0).map(c => c.id);
-      return clients.filter(c => c.status === notifForm.statusFilter).map(c => c.id);
+      // c.status queda desactualizado (se escribe una vez al pagar y nunca mas se
+      // sincroniza) -- usamos getRealStatus() como en el resto del panel, no la
+      // columna cruda, para no mandarle el aviso al conjunto de clientes equivocado.
+      return clients.filter(c => getRealStatus(c.startDate, c.expiryDate) === notifForm.statusFilter).map(c => c.id);
     }
     return notifForm.clientIds;
   }, [notifForm.recipientMode, notifForm.statusFilter, notifForm.clientIds, clients]);
@@ -1120,7 +1122,6 @@ export default function App() {
     const m = mealLibraryRef.current.find(m => m.id === id);
     return m ? m.name : id;
   };
-  const getMealObj = (id) => id ? mealLibraryRef.current.find(m => m.id === id) || null : null;
 
   // Active + Upcoming clients — used by Kitchen Prep and Delivery Sheet
   const deliveryClients = useMemo(
@@ -1436,12 +1437,6 @@ export default function App() {
   };
 
   // ── Menu modal
-  const openEditMenu = day => {
-    setMenuEditDay(day);
-    const d0 = Object.values(menu).map(tm=>tm[day]).find(Boolean) || {};
-    setMenuForm({meals:[...(d0.meals||[]).map(m=>typeof m==="object"?m.name:m),...["","",""]].slice(0,3),snack:d0.snack||""});
-    setShowMenuModal(true);
-  };
   const saveMenu = async () => {
     try {
       // Look up IDs from meal names in library
@@ -1730,13 +1725,6 @@ export default function App() {
     });
 
     doc.save("kitchen-" + dayName.toLowerCase() + ".pdf");
-  };
-
-  const _sizeStyle = (size) => {
-    if (size === "BIG") return "background:#431407;color:#fb923c;";
-    if (size === "VEG") return "background:#052e16;color:#4ade80;";
-    if (size === "SMALL") return "background:#0c1a2e;color:#60a5fa;";
-    return "";
   };
 
 
@@ -2129,7 +2117,7 @@ export default function App() {
                   No meal selections for {kitDay} yet
                 </div>
               ):(
-                (kitchen[kitDay]||[]).map((batch,bi)=>(
+                (kitchen[kitDay]||[]).map((batch)=>(
                   <div key={batch.time} style={{marginBottom:16}}>
                     <div className="kd-hd" style={{borderRadius:"6px 6px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <span>🔴 BATCH {batch.time}</span>
@@ -2221,7 +2209,7 @@ export default function App() {
                       <col style={{width:"6%"}}/>
                     </colgroup>
                     <thead><tr><th>#</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Cutlery</th><th>Note</th><th>Done</th></tr></thead>
-                    <tbody>{entries.map(({client:c, day, slot},i)=>(
+                    <tbody>{entries.map(({client:c, slot},i)=>(
                       <tr key={slot.id}>
                         <td style={{color:"var(--dim)",whiteSpace:"nowrap"}}>{i+1}</td>
                         <td style={{color:"#fff",fontWeight:500,whiteSpace:"nowrap"}}>{c.name}</td>

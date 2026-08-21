@@ -52,8 +52,28 @@ const daysUntil = d => {
   const target = new Date(d + "T00:00:00");
   return Math.round((target - TODAY) / 86400000);
 };
-const fmtDate   = d => { try { return new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}); } catch { return d||"—"; } };
-const todayIso  = () => TODAY.toISOString().split("T")[0];
+// Fechas "YYYY-MM-DD" se parsean como medianoche LOCAL (no UTC) -- si no,
+// `new Date("2026-08-21")` es medianoche UTC, que en husos horarios
+// adelantados a UTC (China, UTC+8) ya cayó el dia anterior en hora local,
+// y en husos atrasados (ej. UTC-3) se muestra un dia antes de la real.
+// Mismo patron que ya usa daysUntil() arriba, aplicado tambien a mostrar
+// texto de fecha.
+const fmtDate   = d => {
+  try {
+    const dt = /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + "T00:00:00") : new Date(d);
+    return dt.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+  } catch { return d||"—"; }
+};
+// .toISOString() siempre da la fecha en UTC -- en husos adelantados a UTC
+// (China, UTC+8) la medianoche local ya es el dia siguiente en UTC, y
+// .toISOString().split("T")[0] devuelve el dia de ayer. Se arma el string
+// a mano desde los componentes de fecha LOCALES en su lugar.
+const todayIso  = () => {
+  const y = TODAY.getFullYear();
+  const m = String(TODAY.getMonth() + 1).padStart(2, "0");
+  const d = String(TODAY.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
 
 const NOTIF_TEMPLATES = [
   {label:"Custom",              title:"",                    message:""},
@@ -1076,7 +1096,15 @@ export default function App() {
         setLoaded(true);
       }
     })();
-  }, [session]);
+  // Dependemos del user id (estable), no del objeto `session` completo, a
+  // proposito: onAuthChange emite un objeto `session` NUEVO en cada evento
+  // interno del cliente de Supabase Auth (arranque, refresh de token, etc.)
+  // aunque sea el mismo usuario logueado -- con `[session]` como
+  // dependencia, React volvia a disparar las ~13 queries completas cada vez
+  // que eso pasaba (confirmado: 4 veces seguidas en una sola carga de
+  // pagina).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id]);
 
   const flash = () => { setSaving(true); setTimeout(() => setSaving(false), 1800); };
 

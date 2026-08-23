@@ -296,6 +296,45 @@ export async function getMealUsageCount(id) {
   return (inMeals.count || 0) + (inSnack.count || 0) + (inSauce.count || 0);
 }
 
+// ── MEAL STATS (weekly ranking / history) ───────────────────
+// meal_weekly_stats is populated by a Sunday-night pg_cron snapshot
+// (snapshot_meal_weekly_stats) since meal_selections itself gets
+// overwritten every week -- this table is the only place history survives.
+export async function getMealWeeklyStats() {
+  const [statsData, libData] = await Promise.all([
+    supabase.from("meal_weekly_stats").select("*").order("week_start"),
+    supabase.from("meal_library").select("id,name,name_zh,photo_url,tier"),
+  ]);
+  check(statsData, "getMealWeeklyStats");
+  check(libData, "getMealWeeklyStatsLibrary");
+
+  const libById = {};
+  for (const m of (libData.data || [])) libById[m.id] = m;
+
+  const byMeal = {};
+  for (const row of (statsData.data || [])) {
+    const meal = libById[row.meal_id];
+    if (!meal) continue; // meal deleted from the library since this snapshot
+    if (!byMeal[row.meal_id]) {
+      byMeal[row.meal_id] = {
+        id:       row.meal_id,
+        name:     meal.name,
+        nameZh:   meal.name_zh || "",
+        photoUrl: meal.photo_url || "",
+        tier:     row.tier || meal.tier || "",
+        weeks:    [],
+        total:    0,
+      };
+    }
+    byMeal[row.meal_id].weeks.push({ weekStart: row.week_start, count: row.count });
+    byMeal[row.meal_id].total += row.count;
+  }
+  return Object.values(byMeal).map(m => ({
+    ...m,
+    weeks: m.weeks.slice().sort((a, b) => a.weekStart.localeCompare(b.weekStart)),
+  }));
+}
+
 // ── NEW ORDERS ───────────────────────────────────────────────
 export async function createNewOrder(order) {
   return check(await supabase.from("new_orders").insert(order).select().single(), "createNewOrder");

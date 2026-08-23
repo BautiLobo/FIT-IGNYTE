@@ -13,6 +13,7 @@ import {
   incrementRenewalCount,
   getPendingAddressChanges, approveAddressChange, rejectAddressChange,
   getNotifications, sendNotification, deleteNotification,
+  getMealWeeklyStats,
 } from "./lib/supabase";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -258,6 +259,11 @@ tbody tr:hover{background:#1e1e1e}
 .cook-time-inp{background:var(--s1);border:1px solid var(--bdr2);border-radius:5px;color:var(--txt);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:700;padding:5px 10px;outline:none;width:90px;text-align:center}
 .cook-time-inp:focus{border-color:var(--red)}
 
+/* ── MEAL STATS ── */
+.mstat-row:hover{background:var(--s2)}
+.mstat-spark{display:flex;align-items:flex-end;gap:2px;height:28px;min-width:70px}
+.mstat-spark-bar{width:4px;border-radius:2px 2px 0 0;flex-shrink:0}
+
 /* ── MENU PLANNER (responsive) ── */
 .planner-wrap{display:flex;gap:12px;align-items:flex-start}
 .planner-sidebar{width:260px;flex-shrink:0}
@@ -356,6 +362,163 @@ function MealOptions({ clientTier = null, extraItems = [], mealLibrary = [] }) {
       )}
     </>
   );
+}
+
+// ─── MEAL STATS (ranking + weekly history) ────────────────────────────────────
+// meal_selections gets overwritten every week, so meal_weekly_stats (a
+// Sunday-night pg_cron snapshot, see snapshot_meal_weekly_stats in Supabase)
+// is the only place a meal's popularity over time survives. This tab just
+// reads that table -- see getMealWeeklyStats in lib/supabase.js.
+function MealStatsTab({ plans }) {
+  const [stats,   setStats]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tierSel, setTierSel] = useState("");
+  const [search,  setSearch]  = useState("");
+
+  const availableTiers = useMemo(() => {
+    const seen = new Set();
+    const tiers = [];
+    (plans||[]).forEach(p => {
+      if (!p.tier) return;
+      const keyLower = p.tier.toLowerCase();
+      if (seen.has(keyLower)) return;
+      seen.add(keyLower);
+      tiers.push({ tier: p.tier, label: p.tier, color: p.color || "#aaa" });
+    });
+    return tiers;
+  }, [plans]);
+
+  // Sigue el mismo patrón que activeTier en MenuTab: un const derivado del
+  // estado + fallback al primer tier, no un useEffect que sincronice estado
+  // (evita el cascading-render que eslint marca en ese patrón).
+  const activeTier = tierSel || availableTiers[0]?.tier || "";
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const data = await getMealWeeklyStats();
+        if (!cancelled) setStats(data);
+      } catch (err) {
+        console.error("[MealStatsTab] getMealWeeklyStats", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const activeTierColor = availableTiers.find(t => t.tier === activeTier)?.color || "#38bdf8";
+
+  const fmtWeek = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso + "T00:00:00");
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+
+  // Semanas con al menos un snapshot, más reciente primero. "" = ranking
+  // acumulado (all-time) -- el estado por defecto.
+  const availableWeeks = useMemo(() => {
+    const set = new Set();
+    stats.forEach(m => m.weeks.forEach(w => set.add(w.weekStart)));
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [stats]);
+  const [weekSel, setWeekSel] = useState("");
+
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return stats
+      .filter(m => !activeTier || (m.tier||"").toLowerCase() === activeTier.toLowerCase())
+      .filter(m => !q || m.name.toLowerCase().includes(q))
+      .map(m => ({
+        ...m,
+        scopedCount: weekSel ? (m.weeks.find(w => w.weekStart === weekSel)?.count || 0) : m.total,
+      }))
+      .filter(m => m.scopedCount > 0)
+      .sort((a, b) => b.scopedCount - a.scopedCount);
+  }, [stats, activeTier, search, weekSel]);
+
+  return <>
+    <div style={{display:"flex",gap:0,marginBottom:16,borderBottom:"1px solid var(--bdr)"}}>
+      {availableTiers.map(({tier:t,label:lbl,color:col})=>(
+        <button key={t} onClick={()=>setTierSel(t)}
+          style={{flex:1,padding:"14px 10px",background:activeTier===t?`${col}18`:"none",border:"none",
+            borderBottom:`2px solid ${activeTier===t?col:"transparent"}`,marginBottom:"-1px",
+            color:activeTier===t?col:"var(--muted)",fontFamily:"'DM Sans',sans-serif",
+            fontWeight:700,fontSize:15,cursor:"pointer",transition:"all .15s",letterSpacing:.3}}>
+          {lbl}
+        </button>
+      ))}
+    </div>
+
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+        <input className="srch" placeholder="Search meal…" value={search} onChange={e=>setSearch(e.target.value)} />
+        <select className="fltr" value={weekSel} onChange={e=>setWeekSel(e.target.value)}>
+          <option value="">All-time (total)</option>
+          {availableWeeks.map(w => <option key={w} value={w}>Week of {fmtWeek(w)}</option>)}
+        </select>
+      </div>
+      <div style={{fontSize:11,color:"var(--dim)"}}>
+        {availableWeeks.length===0
+          ? "No hay historial todavía — el primer snapshot se guarda el domingo a la noche"
+          : `${availableWeeks.length} semana${availableWeeks.length===1?"":"s"} registrada${availableWeeks.length===1?"":"s"}`}
+      </div>
+    </div>
+
+    {loading ? (
+      <div style={{padding:40,textAlign:"center",color:"var(--dim)"}}>Loading stats...</div>
+    ) : rows.length===0 ? (
+      <div style={{padding:40,textAlign:"center",color:"var(--dim)"}}>No data for this tier yet.</div>
+    ) : (
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr>
+            <th style={{width:40,padding:"8px 10px",textAlign:"left",color:"var(--muted)",fontSize:12,fontWeight:700}}>#</th>
+            <th style={{padding:"8px 10px",textAlign:"left",color:"var(--muted)",fontSize:12,fontWeight:700}}>Meal</th>
+            <th style={{padding:"8px 10px",textAlign:"right",color:"var(--muted)",fontSize:12,fontWeight:700}}>
+              {weekSel ? `Portions (wk of ${fmtWeek(weekSel)})` : "Total portions (all-time)"}
+            </th>
+            {weekSel && <th style={{padding:"8px 10px",textAlign:"right",color:"var(--muted)",fontSize:12,fontWeight:700}}>All-time total</th>}
+            <th style={{padding:"8px 10px",textAlign:"left",color:"var(--muted)",fontSize:12,fontWeight:700}}>Trend (last 12 weeks)</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((m, i) => {
+              const recentWeeks = m.weeks.slice(-12);
+              const maxCount = Math.max(...recentWeeks.map(w => w.count), 1);
+              return (
+                <tr key={m.id} className="mstat-row">
+                  <td style={{padding:10,color:"var(--dim)",fontSize:13,fontWeight:700}}>{i+1}</td>
+                  <td style={{padding:10}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{width:36,height:36,borderRadius:8,overflow:"hidden",background:"var(--s3)",flexShrink:0}}>
+                        {m.photoUrl && <img src={m.photoUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="" />}
+                      </div>
+                      <span style={{fontSize:13,color:"#fff",fontWeight:600}}>{m.name}</span>
+                    </div>
+                  </td>
+                  <td style={{padding:10,textAlign:"right",fontSize:14,fontWeight:700,color:"#fff",fontVariantNumeric:"tabular-nums"}}>{m.scopedCount}</td>
+                  {weekSel && <td style={{padding:10,textAlign:"right",fontSize:13,color:"var(--muted)",fontVariantNumeric:"tabular-nums"}}>{m.total}</td>}
+                  <td style={{padding:10}}>
+                    <div className="mstat-spark" title={recentWeeks.map(w=>`${fmtWeek(w.weekStart)}: ${w.count}`).join(" · ")}>
+                      {recentWeeks.map((w, wi) => (
+                        <div key={w.weekStart} className="mstat-spark-bar"
+                          style={{
+                            height: Math.max((w.count/maxCount)*28, 2),
+                            background: (weekSel ? w.weekStart===weekSel : wi===recentWeeks.length-1) ? activeTierColor : "var(--bdr2)",
+                          }} />
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </>;
 }
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
@@ -1832,10 +1995,9 @@ export default function App() {
               {id:"orders",   ic:"📦",lbl:"Orders",         badge:(pendingOrders.length+pendingAddrChanges.length)||null},
               {id:"referrals",    ic:"🤝",lbl:"Referrals"},
               {id:"notifications",ic:"🔔",lbl:"Notifications"},
-              {id:"renewals", ic:"🔄",lbl:"Renewals",       badge:(renewDue.length+overdue.length)||null},
-              {id:"payments", ic:"💳",lbl:"Payments",       badge:unpaid.length||null},
               {id:"plans",    ic:"🗂️", lbl:"Plans"},
               {id:"menu",     ic:"📋",lbl:"Menu Reference"},
+              {id:"mealstats",ic:"📊",lbl:"Meal Stats"},
             ].map(n=>(
               <button key={n.id} className={`ni${tab===n.id?" on":""}`} onClick={()=>navTo(n.id)}>
                 <span className="ni-ic">{n.ic}</span>{n.lbl}
@@ -1854,7 +2016,7 @@ export default function App() {
         <div className="main">
           <div className="topbar">
             <div className="tb-title">
-              {{dashboard:"Operations Dashboard",clients:"Client Master List",meals:"Weekly Meal Selections",kitchen:"Kitchen Prep Summary",delivery:"Delivery Sheet",orders:"Orders",notifications:"Notifications",renewals:"Renewal Tracker",payments:"Payment Tracker",plans:"Plans",menu:"Menu Reference"}[tab]}
+              {{dashboard:"Operations Dashboard",clients:"Client Master List",meals:"Weekly Meal Selections",kitchen:"Kitchen Prep Summary",delivery:"Delivery Sheet",orders:"Orders",notifications:"Notifications",plans:"Plans",menu:"Menu Reference",mealstats:"Meal Stats"}[tab]}
             </div>
             <div className="tb-right">
               {tab==="clients"&&<>
@@ -2499,106 +2661,6 @@ export default function App() {
               )}
             </>}
 
-            {/* ═══ RENEWALS ═══════════════════════════ */}
-            {tab==="renewals"&&<>
-              {overdue.length>0&&<>
-                <div className="sec-title" style={{color:"#f87171",marginTop:0}}>⚠️ OVERDUE</div>
-                <div className="tbl-wrap" style={{marginBottom:20}}><table>
-                  <thead><tr><th>Client</th><th>Plan</th><th>Expired</th><th>Days Overdue</th><th>Paid</th><th>Action</th></tr></thead>
-                  <tbody>{overdue.map(c=>(
-                    <tr key={c.id}>
-                      <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                      <td><PlanBadge planName={c.planName} plans={plans}/></td>
-                      <td style={{color:"#f87171"}}>{fmtDate(c.expiryDate)}</td>
-                      <td><span className="bx bx-r">{Math.abs(daysUntil(c.expiryDate))}d overdue</span></td>
-                      <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"Paid":"Unpaid"}</button></td>
-                      <td><button className="btn btn-r btn-sm" onClick={()=>openEditClient(c)}>Renew Now</button></td>
-                    </tr>
-                  ))}</tbody>
-                </table></div>
-              </>}
-              <div className="sec-title">Renewing Soon (≤2 days)</div>
-              <div className="tbl-wrap" style={{marginBottom:20}}><table>
-                <thead><tr><th>Client</th><th>Plan</th><th>Expiry</th><th>Days Left</th><th>Price</th><th>Paid?</th></tr></thead>
-                <tbody>
-                  {renewDue.map(c=>(
-                    <tr key={c.id}>
-                      <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                      <td><PlanBadge planName={c.planName} plans={plans}/></td>
-                      <td style={{color:"var(--amber)"}}>{fmtDate(c.expiryDate)}</td>
-                      <td><RenewalBadge c={c}/></td>
-                      <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
-                      <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-a"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓ Paid":"Confirm"}</button></td>
-                    </tr>
-                  ))}
-                  {renewDue.length===0&&<tr><td colSpan={6} style={{textAlign:"center",color:"var(--dim)",padding:20}}>No renewals due this week 🎉</td></tr>}
-                </tbody>
-              </table></div>
-              <div className="sec-title">All Active — Full Status</div>
-              <div className="tbl-wrap"><table>
-                <thead><tr><th>Client</th><th>Plan</th><th>Start</th><th>Expiry</th><th>Status</th><th>LTV</th><th>Weeks</th><th>Acq.</th></tr></thead>
-                <tbody>{active.map(c=>(
-                  <tr key={c.id}>
-                    <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                    <td><PlanBadge planName={c.planName} plans={plans}/></td>
-                    <td style={{color:"var(--muted)"}}>{fmtDate(c.startDate)}</td>
-                    <td style={{color:"var(--muted)"}}>{fmtDate(c.expiryDate)}</td>
-                    <td><RenewalBadge c={c}/></td>
-                    <td style={{color:"var(--amber)"}}>¥{c.ltv}</td>
-                    <td style={{color:"var(--muted)"}}>{c.weeks}wk</td>
-                    <td style={{color:"var(--muted)",fontSize:10}}>{c.acqChannel||"—"}</td>
-                  </tr>
-                ))}</tbody>
-              </table></div>
-            </>}
-
-            {/* ═══ PAYMENTS ═══════════════════════════ */}
-            {tab==="payments"&&<>
-              <div className="kpis" style={{gridTemplateColumns:"repeat(3,1fr)"}}>
-                {[
-                  {lbl:"Collected This Week", val:`¥${active.filter(c=>c.paid).reduce((s,c)=>s+(c.planObj?.price||0),0)}`, c:"var(--green)"},
-                  {lbl:"Pending / Unpaid",    val:`¥${unpaid.reduce((s,c)=>s+(c.planObj?.price||0),0)}`,                    c:"var(--amber)"},
-                  {lbl:"Total LTV All Time",  val:`¥${clients.reduce((s,c)=>s+(c.ltv||0),0)}`,                                                    c:"var(--blue)"},
-                ].map((k,i)=>(
-                  <div className="kpi" key={i} style={{"--kc":k.c}}>
-                    <div className="kpi-lbl">{k.lbl}</div>
-                    <div className="kpi-val">{k.val}</div>
-                  </div>
-                ))}
-              </div>
-              {unpaid.length>0&&<>
-                <div className="sec-title" style={{color:"#f87171"}}>Unpaid — Follow Up Now</div>
-                <div className="tbl-wrap" style={{marginBottom:20}}><table>
-                  <thead><tr><th>Client</th><th>Plan</th><th>Amount Due</th><th>Phone</th><th>District</th><th>Action</th></tr></thead>
-                  <tbody>{unpaid.map(c=>(
-                    <tr key={c.id}>
-                      <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                      <td><PlanBadge planName={c.planName} plans={plans}/></td>
-                      <td style={{color:"#f87171",fontWeight:600}}>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
-                      <td style={{color:"var(--muted)"}}>{c.phone||"—"}</td>
-                      <td><span className="chip">{c.district||"—"}</span></td>
-                      <td><button className="btn btn-grn btn-sm" onClick={()=>togglePaid(c.id)}>Mark Paid</button></td>
-                    </tr>
-                  ))}</tbody>
-                </table></div>
-              </>}
-              <div className="sec-title">All Active — Payment Status</div>
-              <div className="tbl-wrap"><table>
-                <thead><tr><th>Client</th><th>Plan</th><th>Price/Wk</th><th>Paid</th><th>Amount</th><th>Expiry</th><th>Action</th></tr></thead>
-                <tbody>{active.map(c=>(
-                  <tr key={c.id}>
-                    <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                    <td><PlanBadge planName={c.planName} plans={plans}/></td>
-                    <td>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
-                    <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓ Paid":"Unpaid"}</button></td>
-                    <td style={{color:"var(--green)"}}>¥{c.amountPaid}</td>
-                    <td><RenewalBadge c={c}/></td>
-                    <td><button className="btn btn-g btn-xs" onClick={()=>openEditClient(c)}>Edit</button></td>
-                  </tr>
-                ))}</tbody>
-              </table></div>
-            </>}
-
             {/* ═══ PLANS ════════════════════════════════ */}
             {tab==="plans"&&<>
               {!selectedTierId ? (
@@ -2667,6 +2729,9 @@ export default function App() {
               openEditPlan={openEditPlan} deletePlanHandler={deletePlanHandler}
               mealLibraryRef={mealLibraryRef}
             />}
+
+            {/* ═══ MEAL STATS ════════════════════════════════ */}
+            {tab==="mealstats"&&<MealStatsTab plans={plans} />}
 
           </div>
         </div>

@@ -258,6 +258,15 @@ tbody tr:hover{background:#1e1e1e}
 .cook-time-inp{background:var(--s1);border:1px solid var(--bdr2);border-radius:5px;color:var(--txt);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:700;padding:5px 10px;outline:none;width:90px;text-align:center}
 .cook-time-inp:focus{border-color:var(--red)}
 
+/* ── MENU PLANNER (responsive) ── */
+.planner-wrap{display:flex;gap:12px;align-items:flex-start}
+.planner-sidebar{width:260px;flex-shrink:0}
+.planner-meal-list{max-height:640px;overflow-y:auto}
+.planner-grid-wrap{flex:1;min-width:0;overflow-x:auto}
+.planner-table{border-collapse:collapse;min-width:640px}
+.planner-selected-bar{display:none;align-items:center;justify-content:space-between;gap:8px;background:var(--s2);border:1px solid var(--red);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px;color:#fff}
+.planner-selected-bar.show{display:flex}
+
 @media(max-width:768px){
   .hamburger{display:flex;align-items:center;justify-content:center}
   .sb{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%);z-index:300}
@@ -275,6 +284,9 @@ tbody tr:hover{background:#1e1e1e}
   .mo{padding:8px}
   .mo-box{max-height:96vh}
   .slot-row{flex-direction:column}
+  .planner-wrap{flex-direction:column}
+  .planner-sidebar{width:100%}
+  .planner-meal-list{max-height:200px}
 }
 @media(max-width:480px){
   .kpis{grid-template-columns:1fr 1fr;gap:8px}
@@ -649,18 +661,24 @@ function MenuTab({ menu, plans, currentWeekIndex, rotationOrder, saveRotationOrd
         ? <div style={{padding:40,textAlign:"center",color:"var(--dim)"}}>Loading meals...</div>
         : <>
       {/* ── Sidebar meals + grid ── */}
-      <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+      <div className="planner-wrap">
 
         {/* ── Sidebar: meals for active tier ── */}
-        <div style={{width:260,flexShrink:0}}>
+        <div className="planner-sidebar">
           {/* Header with tier color accent */}
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,paddingBottom:10,borderBottom:`1px solid ${activeTierColor}44`}}>
             <div style={{width:4,height:16,borderRadius:2,background:activeTierColor,flexShrink:0}}/>
             <span style={{fontSize:11,color:activeTierColor,textTransform:"uppercase",letterSpacing:1.5,fontWeight:700}}>
-              Drag meals →
+              Drag meals → (o tocá una comida y después una celda)
             </span>
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:640,overflowY:"auto",paddingRight:4}}>
+          {/* Tap-to-place: visible once a meal is selected by tap (needed on mobile, where drag doesn't work) */}
+          <div className={`planner-selected-bar ${draggingMeal ? "show" : ""}`}>
+            <span>Seleccionada: <strong>{draggingMeal?.name}</strong> — tocá una celda</span>
+            <button onClick={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
+              style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:15,padding:0,flexShrink:0}}>✕</button>
+          </div>
+          <div className="planner-meal-list" style={{display:"flex",flexDirection:"column",gap:7,paddingRight:4}}>
             {/* Meals for this tier */}
             {(()=>{
               const tierMeals = allMeals.filter(m => m.item_type === "meal");
@@ -683,6 +701,10 @@ function MenuTab({ menu, plans, currentWeekIndex, rotationOrder, saveRotationOrd
                     <div key={m.id||i} draggable
                       onDragStart={()=>{draggingMealRef.current=m;setDraggingMeal(m);}}
                       onDragEnd={()=>{draggingMealRef.current=null;setDraggingMeal(null);}}
+                      onClick={()=>{
+                        if (draggingMeal?.id===m.id) { draggingMealRef.current=null; setDraggingMeal(null); }
+                        else { draggingMealRef.current=m; setDraggingMeal(m); }
+                      }}
                       style={getMealStyle(m)}>
                       {m.name}
                     </div>
@@ -700,8 +722,8 @@ function MenuTab({ menu, plans, currentWeekIndex, rotationOrder, saveRotationOrd
         </div>
 
         {/* ── Weekly grid ── */}
-        <div style={{flex:1,overflowX:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
+        <div className="planner-grid-wrap">
+          <table className="planner-table">
             <thead><tr>
               <th style={{width:75,padding:"8px 10px",textAlign:"left",color:"var(--muted)",fontSize:12,fontWeight:700}}>SLOT</th>
               {DAYS.map(d=><th key={d} style={{padding:"8px 6px",color:activeTierColor,fontSize:12,fontWeight:700,textAlign:"center",letterSpacing:.5}}>{d.slice(0,3).toUpperCase()}</th>)}
@@ -721,21 +743,24 @@ function MenuTab({ menu, plans, currentWeekIndex, rotationOrder, saveRotationOrd
                         onDragOver={e=>{e.preventDefault();setDragOver(`${day}-${slot}`);}}
                         onDragLeave={()=>setDragOver(null)}
                         onDrop={()=>handleAssignMeal(day,slot)}
+                        onClick={()=>{ if (draggingMeal) handleAssignMeal(day,slot); }}
                         style={{padding:5}}>
                         <div title={val||""}
                           style={{
                             background:isOver?`${activeTierColor}18`:val?"var(--s2)":"var(--s3)",
                             border:`1px ${isOver?"solid":"dashed"} ${isOver?activeTierColor:val?`${activeTierColor}33`:"#2a2a2a"}`,
-                            borderRadius:8,padding:"14px 10px",minHeight:92,fontSize:13,
+                            borderRadius:8,padding:"14px 10px",minHeight:92,minWidth:90,fontSize:13,
                             color:val?"#ddd":"var(--dim)",textAlign:"center",
                             display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5,
                             transition:"background .1s,border-color .1s",
+                            cursor:draggingMeal?"pointer":"default",
                           }}>
                           <span style={{width:"100%",textAlign:"center",lineHeight:1.45,wordBreak:"break-word",fontWeight:val?500:400}}>
                             {val||<span style={{fontSize:12,color:"#333"}}>Drop</span>}
                           </span>
                           {val&&<span style={{fontSize:11,color:"var(--dim)",cursor:"pointer",marginTop:3,opacity:.7}}
-                            onClick={()=>{
+                            onClick={e=>{
+                              e.stopPropagation();
                               const dm=tierMenu[day]||{mealIds:[]};
                               const newIds=[...(dm.mealIds||[])];
                               newIds[mealIdx]="";

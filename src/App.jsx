@@ -1425,8 +1425,16 @@ export default function App() {
 
   const deleteClientHandler = async id => {
     if (!window.confirm("Delete this client?")) return;
+    const prev = clients;
     setClients(p=>p.filter(c=>c.id!==id));
-    try { await dbDeleteClient(id); flash(); } catch(e){ console.error(e); }
+    try {
+      await dbDeleteClient(id);
+      flash();
+    } catch(e) {
+      console.error(e);
+      setClients(prev); // el DELETE falló -- revertir el borrado optimista, si no
+      alert(`Could not delete client: ${e.message||e}`); // el cliente reaparece solo al recargar y parece que "no se actualiza"
+    }
   };
 
   const navTo = t => { setTab(t); setSbOpen(false); };

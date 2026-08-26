@@ -1720,6 +1720,17 @@ export default function App() {
   };
 
   // ── Print / Save as PDF delivery sheet (supports Chinese characters)
+  // Hora de cocina: 1h antes de la hora de entrega, para que la cocina sepa
+  // cuándo tiene que tener listo cada pedido. Si el horario no está definido
+  // (slot "TBD"), no hay nada que restarle.
+  const cookingTimeFor = (timeStr) => {
+    if (!timeStr || timeStr === "TBD") return "TBD";
+    const [h, m] = timeStr.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return "TBD";
+    const hh = (h - 1 + 24) % 24;
+    return String(hh).padStart(2,"0") + ":" + String(m).padStart(2,"0");
+  };
+
   const printDelivery = () => {
     const dayName = deliveryDay;
     const dateStr = new Date().toLocaleDateString("en-GB");
@@ -1727,6 +1738,7 @@ export default function App() {
       slots.map(({client:c, slot}, i) => ({
         num: i+1,
         time,
+        cookTime: cookingTimeFor(time),
         name: c.name,
         plan: c.planName,
         address: c.address || "TBC",
@@ -1763,9 +1775,10 @@ export default function App() {
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     col.cn  { width: 3%; }
     col.ct  { width: 6%; }
+    col.cct { width: 6%; }
     col.cc  { width: 9%; }
     col.ca  { width: 16%; }
-    col.cm  { width: 28%; }
+    col.cm  { width: 22%; }
     col.cs  { width: 10%; }
     col.cno { width: 20%; }
     col.ccut{ width: 6%; }
@@ -1783,6 +1796,7 @@ export default function App() {
     /* ── Cell styles ── */
     .cn-num  { font-weight: 900; font-size: 14px; color: #bbb; text-align: center; vertical-align: middle; }
     .ct-time { font-weight: 800; font-size: 12px; color: #e8342a; white-space: nowrap; vertical-align: middle; }
+    .cct-time { font-weight: 800; font-size: 12px; color: #b45309; white-space: nowrap; vertical-align: middle; }
     .cc-name { font-weight: 800; font-size: 11.5px; }
     .cc-plan { font-size: 9px; color: #777; margin-top: 2px; }
     .ca-addr { font-size: 10.5px; font-weight: 600; }
@@ -1809,13 +1823,14 @@ export default function App() {
   </div>
   <table>
     <colgroup>
-      <col class="cn"><col class="ct"><col class="cc"><col class="ca">
+      <col class="cn"><col class="ct"><col class="cct"><col class="cc"><col class="ca">
       <col class="cm"><col class="cno"><col class="ccut"><col class="ck">
     </colgroup>
     <thead>
       <tr>
         <th>#</th>
         <th>Time</th>
+        <th>Cooking Time</th>
         <th>Client</th>
         <th>Address &amp; Access</th>
         <th>Meals</th>
@@ -1846,6 +1861,7 @@ export default function App() {
         return "<tr>" +
           "<td class=\"cn-num\">" + (i+1) + "</td>" +
           "<td class=\"ct-time\">" + r.time + "</td>" +
+          "<td class=\"cct-time\">" + r.cookTime + "</td>" +
           "<td><div class=\"cc-name\">" + r.name + "</div><div class=\"cc-plan\">" + r.plan + "</div></td>" +
           "<td><div class=\"ca-addr\">" + r.address + "</div>" + accessHtml + "</td>" +
           "<td>" + mealsHtml + "</td>" +

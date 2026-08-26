@@ -391,15 +391,38 @@ export async function approveOrder(order) {
     clientId = created.id;
   }
 
+  // El pedido pudo quedar esperando aprobación varios días -- el menú rota
+  // mensualmente, así que las comidas que el cliente eligió al registrarse
+  // pueden ya no estar en la rotación vigente. Se filtran acá contra el
+  // menú actual antes de guardarlas (mismo criterio que ya usa el
+  // mini-program en edit-meals.js para el caso análogo de una renovación
+  // demorada) para no dejar meal_ids fantasma en meal_selections.
+  const planTier = order.plan_id
+    ? check(await supabase.from("plans").select("tier").eq("id", order.plan_id).maybeSingle(), "approveOrder:findPlanTier")?.tier
+    : null;
+  const weekIndex = await getCurrentWeekIndex();
+
   const meals = order.meals || {};
   for (const [key, dayName] of Object.entries(ORDER_DAY_KEYS)) {
     const slot = meals[key];
     if (!slot) continue;
+
+    let mealIds = slot.meal_ids || [];
+    if (planTier && mealIds.length > 0) {
+      const menuRow = check(
+        await supabase.from("menu").select("meals_json").eq("day", dayName).eq("tier", planTier).eq("week_index", weekIndex).maybeSingle(),
+        "approveOrder:findCurrentMenu"
+      );
+      const validIds = new Set((menuRow && menuRow.meals_json) || []);
+      mealIds = mealIds.filter(id => validIds.has(id));
+    }
+    if (mealIds.length === 0) continue;
+
     check(await supabase.from("meal_selections").upsert({
       client_id:     clientId,
       day:           dayName,
       slot:          1,
-      meals_json:    slot.meal_ids || [],
+      meals_json:    mealIds,
       delivery_time: slot.time || "",
       snack_id:      slot.snack_id || null,
       note:          slot.notes || "",

@@ -65,6 +65,7 @@ export async function getClients() {
     startDate:      c.start_date      || "",
     expiryDate:     c.expiry_date     || "",
     deliveryTime:   c.delivery_time   || "",
+    deliveryFee:    c.delivery_fee    ?? null,
     amountPaid:     c.amount_paid     || 0,
     acqChannel:     c.acq_channel     || "",
     wechatOpenid:   c.wechat_openid   || "",
@@ -83,6 +84,7 @@ export async function upsertClient(client) {
     access:         client.access         || "",
     deliveries:     client.deliveries     || 1,
     delivery_time:  client.deliveryTime   || "",
+    delivery_fee:   (client.deliveryFee === "" || client.deliveryFee == null) ? null : Number(client.deliveryFee),
     plan_id:        client.planId         || null,
     status:         client.status         || "Active",
     start_date:     client.startDate      || null,
@@ -345,9 +347,9 @@ export async function getPendingOrders() {
 export async function getRejectedOrders() {
   return check(await supabase.from("new_orders").select("*").eq("status","rejected").order("created_at", {ascending:false}), "getRejectedOrders");
 }
-export async function reApproveOrder(order) {
+export async function reApproveOrder(order, deliveryFee) {
   await supabase.from("new_orders").update({ status: "pending", note: "" }).eq("id", order.id);
-  return approveOrder({...order, status:"pending", note:""});
+  return approveOrder({...order, status:"pending", note:""}, deliveryFee);
 }
 export async function updateOrderStatus(id, status, note) {
   check(await supabase.from("new_orders").update({ status, note: note||"" }).eq("id", id), "updateOrderStatus");
@@ -357,7 +359,10 @@ const ORDER_DAY_KEYS = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "
 
 // Approve a pending new_order: upsert the client, sync its weekly meal
 // selections, mark the order approved, then push-notify the client.
-export async function approveOrder(order) {
+// `deliveryFee` is what the admin entered in the approve popup (¥/week) --
+// it's saved on both the order (audit trail) and the client (canonical,
+// reused automatically for this client's future renewals until edited).
+export async function approveOrder(order, deliveryFee) {
   const existing = order.phone
     ? check(await supabase.from("clients").select("id").eq("phone", order.phone).maybeSingle(), "approveOrder:findClient")
     : null;
@@ -373,6 +378,7 @@ export async function approveOrder(order) {
     plan_id:        order.plan_id        || null,
     status:         "Pending Payment",
     wechat_openid:  order.wechat_openid  || "",
+    delivery_fee:   deliveryFee,
   };
 
   let clientId;
@@ -429,7 +435,7 @@ export async function approveOrder(order) {
     }, { onConflict: "client_id,day,slot" }), "approveOrder:syncMealSelection");
   }
 
-  check(await supabase.from("new_orders").update({ status: "approved" }).eq("id", order.id), "approveOrder:markApproved");
+  check(await supabase.from("new_orders").update({ status: "approved", delivery_fee: deliveryFee }).eq("id", order.id), "approveOrder:markApproved");
 
   await pushNotify(clientId, "FIT IGNYTE", "Order approved!");
   return clientId;

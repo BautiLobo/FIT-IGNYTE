@@ -37,6 +37,7 @@ const BLANK_CLIENT = {
   planId:"", planName:"", status:"Active",
   startDate:"", expiryDate:"", paid:false,
   goal:"", allergies:"", customizations:"", ltv:0, weeks:0,
+  deliveryFee:null,
 };
 const BLANK_PLAN = { id:"", name:"", name_zh:"", kcal:0, meals:1, price:0, tier:"", tier_zh:"", color:"#38BDF8" };
 
@@ -1101,11 +1102,15 @@ export default function App() {
 
   const [search,   setSearch]   = useState("");
   const [filterSt, setFilterSt] = useState("all");
+  const [clientsPage, setClientsPage] = useState(1);
+  const CLIENTS_PAGE_SIZE = 20;
 
   const [pendingOrders,      setPendingOrders]      = useState([]);
   const [rejectedOrders,     setRejectedOrders]     = useState([]);
   const [pendingAddrChanges, setPendingAddrChanges]  = useState([]);
   const [ordersBusyId,       setOrdersBusyId]        = useState(null);
+  const [orderToApprove,     setOrderToApprove]      = useState(null);
+  const [approveFeeInput,    setApproveFeeInput]     = useState("");
   const [coaches,            setCoaches]            = useState([]);
   const [coachForm,          setCoachForm]          = useState({name:"",code:""});
   const [coachBusy,          setCoachBusy]          = useState(false);
@@ -1167,11 +1172,9 @@ export default function App() {
     finally { setNotifBusy(false); }
   };
 
-  const handleApproveOrder = async (order) => {
-    setOrdersBusyId(order.id);
-    try { await approveOrder(order); await refreshOrders(); }
-    catch (e) { console.error(e); alert("Could not approve order."); }
-    finally { setOrdersBusyId(null); }
+  const handleApproveOrder = (order) => {
+    setApproveFeeInput(order.delivery_fee != null ? String(order.delivery_fee) : "");
+    setOrderToApprove(order);
   };
   const handleRejectOrder = async (order) => {
     const note = prompt("Reason for rejection (optional):") || "";
@@ -1180,10 +1183,25 @@ export default function App() {
     catch (e) { console.error(e); alert("Could not reject order."); }
     finally { setOrdersBusyId(null); }
   };
-  const handleReApproveOrder = async (order) => {
+  const handleReApproveOrder = (order) => {
+    setApproveFeeInput(order.delivery_fee != null ? String(order.delivery_fee) : "");
+    setOrderToApprove(order);
+  };
+  const confirmApproveOrder = async () => {
+    const order = orderToApprove;
+    if (!order) return;
+    const fee = Number(approveFeeInput);
+    if (!approveFeeInput.trim() || !Number.isFinite(fee) || fee < 0) {
+      alert("Enter a valid delivery fee.");
+      return;
+    }
     setOrdersBusyId(order.id);
-    try { await reApproveOrder(order); await refreshOrders(); }
-    catch (e) { console.error(e); alert("Could not approve order."); }
+    try {
+      if (order.status === "rejected") await reApproveOrder(order, fee);
+      else await approveOrder(order, fee);
+      await refreshOrders();
+      setOrderToApprove(null);
+    } catch (e) { console.error(e); alert("Could not approve order."); }
     finally { setOrdersBusyId(null); }
   };
   const refreshCoaches = async () => setCoaches(await getCoaches());
@@ -1321,6 +1339,16 @@ export default function App() {
     );
     return l;
   }, [clients,filterSt,search]);
+
+  // Volver a la página 1 cada vez que cambia el filtro/búsqueda -- si no,
+  // se puede quedar mostrando una página vacía de un filtro anterior.
+  useEffect(() => { setClientsPage(1); }, [filterSt, search]);
+
+  const clientsTotalPages = Math.max(1, Math.ceil(filtered.length / CLIENTS_PAGE_SIZE));
+  const paginatedClients = useMemo(() => {
+    const start = (clientsPage - 1) * CLIENTS_PAGE_SIZE;
+    return filtered.slice(start, start + CLIENTS_PAGE_SIZE);
+  }, [filtered, clientsPage]);
 
   // Extract size tag from plan name: "Big x 2" → "BIG", "Small x 1" → "SMALL", "Vegetarian x 1" → "VEG"
   const getPlanSize = (planName) => {
@@ -1553,6 +1581,7 @@ export default function App() {
         startDate:    rawSaved.start_date      || "",
         expiryDate:   rawSaved.expiry_date     || "",
         deliveryTime: rawSaved.delivery_time   || "",
+        deliveryFee:  rawSaved.delivery_fee    ?? null,
         amountPaid:   rawSaved.amount_paid     || 0,
         acqChannel:   rawSaved.acq_channel     || "",
         wechatOpenid: rawSaved.wechat_openid   || "",
@@ -2194,7 +2223,7 @@ export default function App() {
               ):(
                 <div className="tbl-wrap"><table style={{width:"100%"}}>
                   <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Plan</th><th>¥/Wk</th><th>Status</th><th>Expiry</th><th>Renewals</th><th>Paid</th><th>LTV</th><th>Actions</th></tr></thead>
-                  <tbody>{filtered.map(c=>(
+                  <tbody>{paginatedClients.map(c=>(
                     <tr key={c.id}>
                       <td style={{color:"var(--dim)",fontSize:10}}>{c.id}</td>
                       <td style={{color:"#fff",fontWeight:500,whiteSpace:"nowrap"}}>{c.name}</td>
@@ -2219,6 +2248,18 @@ export default function App() {
                   ))}</tbody>
                 </table></div>
               )
+            )}
+            {tab==="clients"&&filtered.length>0&&(
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:12,marginBottom:24}}>
+                <div style={{fontSize:11,color:"var(--muted)"}}>
+                  Showing {(clientsPage-1)*CLIENTS_PAGE_SIZE+1}–{Math.min(clientsPage*CLIENTS_PAGE_SIZE,filtered.length)} of {filtered.length}
+                </div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <button className="btn btn-g btn-sm" disabled={clientsPage<=1} onClick={()=>setClientsPage(p=>p-1)}>&#8592; Prev</button>
+                  <span style={{fontSize:11,color:"var(--muted)"}}>Page {clientsPage} / {clientsTotalPages}</span>
+                  <button className="btn btn-g btn-sm" disabled={clientsPage>=clientsTotalPages} onClick={()=>setClientsPage(p=>p+1)}>Next &#8594;</button>
+                </div>
+              </div>
             )}
 
             {/* ═══ MEALS ══════════════════════════════ */}
@@ -2793,6 +2834,7 @@ export default function App() {
                   <div className="fl"><label>District / Area</label><input className="inp" value={clientForm.district||""} onChange={e=>cfld("district",e.target.value)} placeholder="e.g. Jing'an"/></div>
                   <div className="fl fg-full"><label>Address</label><input className="inp" value={clientForm.address||""} onChange={e=>cfld("address",e.target.value)} placeholder="288 Nanjing Rd, 801B"/></div>
                   <div className="fl fg-full"><label>Building Access</label><input className="inp" value={clientForm.access||""} onChange={e=>cfld("access",e.target.value)} placeholder="e.g. Leave at door, ring doorbell..."/></div>
+                  <div className="fl"><label>Delivery Fee (¥/week)</label><input className="inp" type="number" value={clientForm.deliveryFee ?? ""} onChange={e=>cfld("deliveryFee",e.target.value)} placeholder="e.g. 35"/></div>
                 </div>
               </div>
 
@@ -2837,6 +2879,44 @@ export default function App() {
             <div className="mo-ft">
               <button className="btn btn-g" onClick={()=>setShowClientModal(false)}>Cancel</button>
               <button className="btn btn-r" onClick={saveClient}>{editClientId?"Save Changes":"Add Client"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ APPROVE ORDER MODAL ═══════════════════════ */}
+      {orderToApprove&&(
+        <div className="mo" onClick={e=>{if(e.target===e.currentTarget)setOrderToApprove(null);}}>
+          <div className="mo-box" style={{maxWidth:420}}>
+            <div className="mo-hd">
+              <div className="mo-title">Approve Order</div>
+              <button className="btn btn-g btn-sm" onClick={()=>setOrderToApprove(null)}>✕</button>
+            </div>
+            <div className="mo-body">
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:9,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Client</div>
+                <div style={{color:"#fff",fontWeight:500}}>{orderToApprove.name}</div>
+                <div style={{color:"var(--muted)",fontSize:12,marginTop:2}}>{orderToApprove.district} {orderToApprove.address}</div>
+              </div>
+              <div className="fg">
+                <div className="fl fg-full">
+                  <label>Delivery Fee for this week (¥)</label>
+                  <input
+                    className="inp"
+                    type="number"
+                    autoFocus
+                    value={approveFeeInput}
+                    onChange={e=>setApproveFeeInput(e.target.value)}
+                    placeholder="e.g. 35"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="mo-ft">
+              <button className="btn btn-g" onClick={()=>setOrderToApprove(null)}>Cancel</button>
+              <button className="btn btn-r" disabled={ordersBusyId===orderToApprove.id} onClick={confirmApproveOrder}>
+                {ordersBusyId===orderToApprove.id?"Working…":"Approve"}
+              </button>
             </div>
           </div>
         </div>

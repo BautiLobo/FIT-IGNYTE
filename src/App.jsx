@@ -14,7 +14,19 @@ import {
   getPendingAddressChanges, approveAddressChange, rejectAddressChange,
   getNotifications, sendNotification, deleteNotification,
   getMealWeeklyStats,
+  upsertPushSubscription, removePushSubscription,
 } from "./lib/supabase";
+
+// Debe coincidir con la VAPID_PUBLIC_KEY configurada en los secrets de la
+// Edge Function send-order-push -- esta mitad es publica, va en el cliente.
+const VAPID_PUBLIC_KEY = "BE5guMndtRihydrN8s0ZII2DI1N_yjfoHMyWVNElx9DjsPA9niSIHvNFWlkr8giO-Kg0CZtSrCU34fXzWqKp6TE";
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const BATCHES = ["09:45", "11:00", "12:00", "16:00", "16:45", "17:45"];
@@ -1119,6 +1131,53 @@ export default function App() {
   const [notifBusy,        setNotifBusy]        = useState(false);
   const [notifForm,        setNotifForm]        = useState({recipientMode:"select", statusFilter:"Active", clientIds:[], title:"", message:""});
 
+  // ── Web Push (avisos de "new order" al telefono) ──
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushEnabled,   setPushEnabled]   = useState(false);
+  const [pushBusy,      setPushBusy]      = useState(false);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    setPushSupported(true);
+    navigator.serviceWorker.register("/sw.js").then(async (reg) => {
+      const existing = await reg.pushManager.getSubscription();
+      setPushEnabled(!!existing);
+    }).catch(e => console.error("SW register failed:", e));
+  }, []);
+
+  const enablePush = async () => {
+    setPushBusy(true);
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { alert("Notifications permission was not granted."); return; }
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+      await upsertPushSubscription(sub);
+      setPushEnabled(true);
+    } catch (e) {
+      console.error("enablePush failed:", e);
+      alert("Could not enable notifications on this device.");
+    } finally { setPushBusy(false); }
+  };
+
+  const disablePush = async () => {
+    setPushBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await removePushSubscription(sub.endpoint);
+        await sub.unsubscribe();
+      }
+      setPushEnabled(false);
+    } catch (e) {
+      console.error("disablePush failed:", e);
+    } finally { setPushBusy(false); }
+  };
+
   const refreshOrders = async () => {
     const [ords, rejected, addrs] = await Promise.all([getPendingOrders(), getRejectedOrders(), getPendingAddressChanges()]);
     setPendingOrders(ords || []);
@@ -2106,6 +2165,18 @@ export default function App() {
 
             {/* ═══ DASHBOARD ══════════════════════════ */}
             {tab==="dashboard"&&<>
+              {pushSupported&&!pushEnabled&&(
+                <div className="alert-bar" style={{background:"#0a1020",borderColor:"#1e3a5f",color:"#93c5fd",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+                  <span>🔔 Get notified on this phone when a new order comes in.</span>
+                  <button className="btn btn-r btn-sm" disabled={pushBusy} onClick={enablePush}>{pushBusy?"Working…":"Enable"}</button>
+                </div>
+              )}
+              {pushSupported&&pushEnabled&&(
+                <div className="alert-bar" style={{background:"#0a1f14",borderColor:"#1e5f3a",color:"#86efac",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+                  <span>🔔 Order notifications are on for this device.</span>
+                  <button className="btn btn-g btn-sm" disabled={pushBusy} onClick={disablePush}>{pushBusy?"Working…":"Disable"}</button>
+                </div>
+              )}
               {(overdue.length||unpaid.length)?<div className="alert-bar">⚠️&nbsp;
                 {overdue.length>0&&<strong>{overdue.length} overdue: {overdue.map(c=>c.name.split(" ")[0]).join(", ")}</strong>}
                 {overdue.length>0&&unpaid.length>0&&<span style={{margin:"0 8px"}}>·</span>}

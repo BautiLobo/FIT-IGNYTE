@@ -500,6 +500,23 @@ export async function sendNotification(clientId, title, message) {
   await pushNotify(clientId, "FIT IGNYTE", title);
 }
 
+// ── WEB PUSH (avisos de "new order" al telefono del admin) ─────
+export async function upsertPushSubscription(sub) {
+  const json = sub.toJSON ? sub.toJSON() : sub;
+  check(await supabase.from("push_subscriptions").upsert({
+    endpoint: json.endpoint,
+    p256dh:   json.keys.p256dh,
+    auth:     json.keys.auth,
+  }, { onConflict: "endpoint" }), "upsertPushSubscription");
+}
+export async function removePushSubscription(endpoint) {
+  check(await supabase.from("push_subscriptions").delete().eq("endpoint", endpoint), "removePushSubscription");
+}
+export async function getPushSubscriptionCount() {
+  const { count } = await supabase.from("push_subscriptions").select("*", { count: "exact", head: true });
+  return count || 0;
+}
+
 // ── WECHAT PUSH ───────────────────────────────────────────────
 // Best-effort: never throws, never blocks the calling flow.
 export async function pushNotify(clientId, writer, content) {

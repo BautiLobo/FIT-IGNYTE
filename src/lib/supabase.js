@@ -347,6 +347,16 @@ export async function getPendingOrders() {
 export async function getRejectedOrders() {
   return check(await supabase.from("new_orders").select("*").eq("status","rejected").order("created_at", {ascending:false}), "getRejectedOrders");
 }
+export async function getApprovedOrders() {
+  return check(await supabase.from("new_orders").select("*").eq("status","approved").order("created_at", {ascending:false}), "getApprovedOrders");
+}
+// Solo el admin autenticado puede borrar (RLS: delete_auth_new_orders exige
+// is_admin()) -- a diferencia de delete-order (la Edge Function que usa el
+// mini-program), esto no restringe por status: el admin puede borrar un
+// pedido en cualquier estado desde el historial si así lo decide.
+export async function deleteNewOrder(id) {
+  check(await supabase.from("new_orders").delete().eq("id", id), "deleteNewOrder");
+}
 export async function reApproveOrder(order, deliveryFee) {
   await supabase.from("new_orders").update({ status: "pending", note: "" }).eq("id", order.id);
   return approveOrder({...order, status:"pending", note:""}, deliveryFee);

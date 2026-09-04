@@ -8,7 +8,7 @@ import {
   getMealSelections, upsertMealSelection,
   getChecklist, toggleChecklistItem,
   signIn, signOut, getSession, onAuthChange,
-  getPendingOrders, getRejectedOrders, approveOrder, rejectOrder, reApproveOrder,
+  getPendingOrders, getRejectedOrders, getApprovedOrders, approveOrder, rejectOrder, reApproveOrder, deleteNewOrder,
   getCoaches, createCoach, deleteCoach,
   incrementRenewalCount,
   getPendingAddressChanges, approveAddressChange, rejectAddressChange,
@@ -1118,9 +1118,11 @@ export default function App() {
   const CLIENTS_PAGE_SIZE = 20;
 
   const [pendingOrders,      setPendingOrders]      = useState([]);
+  const [approvedOrders,     setApprovedOrders]     = useState([]);
   const [rejectedOrders,     setRejectedOrders]     = useState([]);
   const [pendingAddrChanges, setPendingAddrChanges]  = useState([]);
   const [ordersBusyId,       setOrdersBusyId]        = useState(null);
+  const [orderDeleteBusyId,  setOrderDeleteBusyId]   = useState(null);
   const [orderToApprove,     setOrderToApprove]      = useState(null);
   const [approveFeeInput,    setApproveFeeInput]     = useState("");
   const [coaches,            setCoaches]            = useState([]);
@@ -1179,8 +1181,9 @@ export default function App() {
   };
 
   const refreshOrders = async () => {
-    const [ords, rejected, addrs] = await Promise.all([getPendingOrders(), getRejectedOrders(), getPendingAddressChanges()]);
+    const [ords, approved, rejected, addrs] = await Promise.all([getPendingOrders(), getApprovedOrders(), getRejectedOrders(), getPendingAddressChanges()]);
     setPendingOrders(ords || []);
+    setApprovedOrders(approved || []);
     setRejectedOrders(rejected || []);
     setPendingAddrChanges(addrs || []);
   };
@@ -1245,6 +1248,34 @@ export default function App() {
   const handleReApproveOrder = (order) => {
     setApproveFeeInput(order.delivery_fee != null ? String(order.delivery_fee) : "");
     setOrderToApprove(order);
+  };
+  // Borrar un pedido del historial (Approved/Rejected) es irreversible y no
+  // deshace nada más -- si el pedido ya fue aprobado, el cliente que se creó
+  // en `clients` NO se toca, así que se pide confirmación varias veces (y con
+  // texto distinto según el estado) para que no sea un tap accidental.
+  const handleDeleteOrder = async (order) => {
+    if (!window.confirm(`¿Borrar el pedido de "${order.name}" del historial?\n\nEsta acción no se puede deshacer.`)) return;
+    if (order.status === "approved") {
+      if (!window.confirm(
+        `Este pedido ya fue APROBADO.\n\n` +
+        `Borrarlo NO borra al cliente "${order.name}" que ya se creó en Clients, ni afecta su pago -- ` +
+        `solo elimina el registro del pedido/historial.\n\n` +
+        `¿Seguro que querés continuar?`
+      )) return;
+    }
+    if (!window.confirm(`Última confirmación: se va a borrar PERMANENTEMENTE el pedido de "${order.name}". ¿Continuar?`)) return;
+
+    setOrderDeleteBusyId(order.id);
+    try {
+      await deleteNewOrder(order.id);
+      await refreshOrders();
+      flash();
+    } catch (e) {
+      console.error(e);
+      alert(`No se pudo borrar el pedido: ${e.message || e}`);
+    } finally {
+      setOrderDeleteBusyId(null);
+    }
   };
   const confirmApproveOrder = async () => {
     const order = orderToApprove;
@@ -1388,8 +1419,21 @@ export default function App() {
   const revenue  = useMemo(() => active.reduce((s,c)=>s+(c.planObj?.price||0),0), [active,plans]);
   const totalMl  = useMemo(() => active.reduce((s,c)=>s+(c.planObj?.meals||0),0)*5, [active,plans]);
 
+  // Teléfonos de pedidos aprobados que siguen en Orders → Approved -- ese
+  // status no se limpia solo cuando el cliente paga (nada lo actualiza), así
+  // que NO alcanza con mirar new_orders.status a secas: hay que combinarlo
+  // con clients.paid, que sí se actualiza en cuanto se confirma el pago
+  // (ver waitForPaymentConfirmation en el mini-program). Cruzando ambos: un
+  // cliente recién aprobado y sin pagar todavía queda afuera de Clients acá
+  // (sigue visible en Orders → Approved mientras tanto); en cuanto paga,
+  // c.paid manda y vuelve a aparecer sin importar qué pase con el pedido.
+  const approvedOrderPhones = useMemo(
+    () => new Set((approvedOrders||[]).map(o=>o.phone).filter(Boolean)),
+    [approvedOrders]
+  );
+
   const filtered = useMemo(() => {
-    let l = clients;
+    let l = clients.filter(c => c.paid || !c.phone || !approvedOrderPhones.has(c.phone));
     if (filterSt!=="all") l=l.filter(c=>getRealStatus(c.startDate,c.expiryDate)===filterSt);
     if (search) l=l.filter(c=>
       c.name.toLowerCase().includes(search.toLowerCase())||
@@ -1397,7 +1441,7 @@ export default function App() {
       (c.planName||"").toLowerCase().includes(search.toLowerCase())
     );
     return l;
-  }, [clients,filterSt,search]);
+  }, [clients,filterSt,search,approvedOrderPhones]);
 
   // Volver a la página 1 cada vez que cambia el filtro/búsqueda -- si no,
   // se puede quedar mostrando una página vacía de un filtro anterior.
@@ -2293,7 +2337,7 @@ export default function App() {
                 </div>
               ):(
                 <div className="tbl-wrap"><table style={{width:"100%"}}>
-                  <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Plan</th><th>¥/Wk</th><th>Status</th><th>Expiry</th><th>Renewals</th><th>Paid</th><th>LTV</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Plan</th><th>¥/Wk</th><th>Delivery Fee</th><th>Status</th><th>Expiry</th><th>Renewals</th><th>Paid</th><th>LTV</th><th>Actions</th></tr></thead>
                   <tbody>{paginatedClients.map(c=>(
                     <tr key={c.id}>
                       <td style={{color:"var(--dim)",fontSize:10}}>{c.id}</td>
@@ -2301,6 +2345,7 @@ export default function App() {
                       <td style={{color:"var(--muted)"}}>{c.phone||"—"}</td>
                       <td><PlanBadge planName={c.planName} plans={plans}/></td>
                       <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
+                      <td style={{color:"var(--muted)"}}>¥{c.deliveryFee ?? 35}</td>
                       <td>{(()=>{
                         const rs = getRealStatus(c.startDate, c.expiryDate);
                         if (rs === "Active")   return <span className="bx bx-g">Active</span>;
@@ -2614,6 +2659,33 @@ export default function App() {
                 </table></div>
               )}
 
+              <div className="sec-title">Approved Orders</div>
+              {approvedOrders.length===0?(
+                <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No approved orders</div></div>
+              ):(
+                <div className="tbl-wrap" style={{marginBottom:24}}><table>
+                  <thead><tr><th>Client</th><th>Contact</th><th>Address</th><th>Plan</th><th>Goal / Allergies</th><th>Start Date</th><th>Submitted</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {approvedOrders.map(o=>(
+                      <tr key={o.id}>
+                        <td style={{color:"#fff",fontWeight:500}}>{o.name}</td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{o.phone||"—"}</td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{o.district} {o.address}</td>
+                        <td><span className="bx bx-b">{plans.find(p=>p.id===o.plan_id)?.name||o.plan_id||"—"}</span></td>
+                        <td style={{color:"var(--muted)",fontSize:11}}>{o.goal||"—"} / {o.allergies||"—"}</td>
+                        <td style={{color:"var(--green)",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{o.start_date?new Date(o.start_date).toLocaleDateString():"—"}</td>
+                        <td style={{color:"var(--dim)",fontSize:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</td>
+                        <td>
+                          <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} disabled={orderDeleteBusyId===o.id} onClick={()=>handleDeleteOrder(o)}>
+                            {orderDeleteBusyId===o.id?"Borrando…":"Delete"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              )}
+
               <div className="sec-title">Rejected Orders</div>
               {rejectedOrders.length===0?(
                 <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No rejected orders</div></div>
@@ -2632,9 +2704,14 @@ export default function App() {
                         <td style={{color:"var(--dim)",fontSize:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</td>
                         <td style={{color:"#fcd34d",fontSize:10}}>{o.note||"—"}</td>
                         <td>
-                          <button className="btn btn-r btn-sm" disabled={ordersBusyId===o.id} onClick={()=>handleReApproveOrder(o)}>
-                            {ordersBusyId===o.id?"Working…":"Approve"}
-                          </button>
+                          <div style={{display:"flex",gap:6}}>
+                            <button className="btn btn-r btn-sm" disabled={ordersBusyId===o.id} onClick={()=>handleReApproveOrder(o)}>
+                              {ordersBusyId===o.id?"Working…":"Approve"}
+                            </button>
+                            <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} disabled={orderDeleteBusyId===o.id} onClick={()=>handleDeleteOrder(o)}>
+                              {orderDeleteBusyId===o.id?"Borrando…":"Delete"}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

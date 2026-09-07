@@ -2395,7 +2395,13 @@ export default function App() {
                 // Kitchen Prep and Delivery Sheet stay strictly Active-only since they're
                 // execution screens for "what happens today/this specific day".
                 const planningClients = clients.filter(c => getRealStatus(c.startDate, c.expiryDate) !== "Inactive");
-                const visibleClients  = planningClients.filter(c => clientActiveOnDay(c, mealDay));
+                const earliestTime = c => (meals[c.id]?.[mealDay]||[]).reduce((min,s) => {
+                  const t = s.time||"";
+                  return t && (!min || t<min) ? t : min;
+                }, "");
+                const visibleClients  = planningClients
+                  .filter(c => clientActiveOnDay(c, mealDay))
+                  .sort((a,b) => (earliestTime(a)||"99:99").localeCompare(earliestTime(b)||"99:99"));
                 if (planningClients.length === 0) return (
                   <div className="empty-state"><div className="empty-state-icon">🍱</div><div className="empty-state-title">No active or upcoming clients</div><div className="empty-state-sub">Add clients to manage their meals</div></div>
                 );

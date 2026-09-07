@@ -217,6 +217,7 @@ export async function getMealSelections() {
       slot:         row.slot,
       mealIds:      row.meals_json || [],
       deliveryTime: row.delivery_time || "",
+      cookTime:     row.cook_time || "",
       snackId:      row.snack_id || "",
       snack:        row.snack?.name || "",
       snackObj:     row.snack || null,
@@ -229,13 +230,14 @@ export async function getMealSelections() {
   return out;
 }
 
-export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, snackId, note, sauceIds }) {
+export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, cookTime, snackId, note, sauceIds }) {
   check(await supabase.from("meal_selections").upsert({
     client_id:     clientId,
     day,
     slot:          slot || 1,
     meals_json:    mealIds || [],
     delivery_time: deliveryTime || "",
+    cook_time:     cookTime || "",
     snack_id:      snackId || null,
     note:          note || "",
     sauce_ids:     sauceIds || [],

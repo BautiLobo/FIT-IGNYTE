@@ -1367,6 +1367,7 @@ export default function App() {
               id:     String(s.id),
               slot:   s.slot,
               time:   s.deliveryTime || "",
+              cookTime: s.cookTime || "",
               meals:  s.mealIds || [],   // array of meal IDs
               snack:  s.snack || "",
               sauceIds: s.sauceIds || [],
@@ -1574,13 +1575,13 @@ export default function App() {
   const addSlot = async (clientId, day) => {
     const existingSlots = meals[clientId]?.[day] || [];
     const nextSlot = existingSlots.length + 1;
-    const newSlot = { id: uid(), slot: nextSlot, time: "", meals: [], snack: "", snackId: "", sauceIds: [], note: "" };
+    const newSlot = { id: uid(), slot: nextSlot, time: "", cookTime: "", meals: [], snack: "", snackId: "", sauceIds: [], note: "" };
     setMeals(p => ({
       ...p,
       [clientId]: { ...p[clientId], [day]: [...(p[clientId]?.[day]||[]), newSlot] }
     }));
     try {
-      await upsertMealSelection(clientId, day, nextSlot, { mealIds:[], deliveryTime:"", snackId:null, note:"" });
+      await upsertMealSelection(clientId, day, nextSlot, { mealIds:[], deliveryTime:"", cookTime:"", snackId:null, note:"" });
     } catch(e){ console.error(e); }
   };
 
@@ -1609,6 +1610,7 @@ export default function App() {
       await upsertMealSelection(clientId, day, slot.slot||1, {
         mealIds:      slot.meals    || [],
         deliveryTime: slot.time     || "",
+        cookTime:     slot.cookTime || "",
         snackId:      slot.snackId  || null,
         note:         slot.note     || "",
         sauceIds:     slot.sauceIds || [],
@@ -1631,6 +1633,7 @@ export default function App() {
       await upsertMealSelection(clientId, day, slot.slot||1, {
         mealIds:      slot.meals    || [],
         deliveryTime: slot.time     || "",
+        cookTime:     slot.cookTime || "",
         snackId:      slot.snackId  || null,
         note:         slot.note     || "",
         sauceIds:     slot.sauceIds || [],
@@ -1870,7 +1873,7 @@ export default function App() {
       slots.map(({client:c, slot}, i) => ({
         num: i+1,
         time,
-        cookTime: cookingTimeFor(time),
+        cookTime: slot.cookTime || cookingTimeFor(time),
         name: c.name,
         plan: c.planName,
         address: c.address || "TBC",
@@ -2400,7 +2403,7 @@ export default function App() {
                   <div className="empty-state"><div className="empty-state-icon">📅</div><div className="empty-state-title">No clients scheduled for {mealDay}</div><div className="empty-state-sub">All clients either haven't started yet or have expired for this day</div></div>
                 );
                 return visibleClients.map(c => {
-                  const slots = meals[c.id]?.[mealDay] || [];
+                  const slots = [...(meals[c.id]?.[mealDay] || [])].sort((a,b) => (a.time||"99:99").localeCompare(b.time||"99:99"));
                   return (
                     <div className="client-card" key={c.id}>
                       <div className="client-card-hd">
@@ -2429,6 +2432,12 @@ export default function App() {
                             <div className="slot-field slot-field-sm">
                               <label>Delivery Time</label>
                               <input className="msel" type="time" value={slot.time||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"time",e.target.value)}/>
+                            </div>
+
+                            {/* Cooking time — manual override shown on the Delivery Sheet */}
+                            <div className="slot-field slot-field-sm">
+                              <label>Cooking Time</label>
+                              <input className="msel" type="time" value={slot.cookTime||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"cookTime",e.target.value)}/>
                             </div>
 
                             {/* Meals — one select per meal, + add more */}

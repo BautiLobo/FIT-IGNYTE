@@ -1875,6 +1875,7 @@ export default function App() {
         time,
         cookTime: slot.cookTime || cookingTimeFor(time),
         name: c.name,
+        phone: c.phone || "",
         plan: c.planName,
         address: c.address || "TBC",
         access: c.access || "—",
@@ -1910,17 +1911,17 @@ export default function App() {
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     col.cn  { width: 3%; }
     col.ct  { width: 6%; }
-    col.cct { width: 6%; }
-    col.cc  { width: 9%; }
+    col.cct { width: 8%; }
+    col.cc  { width: 13%; }
     col.ca  { width: 16%; }
-    col.cm  { width: 22%; }
+    col.cm  { width: 26%; }
     col.cs  { width: 10%; }
-    col.cno { width: 20%; }
+    col.cno { width: 18%; }
     col.ccut{ width: 6%; }
     col.ck  { width: 4%; }
 
     thead tr { background: #1a1a1a; }
-    th { color: #fff; padding: 6px 7px; text-align: left; font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; white-space: nowrap; }
+    th { color: #fff; padding: 6px 5px; text-align: left; font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; white-space: normal; line-height: 1.25; }
 
     tbody tr:nth-child(odd)  td { background: #ffffff; }
     tbody tr:nth-child(even) td { background: #f0f2f5; }
@@ -1933,9 +1934,10 @@ export default function App() {
     .ct-time { font-weight: 800; font-size: 12px; color: #e8342a; white-space: nowrap; vertical-align: middle; }
     .cct-time { font-weight: 800; font-size: 12px; color: #b45309; white-space: nowrap; vertical-align: middle; }
     .cc-name { font-weight: 800; font-size: 11.5px; }
+    .cc-phone { font-size: 9.5px; color: #444; margin-top: 2px; font-weight: 600; }
     .cc-plan { font-size: 9px; color: #777; margin-top: 2px; }
     .ca-addr { font-size: 10.5px; font-weight: 600; }
-    .ca-acc  { font-size: 9.5px; color: #999; margin-top: 3px; font-style: italic; }
+    .ca-acc  { font-size: 9.5px; color: #444; margin-top: 3px; font-style: italic; font-weight: 600; }
     .meal-row { display: flex; align-items: baseline; gap: 4px; margin-bottom: 3px; }
     .meal-row:last-child { margin-bottom: 0; }
     .meal-bullet { color: #e8342a; font-weight: 900; font-size: 11px; line-height: 1; flex-shrink: 0; }
@@ -1997,7 +1999,7 @@ export default function App() {
           "<td class=\"cn-num\">" + (i+1) + "</td>" +
           "<td class=\"ct-time\">" + r.time + "</td>" +
           "<td class=\"cct-time\">" + r.cookTime + "</td>" +
-          "<td><div class=\"cc-name\">" + r.name + "</div><div class=\"cc-plan\">" + r.plan + "</div></td>" +
+          "<td><div class=\"cc-name\">" + r.name + "</div>" + (r.phone ? "<div class=\"cc-phone\">" + r.phone + "</div>" : "") + "<div class=\"cc-plan\">" + r.plan + "</div></td>" +
           "<td><div class=\"ca-addr\">" + r.address + "</div>" + accessHtml + "</td>" +
           "<td>" + mealsHtml + "</td>" +
           "<td>" + notesCell + "</td>" +
@@ -2658,7 +2660,7 @@ export default function App() {
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.district} {o.address}</td>
                         <td><span className="bx bx-b">{plans.find(p=>p.id===o.plan_id)?.name||o.plan_id||"—"}</span></td>
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.goal||"—"} / {o.allergies||"—"}</td>
-                        <td style={{color:"var(--green)",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{o.start_date?new Date(o.start_date).toLocaleDateString():"—"}</td>
+                        <td style={{color:"var(--green)",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{o.start_date?fmtDate(o.start_date):"—"}</td>
                         <td style={{color:"var(--dim)",fontSize:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</td>
                         <td>
                           <div style={{display:"flex",gap:6}}>
@@ -2688,7 +2690,7 @@ export default function App() {
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.district} {o.address}</td>
                         <td><span className="bx bx-b">{plans.find(p=>p.id===o.plan_id)?.name||o.plan_id||"—"}</span></td>
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.goal||"—"} / {o.allergies||"—"}</td>
-                        <td style={{color:"var(--green)",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{o.start_date?new Date(o.start_date).toLocaleDateString():"—"}</td>
+                        <td style={{color:"var(--green)",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{o.start_date?fmtDate(o.start_date):"—"}</td>
                         <td style={{color:"var(--dim)",fontSize:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</td>
                         <td>
                           <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} disabled={orderDeleteBusyId===o.id} onClick={()=>handleDeleteOrder(o)}>
@@ -2715,7 +2717,7 @@ export default function App() {
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.district} {o.address}</td>
                         <td><span className="bx bx-b">{plans.find(p=>p.id===o.plan_id)?.name||o.plan_id||"—"}</span></td>
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.goal||"—"} / {o.allergies||"—"}</td>
-                        <td style={{color:"var(--green)",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{o.start_date?new Date(o.start_date).toLocaleDateString():"—"}</td>
+                        <td style={{color:"var(--green)",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{o.start_date?fmtDate(o.start_date):"—"}</td>
                         <td style={{color:"var(--dim)",fontSize:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</td>
                         <td style={{color:"#fcd34d",fontSize:10}}>{o.note||"—"}</td>
                         <td>

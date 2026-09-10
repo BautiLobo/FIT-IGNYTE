@@ -3485,13 +3485,20 @@ export default function App() {
                 // (Max needs to load meals ahead of time for clients who haven't started yet).
                 // Kitchen Prep and Delivery Sheet stay strictly Active-only since they're
                 // execution screens for "what happens today/this specific day".
-                const planningClients = clients.filter(c => getRealStatus(c.startDate, c.expiryDate) !== "Inactive");
+                // Un cliente con renovación pendiente sigue siendo "de planificación"
+                // aunque su ciclo actual ya haya vencido -- y para el día puntual que se
+                // está mirando, cuenta como visible si su ciclo actual lo cubre O si ya
+                // tiene elegidas comidas para el ciclo nuevo ese día (clientActiveOnDay
+                // por sí solo no lo sabe, porque solo mira start/expiry del ciclo viejo).
+                const hasAnyPending = c => Object.keys(pendingMeals[c.id] || {}).length > 0;
+                const hasPendingForDay = c => (pendingMeals[c.id]?.[mealDay] || []).length > 0;
+                const planningClients = clients.filter(c => getRealStatus(c.startDate, c.expiryDate) !== "Inactive" || hasAnyPending(c));
                 const earliestTime = c => (meals[c.id]?.[mealDay]||[]).reduce((min,s) => {
                   const t = s.time||"";
                   return t && (!min || t<min) ? t : min;
                 }, "");
                 const visibleClients  = planningClients
-                  .filter(c => clientActiveOnDay(c, mealDay))
+                  .filter(c => clientActiveOnDay(c, mealDay) || hasPendingForDay(c))
                   .sort((a,b) => (earliestTime(a)||"99:99").localeCompare(earliestTime(b)||"99:99"));
                 if (planningClients.length === 0) return (
                   <div className="empty-state"><div className="empty-state-icon">🍱</div><div className="empty-state-title">No active or upcoming clients</div><div className="empty-state-sub">Add clients to manage their meals</div></div>

@@ -5,7 +5,7 @@ import {
   getTiers, upsertTier, deleteTier as dbDeleteTier,
   getClients, upsertClient, deleteClient as dbDeleteClient,
   getMenu, updateMenuDay, getCurrentWeekIndex, getMenuRotationOrder, setMenuRotationOrder,
-  getMealSelections, upsertMealSelection,
+  getMealSelections, upsertMealSelection, getPendingMealSelections,
   getChecklist, toggleChecklistItem,
   signIn, signOut, getSession, onAuthChange,
   getPendingOrders, getRejectedOrders, getApprovedOrders, approveOrder, rejectOrder, reApproveOrder, deleteNewOrder,
@@ -15,6 +15,16 @@ import {
   getNotifications, sendNotification, deleteNotification,
   getMealWeeklyStats,
   upsertPushSubscription, removePushSubscription,
+  getIngredients, upsertIngredient, deleteIngredient as dbDeleteIngredient,
+  getMealIngredients, upsertMealIngredient, deleteMealIngredient as dbDeleteMealIngredient,
+  uploadIngredientPhoto,
+  getPaidPayments,
+  getEmployees, upsertEmployee, deleteEmployee as dbDeleteEmployee,
+  getOtherExpenses, upsertOtherExpense, deleteOtherExpense as dbDeleteOtherExpense,
+  getAccountingSnapshots, upsertAccountingSnapshot,
+  getOneTimeExpenses, upsertOneTimeExpense, deleteOneTimeExpense as dbDeleteOneTimeExpense,
+  updateCoachCommission,
+  upsertSetting,
 } from "./lib/supabase";
 
 // Debe coincidir con la VAPID_PUBLIC_KEY configurada en los secrets de la
@@ -29,13 +39,24 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-const BATCHES = ["09:45", "11:00", "12:00", "16:00", "16:45", "17:45"];
+const DEFAULT_BATCHES = ["09:45", "11:00", "12:00", "16:00", "16:45", "17:45"];
 
-function getBatch(time) {
-  if (!time) return BATCHES[BATCHES.length - 1];
+// Sauces se miden en ml/L (son líquidos) -- todo lo demás en g/kg. La cantidad
+// numérica guardada en meal_ingredients.quantity_grams no cambia de unidad,
+// solo cómo se muestra según ingredient.category.
+function fmtQty(qty, category) {
+  const isVolume = category === "sauce";
+  const unit = isVolume ? "ml" : "g";
+  const bigUnit = isVolume ? "L" : "kg";
+  return qty >= 1000 ? `${(qty / 1000).toFixed(2)} ${bigUnit}` : `${qty} ${unit}`;
+}
+
+function getBatch(time, batchList) {
+  const list = batchList && batchList.length ? batchList : DEFAULT_BATCHES;
+  if (!time) return list[list.length - 1];
   // Find the last batch that is <= delivery time
-  let assigned = BATCHES[0];
-  for (const b of BATCHES) {
+  let assigned = list[0];
+  for (const b of list) {
     if (time >= b) assigned = b;
     else break;
   }
@@ -531,6 +552,1032 @@ function MealStatsTab({ plans }) {
         </table>
       </div>
     )}
+  </>;
+}
+
+function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealIngredients, mealLibrary, deliveryClients, meals, flash }) {
+  const [view, setView] = useState("ingredients"); // ingredients | assign | shopping
+
+  const ingredientById = useMemo(() => {
+    const m = {};
+    ingredients.forEach(i => { m[i.id] = i; });
+    return m;
+  }, [ingredients]);
+
+  const costForGrams = (ingredientId, grams) => {
+    const ing = ingredientById[ingredientId];
+    if (!ing || ing.cost_per_kg == null) return null;
+    return (Number(grams) || 0) / 1000 * Number(ing.cost_per_kg);
+  };
+
+  // ═══ INGREDIENTS LIST ═══
+  const [search, setSearch] = useState("");
+  const [newIng, setNewIng] = useState({ name: "", category: "protein", cost_per_kg: "" });
+  const [dirtyCosts, setDirtyCosts] = useState({}); // ingredientId -> pending ¥/kg string
+  const [savingCosts, setSavingCosts] = useState(false);
+
+  const filteredIngredients = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return ingredients
+      .filter(i => !q || i.name.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [ingredients, search]);
+
+  const addIngredient = async () => {
+    if (!newIng.name.trim()) { alert("El ingrediente necesita un nombre"); return; }
+    try {
+      const saved = await upsertIngredient({
+        name: newIng.name.trim(),
+        category: newIng.category || null,
+        cost_per_kg: newIng.cost_per_kg === "" ? null : Number(newIng.cost_per_kg),
+      });
+      setIngredients(p => [...p, saved]);
+      setNewIng({ name: "", category: "protein", cost_per_kg: "" });
+      flash && flash();
+    } catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
+  };
+
+  const saveDirtyCosts = async () => {
+    const entries = Object.entries(dirtyCosts);
+    if (entries.length === 0) return;
+    setSavingCosts(true);
+    try {
+      for (const [id, value] of entries) {
+        const ing = ingredients.find(i => i.id === id);
+        if (!ing) continue;
+        const cost_per_kg = value === "" ? null : Number(value);
+        await upsertIngredient({ id, name: ing.name, category: ing.category, cost_per_kg });
+        setIngredients(p => p.map(i => i.id === id ? { ...i, cost_per_kg } : i));
+      }
+      setDirtyCosts({});
+      flash && flash();
+    } catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
+    setSavingCosts(false);
+  };
+
+  const photoInputRef = useRef(null);
+  const [photoTargetId, setPhotoTargetId] = useState(null);
+  const [uploadingPhotoId, setUploadingPhotoId] = useState(null);
+
+  const triggerPhotoUpload = (ing) => {
+    setPhotoTargetId(ing.id);
+    photoInputRef.current && photoInputRef.current.click();
+  };
+
+  const onPhotoFileChosen = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    const ingId = photoTargetId;
+    e.target.value = "";
+    if (!file || !ingId) return;
+    setUploadingPhotoId(ingId);
+    try {
+      const url = await uploadIngredientPhoto(file, ingId);
+      const ing = ingredients.find(i => i.id === ingId);
+      await upsertIngredient({ id: ingId, name: ing.name, category: ing.category, cost_per_kg: ing.cost_per_kg, photo_url: url });
+      setIngredients(p => p.map(i => i.id === ingId ? { ...i, photo_url: url } : i));
+    } catch (e) { alert(`No se pudo subir la foto: ${e.message || e}`); }
+    setUploadingPhotoId(null);
+  };
+
+  const removeIngredient = async (ing) => {
+    if (!window.confirm(`¿Borrar "${ing.name}"? También se borran sus asignaciones a platos.`)) return;
+    const prev = ingredients;
+    setIngredients(p => p.filter(i => i.id !== ing.id));
+    try { await dbDeleteIngredient(ing.id); setMealIngredients(p => p.filter(mi => mi.ingredient_id !== ing.id)); }
+    catch (e) { setIngredients(prev); alert(`No se pudo borrar: ${e.message || e}`); }
+  };
+
+  // ═══ ASSIGN TO MEALS ═══
+  const [assignTier, setAssignTier] = useState("");
+  const [selectedMealId, setSelectedMealId] = useState("");
+  const [addIngId, setAddIngId] = useState("");
+  const [addGrams, setAddGrams] = useState("");
+
+  const mealTiers = useMemo(() => {
+    const seen = new Set(); const out = [];
+    mealLibrary.filter(m => m.item_type === "meal").forEach(m => {
+      const t = m.tier || "";
+      if (!t || seen.has(t.toLowerCase())) return;
+      seen.add(t.toLowerCase()); out.push(t);
+    });
+    return out;
+  }, [mealLibrary]);
+  const activeAssignTier = assignTier || mealTiers[0] || "";
+
+  const mealsForTier = useMemo(() => {
+    return mealLibrary
+      .filter(m => m.item_type === "meal" && (m.tier || "").toLowerCase() === activeAssignTier.toLowerCase())
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [mealLibrary, activeAssignTier]);
+
+  const selectedMeal = mealLibrary.find(m => m.id === selectedMealId) || null;
+  const selectedMealIngredients = useMemo(() => {
+    if (!selectedMealId) return [];
+    return mealIngredients
+      .filter(mi => mi.meal_id === selectedMealId)
+      .map(mi => ({ ...mi, ingredient: ingredientById[mi.ingredient_id] }))
+      .filter(mi => mi.ingredient)
+      .sort((a, b) => a.ingredient.name.localeCompare(b.ingredient.name));
+  }, [mealIngredients, selectedMealId, ingredientById]);
+
+  const [dirtyGrams, setDirtyGrams] = useState({}); // mealIngredientId -> pending qty string
+  const [savingGrams, setSavingGrams] = useState(false);
+
+  const effectiveGrams = (mi) => dirtyGrams[mi.id] !== undefined ? Number(dirtyGrams[mi.id]) || 0 : mi.quantity_grams;
+
+  const selectedMealCost = useMemo(() => {
+    let total = 0, missing = false;
+    selectedMealIngredients.forEach(mi => {
+      const c = costForGrams(mi.ingredient_id, effectiveGrams(mi));
+      if (c == null) missing = true; else total += c;
+    });
+    return { total, missing };
+  }, [selectedMealIngredients, ingredientById, dirtyGrams]);
+
+  const addMealIngredient = async () => {
+    if (!selectedMealId || !addIngId || !addGrams) return;
+    try {
+      const saved = await upsertMealIngredient({ meal_id: selectedMealId, ingredient_id: addIngId, quantity_grams: Number(addGrams) });
+      setMealIngredients(p => {
+        const idx = p.findIndex(mi => mi.meal_id === selectedMealId && mi.ingredient_id === addIngId);
+        return idx >= 0 ? p.map((mi, i) => i === idx ? saved : mi) : [...p, saved];
+      });
+      setAddIngId(""); setAddGrams("");
+    } catch (e) { alert(`No se pudo asignar: ${e.message || e}`); }
+  };
+
+  const saveDirtyGrams = async () => {
+    const entries = Object.entries(dirtyGrams);
+    if (entries.length === 0) return;
+    setSavingGrams(true);
+    try {
+      for (const [id, value] of entries) {
+        const mi = mealIngredients.find(x => x.id === id);
+        if (!mi) continue;
+        const quantity_grams = Number(value) || 0;
+        await upsertMealIngredient({ id: mi.id, meal_id: mi.meal_id, ingredient_id: mi.ingredient_id, quantity_grams });
+        setMealIngredients(p => p.map(x => x.id === id ? { ...x, quantity_grams } : x));
+      }
+      setDirtyGrams({});
+    } catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
+    setSavingGrams(false);
+  };
+
+  const removeMealIngredient = async (mi) => {
+    const prev = mealIngredients;
+    setMealIngredients(p => p.filter(x => x.id !== mi.id));
+    try { await dbDeleteMealIngredient(mi.id); }
+    catch (e) { setMealIngredients(prev); alert(`No se pudo quitar: ${e.message || e}`); }
+  };
+
+  // ═══ SHOPPING LIST ═══
+  const [shopDay, setShopDay] = useState("Monday");
+  const SHOP_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+  const mealIngredientsByMeal = useMemo(() => {
+    const m = {};
+    mealIngredients.forEach(mi => { (m[mi.meal_id] = m[mi.meal_id] || []).push(mi); });
+    return m;
+  }, [mealIngredients]);
+
+  const shoppingList = useMemo(() => {
+    const totals = {}; // ingredientId -> grams
+    const unassignedMeals = new Set();
+    deliveryClients.filter(c => clientActiveOnDay(c, shopDay)).forEach(c => {
+      const slots = meals[c.id]?.[shopDay] || [];
+      slots.forEach(slot => {
+        (slot.meals || []).filter(id => id && id.trim() && id !== "—").forEach(mealId => {
+          const rows = mealIngredientsByMeal[mealId];
+          if (!rows || rows.length === 0) {
+            const m = mealLibrary.find(x => x.id === mealId);
+            unassignedMeals.add(m ? m.name : mealId);
+            return;
+          }
+          rows.forEach(mi => { totals[mi.ingredient_id] = (totals[mi.ingredient_id] || 0) + Number(mi.quantity_grams); });
+        });
+      });
+    });
+    const rows = Object.entries(totals).map(([ingredientId, grams]) => ({
+      ingredient: ingredientById[ingredientId],
+      ingredientId, grams,
+      cost: costForGrams(ingredientId, grams),
+    })).filter(r => r.ingredient).sort((a, b) => a.ingredient.name.localeCompare(b.ingredient.name));
+    const totalCost = rows.reduce((s, r) => s + (r.cost || 0), 0);
+    const hasMissingCost = rows.some(r => r.cost == null);
+    return { rows, totalCost, hasMissingCost, unassignedMeals: Array.from(unassignedMeals) };
+  }, [deliveryClients, meals, shopDay, mealIngredientsByMeal, ingredientById, mealLibrary]);
+
+  const catColor = { protein: "#f87171", carb: "#fbbf24", veg: "#4ade80", sauce: "#38bdf8" };
+
+  return <>
+    <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+      {[["ingredients", "Ingredients"], ["assign", "Assign to Meals"], ["shopping", "Shopping List"]].map(([k, lbl]) => (
+        <button key={k} className={`btn ${view === k ? "" : "btn-g"}`} style={{ padding: "9px 16px", fontSize: 13 }} onClick={() => setView(k)}>{lbl}</button>
+      ))}
+    </div>
+
+    <input ref={photoInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onPhotoFileChosen} />
+
+    {view === "ingredients" && <>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <input className="srch" placeholder="Search ingredient…" value={search} onChange={e => setSearch(e.target.value)} />
+        {Object.keys(dirtyCosts).length > 0 && (
+          <button className="btn btn-r btn-sm" onClick={saveDirtyCosts} disabled={savingCosts}>
+            {savingCosts ? "Saving…" : `💾 Save changes (${Object.keys(dirtyCosts).length})`}
+          </button>
+        )}
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", background: "var(--s3,#161b22)", padding: 8, borderRadius: 8, border: "1px solid var(--bdr)" }}>
+          <input placeholder="New ingredient name" value={newIng.name} onChange={e => setNewIng(p => ({ ...p, name: e.target.value }))} style={{ width: 180 }} />
+          <select value={newIng.category} onChange={e => setNewIng(p => ({ ...p, category: e.target.value }))}>
+            <option value="protein">protein</option>
+            <option value="carb">carb</option>
+            <option value="veg">veg</option>
+            <option value="sauce">sauce</option>
+          </select>
+          <input type="number" placeholder="¥/kg" value={newIng.cost_per_kg} onChange={e => setNewIng(p => ({ ...p, cost_per_kg: e.target.value }))} style={{ width: 80 }} />
+          <button className="btn btn-xs" onClick={addIngredient}>+ Add</button>
+        </div>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>
+            <th style={{ padding: "8px 10px" }}></th>
+            <th style={{ padding: "8px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>Name</th>
+            <th style={{ padding: "8px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>Category</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>¥ / kg</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>¥ / 100g</th>
+            <th style={{ padding: "8px 10px" }}></th>
+          </tr></thead>
+          <tbody>
+            {filteredIngredients.map(ing => (
+              <tr key={ing.id} style={{ borderTop: "1px solid var(--bdr)" }}>
+                <td style={{ padding: 10 }}>
+                  <div onClick={() => triggerPhotoUpload(ing)} title="Click to change photo"
+                    style={{ width: 36, height: 36, borderRadius: 8, overflow: "hidden", background: "var(--s3,#161b22)",
+                      border: "1px solid var(--bdr)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {uploadingPhotoId === ing.id ? (
+                      <span style={{ fontSize: 9, color: "var(--dim)" }}>…</span>
+                    ) : ing.photo_url ? (
+                      <img src={ing.photo_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
+                    ) : (
+                      <span style={{ fontSize: 15, opacity: .4 }}>📷</span>
+                    )}
+                  </div>
+                </td>
+                <td style={{ padding: 10, color: "#fff" }}>{ing.name}</td>
+                <td style={{ padding: 10 }}>
+                  <span style={{ fontSize: 11, color: catColor[ing.category] || "var(--dim)" }}>{ing.category || "—"}</span>
+                </td>
+                <td style={{ padding: 10, textAlign: "right" }}>
+                  <input type="number"
+                    value={dirtyCosts[ing.id] !== undefined ? dirtyCosts[ing.id] : (ing.cost_per_kg ?? "")}
+                    style={{ width: 90, textAlign: "right", borderColor: dirtyCosts[ing.id] !== undefined ? "#fbbf24" : undefined }}
+                    onChange={e => setDirtyCosts(p => ({ ...p, [ing.id]: e.target.value }))} />
+                </td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--dim)", fontSize: 13 }}>
+                  {(() => { const c = dirtyCosts[ing.id] !== undefined ? (dirtyCosts[ing.id]===""?null:Number(dirtyCosts[ing.id])) : ing.cost_per_kg; return c != null ? `¥${(c / 10).toFixed(2)}` : "—"; })()}
+                </td>
+                <td style={{ padding: 10, textAlign: "right" }}>
+                  <button className="btn btn-xs" style={{ background: "#450a0a", color: "#f87171", border: "none" }} onClick={() => removeIngredient(ing)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+            {filteredIngredients.length === 0 && <tr><td colSpan={6} style={{ padding: 30, textAlign: "center", color: "var(--dim)" }}>No ingredients yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </>}
+
+    {view === "assign" && <>
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid var(--bdr)" }}>
+        {mealTiers.map(t => (
+          <button key={t} onClick={() => { setAssignTier(t); setSelectedMealId(""); setDirtyGrams({}); }}
+            style={{ flex: 1, padding: "12px 10px", background: "none", border: "none",
+              borderBottom: `2px solid ${activeAssignTier === t ? "#38bdf8" : "transparent"}`,
+              color: activeAssignTier === t ? "#38bdf8" : "var(--muted)", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            {t}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 20 }}>
+        <div style={{ width: 260, flexShrink: 0, maxHeight: 520, overflowY: "auto" }}>
+          {mealsForTier.map(m => (
+            <div key={m.id} onClick={() => { setSelectedMealId(m.id); setDirtyGrams({}); }}
+              style={{ padding: "10px 12px", borderRadius: 8, cursor: "pointer", marginBottom: 4,
+                background: selectedMealId === m.id ? "rgba(56,189,248,.15)" : "transparent",
+                color: selectedMealId === m.id ? "#38bdf8" : "#fff", fontSize: 13 }}>
+              {m.name}
+              {(!mealIngredientsByMeal[m.id] || mealIngredientsByMeal[m.id].length === 0) &&
+                <span style={{ color: "var(--dim)", fontSize: 10, marginLeft: 6 }}>· no ingredients</span>}
+            </div>
+          ))}
+        </div>
+        <div style={{ flex: 1 }}>
+          {!selectedMeal ? (
+            <div style={{ padding: 40, textAlign: "center", color: "var(--dim)" }}>Pick a meal on the left.</div>
+          ) : <>
+            <div style={{ marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#fff" }}>{selectedMeal.name}</div>
+                <div style={{ fontSize: 12, color: "var(--dim)" }}>{selectedMeal.kcal} kcal · P{selectedMeal.protein} C{selectedMeal.carbs} F{selectedMeal.fat}</div>
+              </div>
+              {Object.keys(dirtyGrams).length > 0 && (
+                <button className="btn btn-r btn-sm" onClick={saveDirtyGrams} disabled={savingGrams}>
+                  {savingGrams ? "Saving…" : `💾 Save changes (${Object.keys(dirtyGrams).length})`}
+                </button>
+              )}
+            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 14 }}>
+              <thead><tr>
+                <th style={{ padding: "6px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>Ingredient</th>
+                <th style={{ padding: "6px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Qty</th>
+                <th style={{ padding: "6px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Cost</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                {selectedMealIngredients.map(mi => (
+                  <tr key={mi.id} style={{ borderTop: "1px solid var(--bdr)" }}>
+                    <td style={{ padding: 8, color: "#fff" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: 22, height: 22, borderRadius: 5, overflow: "hidden", background: "var(--s3,#161b22)", flexShrink: 0 }}>
+                          {mi.ingredient.photo_url && <img src={mi.ingredient.photo_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />}
+                        </div>
+                        {mi.ingredient.name}
+                      </div>
+                    </td>
+                    <td style={{ padding: 8, textAlign: "right" }}>
+                      <input type="number"
+                        value={dirtyGrams[mi.id] !== undefined ? dirtyGrams[mi.id] : mi.quantity_grams}
+                        style={{ width: 70, textAlign: "right", borderColor: dirtyGrams[mi.id] !== undefined ? "#fbbf24" : undefined }}
+                        onChange={e => setDirtyGrams(p => ({ ...p, [mi.id]: e.target.value }))} />
+                      <span style={{ color: "var(--dim)", fontSize: 11, marginLeft: 4 }}>{mi.ingredient.category === "sauce" ? "ml" : "g"}</span>
+                    </td>
+                    <td style={{ padding: 8, textAlign: "right", color: "var(--dim)", fontSize: 13 }}>
+                      {(() => { const c = costForGrams(mi.ingredient_id, effectiveGrams(mi)); return c == null ? "sin costo" : `¥${c.toFixed(2)}`; })()}
+                    </td>
+                    <td style={{ padding: 8, textAlign: "right" }}>
+                      <button className="btn btn-xs" style={{ background: "#450a0a", color: "#f87171", border: "none" }} onClick={() => removeMealIngredient(mi)}>×</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14 }}>
+              <select value={addIngId} onChange={e => setAddIngId(e.target.value)} style={{ flex: 1 }}>
+                <option value="">Add ingredient…</option>
+                {ingredients.filter(i => !selectedMealIngredients.some(mi => mi.ingredient_id === i.id))
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+              </select>
+              <input type="number" placeholder={ingredientById[addIngId]?.category === "sauce" ? "ml" : "grams"} value={addGrams} onChange={e => setAddGrams(e.target.value)} style={{ width: 90 }} />
+              <button className="btn btn-xs" onClick={addMealIngredient}>+ Add</button>
+            </div>
+            <div style={{ padding: 12, borderRadius: 8, background: "var(--s3,#161b22)", border: "1px solid var(--bdr)" }}>
+              <span style={{ color: "var(--muted)", fontSize: 13 }}>Estimated cost per portion: </span>
+              <span style={{ fontWeight: 700, color: "#fff", fontSize: 15 }}>¥{selectedMealCost.total.toFixed(2)}</span>
+              {selectedMealCost.missing && <span style={{ color: "#fbbf24", fontSize: 12, marginLeft: 10 }}>⚠ some ingredients have no cost yet</span>}
+            </div>
+          </>}
+        </div>
+      </div>
+    </>}
+
+    {view === "shopping" && <>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+        {SHOP_DAYS.map(d => <button key={d} className={`btn ${shopDay === d ? "" : "btn-g"}`} style={{ padding: "8px 14px", fontSize: 13 }} onClick={() => setShopDay(d)}>{d.slice(0, 3)}</button>)}
+      </div>
+      {shoppingList.unassignedMeals.length > 0 && (
+        <div style={{ padding: 10, borderRadius: 8, background: "rgba(251,191,36,.1)", border: "1px solid #fbbf24", color: "#fbbf24", fontSize: 12, marginBottom: 14 }}>
+          ⚠ These meals were ordered for {shopDay} but have no ingredients assigned yet, so they're missing from the totals below: {shoppingList.unassignedMeals.join(", ")}.
+        </div>
+      )}
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>
+            <th style={{ padding: "8px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>Ingredient</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Total needed</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Est. cost</th>
+          </tr></thead>
+          <tbody>
+            {shoppingList.rows.map(r => (
+              <tr key={r.ingredientId} style={{ borderTop: "1px solid var(--bdr)" }}>
+                <td style={{ padding: 10, color: "#fff" }}>{r.ingredient.name}</td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--muted)" }}>
+                  {fmtQty(r.grams, r.ingredient.category)}
+                </td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--dim)" }}>{r.cost == null ? "sin costo" : `¥${r.cost.toFixed(2)}`}</td>
+              </tr>
+            ))}
+            {shoppingList.rows.length === 0 && <tr><td colSpan={3} style={{ padding: 30, textAlign: "center", color: "var(--dim)" }}>No active deliveries for {shopDay}.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {shoppingList.rows.length > 0 && (
+        <div style={{ marginTop: 14, padding: 12, borderRadius: 8, background: "var(--s3,#161b22)", border: "1px solid var(--bdr)" }}>
+          <span style={{ color: "var(--muted)", fontSize: 13 }}>Estimated total cost for {shopDay}: </span>
+          <span style={{ fontWeight: 700, color: "#fff", fontSize: 15 }}>¥{shoppingList.totalCost.toFixed(2)}</span>
+          {shoppingList.hasMissingCost && <span style={{ color: "#fbbf24", fontSize: 12, marginLeft: 10 }}>⚠ some ingredients have no cost yet, total is partial</span>}
+        </div>
+      )}
+    </>}
+  </>;
+}
+
+function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredients, mealLibrary, deliveryClients, meals, employees, setEmployees, otherExpenses, setOtherExpenses, acctSnapshots, setAcctSnapshots, oneTimeExpenses, setOneTimeExpenses, coaches, setCoaches }) {
+  const ACC_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [view, setView] = useState("current"); // current | history
+
+  const weekStartIso = useMemo(() => {
+    const d = new Date();
+    const dow = d.getDay(); // 0=Sun..6=Sat
+    const diffToMonday = dow === 0 ? -6 : 1 - dow;
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + diffToMonday);
+    return d.toISOString().slice(0, 10);
+  }, []);
+  const weekEndIso = useMemo(() => {
+    const d = new Date(weekStartIso + "T00:00:00");
+    d.setDate(d.getDate() + 6);
+    return d.toISOString().slice(0, 10);
+  }, [weekStartIso]);
+
+  const ingredientById = useMemo(() => {
+    const m = {}; ingredients.forEach(i => { m[i.id] = i; }); return m;
+  }, [ingredients]);
+  const mealIngredientsByMeal = useMemo(() => {
+    const m = {}; mealIngredients.forEach(mi => { (m[mi.meal_id] = m[mi.meal_id] || []).push(mi); }); return m;
+  }, [mealIngredients]);
+  const costForGrams = (ingredientId, grams) => {
+    const ing = ingredientById[ingredientId];
+    if (!ing || ing.cost_per_kg == null) return null;
+    return (Number(grams) || 0) / 1000 * Number(ing.cost_per_kg);
+  };
+
+  // ── REVENUE: para cada cliente activo, la plata real que está pagando por
+  // semana en su ciclo actual (el pago que cubre hoy), no el precio de lista
+  // -- así se ven los descuentos (alta nueva 25%, referido 10%) reflejados.
+  // Se separa en plan vs delivery: el pago real (amount_fen) es un combinado
+  // de los dos, así que la parte de delivery se estima con el delivery_fee
+  // ACTUAL del cliente (no queda guardado por separado en `payments`) -- si
+  // el fee cambió desde ese pago, esta parte queda como aproximación.
+  const revenueRows = useMemo(() => {
+    return active.map(c => {
+      const listPrice = c.planObj?.price || 0;
+      const deliveryFee = c.deliveryFee || 0;
+      const payment = paidPayments
+        .filter(p => p.client_id === c.id && p.start_date <= todayIso && p.expiry_date >= todayIso)
+        .sort((a, b) => (b.paid_at || "").localeCompare(a.paid_at || ""))[0];
+      let weeklyRevenue, deliveryRevenue, planRevenue, hasPayment;
+      if (payment) {
+        const weeksCovered = c.weeks || Math.max(1, Math.round((new Date(payment.expiry_date) - new Date(payment.start_date)) / (7 * 86400000)));
+        weeklyRevenue = (payment.amount_fen / 100) / weeksCovered;
+        deliveryRevenue = deliveryFee / weeksCovered;
+        planRevenue = weeklyRevenue - deliveryRevenue;
+        hasPayment = true;
+      } else {
+        planRevenue = listPrice;
+        deliveryRevenue = deliveryFee;
+        weeklyRevenue = planRevenue + deliveryRevenue;
+        hasPayment = false;
+      }
+      const discounted = hasPayment && listPrice > 0 && planRevenue < listPrice * 0.99;
+      return { client: c, listPrice, planRevenue, deliveryRevenue, weeklyRevenue, hasPayment, discounted };
+    }).sort((a, b) => b.weeklyRevenue - a.weeklyRevenue);
+  }, [active, paidPayments, todayIso]);
+
+  const totalPlanRevenue = revenueRows.reduce((s, r) => s + r.planRevenue, 0);
+  const totalDeliveryRevenue = revenueRows.reduce((s, r) => s + r.deliveryRevenue, 0);
+  const totalRevenue = totalPlanRevenue + totalDeliveryRevenue;
+  const totalListRevenue = revenueRows.reduce((s, r) => s + r.listPrice, 0);
+
+  // ── COSTS: mismo cálculo que la Shopping List de Ingredients, sumado
+  // Lunes a Viernes -- el costo real de ingredientes de la semana.
+  const costByDay = useMemo(() => {
+    const unassigned = new Set();
+    const days = ACC_DAYS.map(day => {
+      let dayCost = 0, missingCost = false;
+      deliveryClients.filter(c => clientActiveOnDay(c, day)).forEach(c => {
+        const slots = meals[c.id]?.[day] || [];
+        slots.forEach(slot => {
+          (slot.meals || []).filter(id => id && id.trim() && id !== "—").forEach(mealId => {
+            const rows = mealIngredientsByMeal[mealId];
+            if (!rows || rows.length === 0) {
+              const m = mealLibrary.find(x => x.id === mealId);
+              unassigned.add(m ? m.name : mealId);
+              return;
+            }
+            rows.forEach(mi => {
+              const cost = costForGrams(mi.ingredient_id, mi.quantity_grams);
+              if (cost == null) missingCost = true; else dayCost += cost;
+            });
+          });
+        });
+      });
+      return { day, cost: dayCost, missing: missingCost };
+    });
+    return { days, unassigned: Array.from(unassigned) };
+  }, [deliveryClients, meals, mealIngredientsByMeal, ingredientById, mealLibrary]);
+
+  const totalCost = costByDay.days.reduce((s, d) => s + d.cost, 0);
+  const costHasGaps = costByDay.days.some(d => d.missing) || costByDay.unassigned.length > 0;
+
+  // ── EMPLOYEES / PAYROLL ── sueldos se cargan por mes (como se piensan en
+  // la práctica); para el margen semanal se convierten a equivalente semanal
+  // (÷ 52/12 semanas por mes en promedio), dejando ambos números a la vista.
+  const WEEKS_PER_MONTH = 52 / 12;
+  const [newEmp, setNewEmp] = useState({ name: "", monthly_pay: "" });
+
+  const addEmployee = async () => {
+    if (!newEmp.name.trim()) { alert("Necesita un nombre"); return; }
+    try {
+      const saved = await upsertEmployee({ name: newEmp.name.trim(), monthly_pay: Number(newEmp.monthly_pay) || 0 });
+      setEmployees(p => [...p, saved]);
+      setNewEmp({ name: "", monthly_pay: "" });
+    } catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
+  };
+
+  const saveEmployeePay = async (emp, value) => {
+    const monthly_pay = Number(value) || 0;
+    setEmployees(p => p.map(e => e.id === emp.id ? { ...e, monthly_pay } : e));
+    try { await upsertEmployee({ id: emp.id, name: emp.name, monthly_pay }); }
+    catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
+  };
+
+  const removeEmployee = async (emp) => {
+    if (!window.confirm(`¿Borrar "${emp.name}"?`)) return;
+    const prev = employees;
+    setEmployees(p => p.filter(e => e.id !== emp.id));
+    try { await dbDeleteEmployee(emp.id); }
+    catch (e) { setEmployees(prev); alert(`No se pudo borrar: ${e.message || e}`); }
+  };
+
+  const totalPayrollMonthly = employees.reduce((s, e) => s + (Number(e.monthly_pay) || 0), 0);
+  const totalPayrollWeekly = totalPayrollMonthly / WEEKS_PER_MONTH;
+
+  // ── OTHER EXPENSES (packaging, alquiler, etc.) ── también mensuales,
+  // mismo criterio de conversión a semanal que Employees.
+  const [newExpense, setNewExpense] = useState({ name: "", monthly_amount: "" });
+
+  const addExpense = async () => {
+    if (!newExpense.name.trim()) { alert("Necesita un nombre"); return; }
+    try {
+      const saved = await upsertOtherExpense({ name: newExpense.name.trim(), monthly_amount: Number(newExpense.monthly_amount) || 0 });
+      setOtherExpenses(p => [...p, saved]);
+      setNewExpense({ name: "", monthly_amount: "" });
+    } catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
+  };
+
+  const saveExpenseAmount = async (exp, value) => {
+    const monthly_amount = Number(value) || 0;
+    setOtherExpenses(p => p.map(x => x.id === exp.id ? { ...x, monthly_amount } : x));
+    try { await upsertOtherExpense({ id: exp.id, name: exp.name, monthly_amount }); }
+    catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
+  };
+
+  const removeExpense = async (exp) => {
+    if (!window.confirm(`¿Borrar "${exp.name}"?`)) return;
+    const prev = otherExpenses;
+    setOtherExpenses(p => p.filter(x => x.id !== exp.id));
+    try { await dbDeleteOtherExpense(exp.id); }
+    catch (e) { setOtherExpenses(prev); alert(`No se pudo borrar: ${e.message || e}`); }
+  };
+
+  const totalExpensesMonthly = otherExpenses.reduce((s, e) => s + (Number(e.monthly_amount) || 0), 0);
+  const totalExpensesWeekly = totalExpensesMonthly / WEEKS_PER_MONTH;
+
+  // ── ONE-TIME EXPENSES: no recurrentes, cada una tiene su propia fecha --
+  // solo las de ESTA semana entran al margen semanal (las demás quedan en
+  // el listado como historial, pero no se restan de nuevo cada semana).
+  const [newOneTime, setNewOneTime] = useState({ name: "", amount: "", expense_date: todayIso });
+
+  const addOneTimeExpense = async () => {
+    if (!newOneTime.name.trim()) { alert("Necesita un nombre"); return; }
+    try {
+      const saved = await upsertOneTimeExpense({ name: newOneTime.name.trim(), amount: Number(newOneTime.amount) || 0, expense_date: newOneTime.expense_date || todayIso });
+      setOneTimeExpenses(p => [saved, ...p]);
+      setNewOneTime({ name: "", amount: "", expense_date: todayIso });
+    } catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
+  };
+
+  const removeOneTimeExpense = async (exp) => {
+    if (!window.confirm(`¿Borrar "${exp.name}"?`)) return;
+    const prev = oneTimeExpenses;
+    setOneTimeExpenses(p => p.filter(x => x.id !== exp.id));
+    try { await dbDeleteOneTimeExpense(exp.id); }
+    catch (e) { setOneTimeExpenses(prev); alert(`No se pudo borrar: ${e.message || e}`); }
+  };
+
+  const oneTimeThisWeek = useMemo(() =>
+    oneTimeExpenses.filter(e => e.expense_date >= weekStartIso && e.expense_date <= weekEndIso)
+      .reduce((s, e) => s + Number(e.amount), 0),
+  [oneTimeExpenses, weekStartIso, weekEndIso]);
+
+  // ── REFERRAL COMMISSIONS: por cada alta nueva pagada esta semana con
+  // código de referido, se le debe al coach dueño de ese código su comisión.
+  const [savingCoachId, setSavingCoachId] = useState(null);
+  const saveCoachCommission = async (coach, value) => {
+    const commission = Number(value) || 0;
+    setCoaches(p => p.map(c => c.id === coach.id ? { ...c, commission_per_referral: commission } : c));
+    setSavingCoachId(coach.id);
+    try { await updateCoachCommission(coach.id, commission); }
+    catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
+    setSavingCoachId(null);
+  };
+
+  const referralRows = useMemo(() => {
+    const counts = {};
+    paidPayments.filter(p => p.type === "new" && p.referral_code && p.paid_at && p.paid_at.slice(0, 10) >= weekStartIso && p.paid_at.slice(0, 10) <= weekEndIso)
+      .forEach(p => { const code = p.referral_code.toLowerCase().trim(); counts[code] = (counts[code] || 0) + 1; });
+    return coaches.map(c => ({
+      coach: c,
+      count: counts[c.code?.toLowerCase().trim()] || 0,
+      amount: (counts[c.code?.toLowerCase().trim()] || 0) * Number(c.commission_per_referral || 0),
+    })).filter(r => r.count > 0 || Number(r.coach.commission_per_referral) > 0);
+  }, [coaches, paidPayments, weekStartIso, weekEndIso]);
+
+  const referralCommissionThisWeek = referralRows.reduce((s, r) => s + r.amount, 0);
+
+  const margin = totalRevenue - totalCost - totalPayrollWeekly - totalExpensesWeekly - oneTimeThisWeek - referralCommissionThisWeek;
+  const marginPct = totalRevenue > 0 ? (margin / totalRevenue) * 100 : 0;
+
+  // ── HISTORIAL: no hay forma de recalcular una semana pasada (todo el
+  // cálculo de arriba es siempre "esta semana, ahora mismo"), así que cada
+  // vez que se abre esta pantalla se guarda/actualiza el snapshot de la
+  // semana actual -- el historial se va armando solo con el uso normal.
+  useEffect(() => {
+    const snapshot = {
+      week_start: weekStartIso,
+      plan_revenue: totalPlanRevenue,
+      delivery_revenue: totalDeliveryRevenue,
+      ingredient_cost: totalCost,
+      payroll: totalPayrollWeekly,
+      other_expenses: totalExpensesWeekly,
+      one_time_expenses: oneTimeThisWeek,
+      referral_commission: referralCommissionThisWeek,
+      margin,
+      active_clients: active.length,
+    };
+    upsertAccountingSnapshot(snapshot)
+      .then(saved => setAcctSnapshots(p => {
+        const idx = p.findIndex(s => s.week_start === weekStartIso);
+        return idx >= 0 ? p.map((s, i) => i === idx ? saved : s) : [...p, saved];
+      }))
+      .catch(e => console.error("[AccountingTab] snapshot", e));
+  }, [weekStartIso, totalPlanRevenue, totalDeliveryRevenue, totalCost, totalPayrollWeekly, totalExpensesWeekly, oneTimeThisWeek, referralCommissionThisWeek, margin, active.length]);
+
+  // ── HISTORY: agrupado por semana o por mes
+  const [historyMode, setHistoryMode] = useState("week"); // week | month
+  const historyRows = useMemo(() => {
+    const sorted = [...acctSnapshots].sort((a, b) => b.week_start.localeCompare(a.week_start));
+    if (historyMode === "week") return sorted;
+    const byMonth = {};
+    sorted.forEach(s => {
+      const month = s.week_start.slice(0, 7); // YYYY-MM
+      if (!byMonth[month]) byMonth[month] = { week_start: month, plan_revenue: 0, delivery_revenue: 0, ingredient_cost: 0, payroll: 0, other_expenses: 0, one_time_expenses: 0, referral_commission: 0, margin: 0, active_clients: 0, weeks: 0 };
+      const m = byMonth[month];
+      m.plan_revenue += Number(s.plan_revenue); m.delivery_revenue += Number(s.delivery_revenue);
+      m.ingredient_cost += Number(s.ingredient_cost); m.payroll += Number(s.payroll);
+      m.other_expenses += Number(s.other_expenses); m.margin += Number(s.margin);
+      m.one_time_expenses += Number(s.one_time_expenses || 0); m.referral_commission += Number(s.referral_commission || 0);
+      m.active_clients = Math.max(m.active_clients, s.active_clients); m.weeks += 1;
+    });
+    return Object.values(byMonth).sort((a, b) => b.week_start.localeCompare(a.week_start));
+  }, [acctSnapshots, historyMode]);
+
+  const printAccounting = async () => {
+    const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm");
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const W = 210;
+    let y = 0;
+    const dateStr = new Date().toLocaleDateString("en-GB");
+
+    doc.setFillColor(232, 52, 42); doc.rect(0, 0, W, 18, "F");
+    doc.setTextColor(255, 255, 255); doc.setFontSize(14); doc.setFont("helvetica", "bold");
+    doc.text("FIT IGNYTE — Accounting Report", 10, 12);
+    doc.setFontSize(9); doc.setFont("helvetica", "normal");
+    doc.text("Week of " + weekStartIso + "  |  generated " + dateStr, 10, 17);
+    y = 26;
+
+    const stat = (label, value, x) => {
+      doc.setFontSize(8); doc.setTextColor(120, 120, 120); doc.setFont("helvetica", "normal");
+      doc.text(label, x, y);
+      doc.setFontSize(13); doc.setTextColor(20, 20, 20); doc.setFont("helvetica", "bold");
+      doc.text(value, x, y + 6);
+    };
+    stat("PLAN REVENUE", `¥${totalPlanRevenue.toFixed(0)}`, 10);
+    stat("DELIVERY REVENUE", `¥${totalDeliveryRevenue.toFixed(0)}`, 65);
+    stat("INGREDIENT COST (var.)", `¥${totalCost.toFixed(0)}`, 120);
+    y += 14;
+    stat("PAYROLL /wk (fixed)", `¥${totalPayrollWeekly.toFixed(0)}`, 10);
+    stat("OTHER EXP /wk (fixed)", `¥${totalExpensesWeekly.toFixed(0)}`, 65);
+    stat("ONE-TIME (this wk)", `¥${oneTimeThisWeek.toFixed(0)}`, 120);
+    y += 14;
+    stat("REFERRAL COMM. (this wk)", `¥${referralCommissionThisWeek.toFixed(0)}`, 10);
+    stat("MARGIN", `¥${margin.toFixed(0)} (${marginPct.toFixed(0)}%)`, 65);
+    y += 16;
+
+    const section = (title) => {
+      if (y > 265) { doc.addPage(); y = 10; }
+      doc.setFillColor(30, 30, 30); doc.rect(0, y, W, 7, "F");
+      doc.setTextColor(255, 255, 255); doc.setFontSize(9); doc.setFont("helvetica", "bold");
+      doc.text(title, 10, y + 5);
+      y += 10;
+    };
+    const row = (cols, i) => {
+      if (y > 275) { doc.addPage(); y = 10; }
+      if (i % 2 === 0) { doc.setFillColor(245, 245, 245); doc.rect(0, y, W, 7, "F"); }
+      doc.setTextColor(20, 20, 20); doc.setFontSize(8); doc.setFont("helvetica", "normal");
+      doc.text(cols[0], 10, y + 5);
+      doc.text(cols[1], W - 10, y + 5, { align: "right" });
+      y += 7;
+    };
+
+    section("EMPLOYEES");
+    if (employees.length === 0) { row(["No employees", ""], 0); }
+    employees.forEach((e, i) => row([e.name, `¥${Number(e.monthly_pay).toFixed(0)}/mo`], i));
+    y += 4;
+
+    section("OTHER EXPENSES (fixed)");
+    if (otherExpenses.length === 0) { row(["No other expenses", ""], 0); }
+    otherExpenses.forEach((e, i) => row([e.name, `¥${Number(e.monthly_amount).toFixed(0)}/mo`], i));
+    y += 4;
+
+    section("ONE-TIME EXPENSES (this week)");
+    const oneTimeRows = oneTimeExpenses.filter(e => e.expense_date >= weekStartIso && e.expense_date <= weekEndIso);
+    if (oneTimeRows.length === 0) { row(["No one-time expenses this week", ""], 0); }
+    oneTimeRows.forEach((e, i) => row([`${e.name} (${e.expense_date})`, `¥${Number(e.amount).toFixed(0)}`], i));
+    y += 4;
+
+    section("REFERRAL COMMISSIONS (this week)");
+    if (referralRows.length === 0) { row(["No referral commissions this week", ""], 0); }
+    referralRows.forEach((r, i) => row([`${r.coach.name} — ${r.count} referral${r.count !== 1 ? "s" : ""}`, `¥${r.amount.toFixed(0)}`], i));
+    y += 4;
+
+    section("INGREDIENT COST BY DAY");
+    costByDay.days.forEach((d, i) => row([d.day, `¥${d.cost.toFixed(0)}${d.missing ? " (partial)" : ""}`], i));
+
+    doc.save("accounting-week-" + weekStartIso + ".pdf");
+  };
+
+  return <>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className={`btn ${view === "current" ? "" : "btn-g"}`} style={{ padding: "9px 16px", fontSize: 13 }} onClick={() => setView("current")}>This Week</button>
+        <button className={`btn ${view === "history" ? "" : "btn-g"}`} style={{ padding: "9px 16px", fontSize: 13 }} onClick={() => setView("history")}>History</button>
+      </div>
+      {view === "current" && <button className="btn btn-r btn-sm" onClick={printAccounting}>⬇ Print / PDF</button>}
+    </div>
+
+    {view === "current" && <>
+    <div style={{ fontSize: 11, color: "var(--muted)", letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" }}>Revenue</div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, marginBottom: 20 }}>
+      <div style={{ padding: 16, borderRadius: 10, background: "var(--s2,#1a1a1a)", border: "1px solid var(--bdr)" }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>PLAN REVENUE</div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: "var(--green)" }}>¥{totalPlanRevenue.toFixed(0)}</div>
+        {totalListRevenue > totalPlanRevenue && <div style={{ fontSize: 11, color: "var(--dim)" }}>List price would be ¥{totalListRevenue.toFixed(0)}</div>}
+      </div>
+      <div style={{ padding: 16, borderRadius: 10, background: "var(--s2,#1a1a1a)", border: "1px solid var(--bdr)" }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>DELIVERY REVENUE</div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: "var(--green)" }}>¥{totalDeliveryRevenue.toFixed(0)}</div>
+        <div style={{ fontSize: 11, color: "var(--dim)" }}>from {revenueRows.filter(r => r.deliveryRevenue > 0).length} client{revenueRows.filter(r => r.deliveryRevenue > 0).length !== 1 ? "s" : ""}</div>
+      </div>
+    </div>
+
+    <div style={{ fontSize: 11, color: "var(--muted)", letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" }}>Variable Costs</div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, marginBottom: 20 }}>
+      <div style={{ padding: 16, borderRadius: 10, background: "var(--s2,#1a1a1a)", border: "1px solid var(--bdr)" }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>WEEKLY INGREDIENT COST</div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: "#f87171" }}>¥{totalCost.toFixed(0)}</div>
+        {costHasGaps && <div style={{ fontSize: 11, color: "#fbbf24" }}>⚠ incomplete — some costs/assignments missing</div>}
+      </div>
+    </div>
+
+    <div style={{ fontSize: 11, color: "var(--muted)", letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" }}>Fixed Costs (recurring monthly)</div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, marginBottom: 20 }}>
+      <div style={{ padding: 16, borderRadius: 10, background: "var(--s2,#1a1a1a)", border: "1px solid var(--bdr)" }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>PAYROLL</div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: "#f87171" }}>¥{totalPayrollMonthly.toFixed(0)}<span style={{ fontSize: 13, color: "var(--dim)", fontWeight: 400 }}>/mo</span></div>
+        <div style={{ fontSize: 11, color: "var(--dim)" }}>≈ ¥{totalPayrollWeekly.toFixed(0)}/wk · {employees.length} employee{employees.length !== 1 ? "s" : ""}</div>
+      </div>
+      <div style={{ padding: 16, borderRadius: 10, background: "var(--s2,#1a1a1a)", border: "1px solid var(--bdr)" }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>OTHER EXPENSES</div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: "#f87171" }}>¥{totalExpensesMonthly.toFixed(0)}<span style={{ fontSize: 13, color: "var(--dim)", fontWeight: 400 }}>/mo</span></div>
+        <div style={{ fontSize: 11, color: "var(--dim)" }}>≈ ¥{totalExpensesWeekly.toFixed(0)}/wk · packaging, rent, work supplies</div>
+      </div>
+    </div>
+
+    <div style={{ fontSize: 11, color: "var(--muted)", letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" }}>One-off this week</div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, marginBottom: 20 }}>
+      <div style={{ padding: 16, borderRadius: 10, background: "var(--s2,#1a1a1a)", border: "1px solid var(--bdr)" }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>ONE-TIME EXPENSES</div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: "#f87171" }}>¥{oneTimeThisWeek.toFixed(0)}</div>
+        <div style={{ fontSize: 11, color: "var(--dim)" }}>this week only</div>
+      </div>
+      <div style={{ padding: 16, borderRadius: 10, background: "var(--s2,#1a1a1a)", border: "1px solid var(--bdr)" }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>REFERRAL COMMISSIONS</div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: "#f87171" }}>¥{referralCommissionThisWeek.toFixed(0)}</div>
+        <div style={{ fontSize: 11, color: "var(--dim)" }}>{referralRows.reduce((s, r) => s + r.count, 0)} new referral{referralRows.reduce((s, r) => s + r.count, 0) !== 1 ? "s" : ""} this week</div>
+      </div>
+      <div style={{ padding: 16, borderRadius: 10, background: "var(--s2,#1a1a1a)", border: `1px solid ${margin >= 0 ? "var(--green)" : "#f87171"}` }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>ESTIMATED MARGIN</div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: margin >= 0 ? "var(--green)" : "#f87171" }}>¥{margin.toFixed(0)}</div>
+        <div style={{ fontSize: 11, color: "var(--dim)" }}>{marginPct.toFixed(1)}% of revenue</div>
+      </div>
+    </div>
+
+    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Employees</div>
+    <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+      <input placeholder="Employee name" value={newEmp.name} onChange={e => setNewEmp(p => ({ ...p, name: e.target.value }))} style={{ width: 220 }} />
+      <input type="number" placeholder="¥ per month" value={newEmp.monthly_pay} onChange={e => setNewEmp(p => ({ ...p, monthly_pay: e.target.value }))} style={{ width: 120 }} />
+      <button className="btn btn-xs" onClick={addEmployee}>+ Add</button>
+    </div>
+    <div style={{ overflowX: "auto", marginBottom: 24 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead><tr>
+          <th style={{ padding: "8px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>Name</th>
+          <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>¥ / month</th>
+          <th style={{ padding: "8px 10px" }}></th>
+        </tr></thead>
+        <tbody>
+          {employees.map(emp => (
+            <tr key={emp.id} style={{ borderTop: "1px solid var(--bdr)" }}>
+              <td style={{ padding: 10, color: "#fff" }}>{emp.name}</td>
+              <td style={{ padding: 10, textAlign: "right" }}>
+                <input type="number" defaultValue={emp.monthly_pay} style={{ width: 90, textAlign: "right" }}
+                  onBlur={e => { if (Number(e.target.value || 0) !== Number(emp.monthly_pay || 0)) saveEmployeePay(emp, e.target.value); }} />
+              </td>
+              <td style={{ padding: 10, textAlign: "right" }}>
+                <button className="btn btn-xs" style={{ background: "#450a0a", color: "#f87171", border: "none" }} onClick={() => removeEmployee(emp)}>Delete</button>
+              </td>
+            </tr>
+          ))}
+          {employees.length === 0 && <tr><td colSpan={3} style={{ padding: 30, textAlign: "center", color: "var(--dim)" }}>No employees yet.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+
+    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Other Expenses</div>
+    <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+      <input placeholder="e.g. Packaging, Rent" value={newExpense.name} onChange={e => setNewExpense(p => ({ ...p, name: e.target.value }))} style={{ width: 220 }} />
+      <input type="number" placeholder="¥ per month" value={newExpense.monthly_amount} onChange={e => setNewExpense(p => ({ ...p, monthly_amount: e.target.value }))} style={{ width: 120 }} />
+      <button className="btn btn-xs" onClick={addExpense}>+ Add</button>
+    </div>
+    <div style={{ overflowX: "auto", marginBottom: 24 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead><tr>
+          <th style={{ padding: "8px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>Name</th>
+          <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>¥ / month</th>
+          <th style={{ padding: "8px 10px" }}></th>
+        </tr></thead>
+        <tbody>
+          {otherExpenses.map(exp => (
+            <tr key={exp.id} style={{ borderTop: "1px solid var(--bdr)" }}>
+              <td style={{ padding: 10, color: "#fff" }}>{exp.name}</td>
+              <td style={{ padding: 10, textAlign: "right" }}>
+                <input type="number" defaultValue={exp.monthly_amount} style={{ width: 90, textAlign: "right" }}
+                  onBlur={e => { if (Number(e.target.value || 0) !== Number(exp.monthly_amount || 0)) saveExpenseAmount(exp, e.target.value); }} />
+              </td>
+              <td style={{ padding: 10, textAlign: "right" }}>
+                <button className="btn btn-xs" style={{ background: "#450a0a", color: "#f87171", border: "none" }} onClick={() => removeExpense(exp)}>Delete</button>
+              </td>
+            </tr>
+          ))}
+          {otherExpenses.length === 0 && <tr><td colSpan={3} style={{ padding: 30, textAlign: "center", color: "var(--dim)" }}>No other expenses yet.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+
+    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 10 }}>One-Time Expenses</div>
+    <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
+      <input placeholder="e.g. Freezer repair" value={newOneTime.name} onChange={e => setNewOneTime(p => ({ ...p, name: e.target.value }))} style={{ width: 200 }} />
+      <input type="number" placeholder="¥ amount" value={newOneTime.amount} onChange={e => setNewOneTime(p => ({ ...p, amount: e.target.value }))} style={{ width: 100 }} />
+      <input type="date" value={newOneTime.expense_date} onChange={e => setNewOneTime(p => ({ ...p, expense_date: e.target.value }))} style={{ width: 150 }} />
+      <button className="btn btn-xs" onClick={addOneTimeExpense}>+ Add</button>
+    </div>
+    <div style={{ overflowX: "auto", marginBottom: 24 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead><tr>
+          <th style={{ padding: "8px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>Name</th>
+          <th style={{ padding: "8px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>Date</th>
+          <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>¥</th>
+          <th style={{ padding: "8px 10px" }}></th>
+        </tr></thead>
+        <tbody>
+          {oneTimeExpenses.map(exp => (
+            <tr key={exp.id} style={{ borderTop: "1px solid var(--bdr)" }}>
+              <td style={{ padding: 10, color: "#fff" }}>{exp.name}</td>
+              <td style={{ padding: 10, color: exp.expense_date >= weekStartIso && exp.expense_date <= weekEndIso ? "var(--green)" : "var(--muted)" }}>
+                {exp.expense_date}{exp.expense_date >= weekStartIso && exp.expense_date <= weekEndIso && <span style={{ fontSize: 10, marginLeft: 6 }}>(this week)</span>}
+              </td>
+              <td style={{ padding: 10, textAlign: "right", color: "var(--dim)" }}>¥{Number(exp.amount).toFixed(0)}</td>
+              <td style={{ padding: 10, textAlign: "right" }}>
+                <button className="btn btn-xs" style={{ background: "#450a0a", color: "#f87171", border: "none" }} onClick={() => removeOneTimeExpense(exp)}>Delete</button>
+              </td>
+            </tr>
+          ))}
+          {oneTimeExpenses.length === 0 && <tr><td colSpan={4} style={{ padding: 30, textAlign: "center", color: "var(--dim)" }}>No one-time expenses yet.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+
+    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Referral Commissions</div>
+    <div style={{ fontSize: 11, color: "var(--dim)", marginBottom: 10 }}>¥ per new referral signed up this week, per coach. Rates are managed here; coach names/codes are managed in the Referrals tab.</div>
+    <div style={{ overflowX: "auto", marginBottom: 24 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead><tr>
+          <th style={{ padding: "8px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>Coach</th>
+          <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>¥ per referral</th>
+          <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>New referrals this week</th>
+          <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Owed this week</th>
+        </tr></thead>
+        <tbody>
+          {coaches.map(coach => {
+            const r = referralRows.find(x => x.coach.id === coach.id);
+            return (
+              <tr key={coach.id} style={{ borderTop: "1px solid var(--bdr)" }}>
+                <td style={{ padding: 10, color: "#fff" }}>{coach.name} <span style={{ color: "var(--dim)", fontSize: 11 }}>({coach.code})</span></td>
+                <td style={{ padding: 10, textAlign: "right" }}>
+                  <input type="number" defaultValue={coach.commission_per_referral} style={{ width: 70, textAlign: "right" }}
+                    onBlur={e => { if (Number(e.target.value || 0) !== Number(coach.commission_per_referral || 0)) saveCoachCommission(coach, e.target.value); }} />
+                  {savingCoachId === coach.id && <span style={{ fontSize: 10, color: "var(--dim)", marginLeft: 6 }}>saving…</span>}
+                </td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--muted)" }}>{r ? r.count : 0}</td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--dim)" }}>¥{(r ? r.amount : 0).toFixed(0)}</td>
+              </tr>
+            );
+          })}
+          {coaches.length === 0 && <tr><td colSpan={4} style={{ padding: 30, textAlign: "center", color: "var(--dim)" }}>No coaches yet — add them in the Referrals tab.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+
+    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Ingredient cost by day</div>
+    {costByDay.unassigned.length > 0 && (
+      <div style={{ padding: 10, borderRadius: 8, background: "rgba(251,191,36,.1)", border: "1px solid #fbbf24", color: "#fbbf24", fontSize: 12, marginBottom: 14 }}>
+        ⚠ These meals are being ordered this week but have no ingredients assigned yet, so the cost above is missing them: {costByDay.unassigned.join(", ")}.
+      </div>
+    )}
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead><tr>
+          <th style={{ padding: "8px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>Day</th>
+          <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Est. cost</th>
+        </tr></thead>
+        <tbody>
+          {costByDay.days.map(d => (
+            <tr key={d.day} style={{ borderTop: "1px solid var(--bdr)" }}>
+              <td style={{ padding: 10, color: "#fff" }}>{d.day}</td>
+              <td style={{ padding: 10, textAlign: "right", color: "var(--dim)" }}>
+                ¥{d.cost.toFixed(0)}{d.missing && <span style={{ color: "#fbbf24", marginLeft: 8 }}>⚠ partial</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    </>}
+
+    {view === "history" && <>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <button className={`btn ${historyMode === "week" ? "" : "btn-g"} btn-sm`} onClick={() => setHistoryMode("week")}>Week by week</button>
+        <button className={`btn ${historyMode === "month" ? "" : "btn-g"} btn-sm`} onClick={() => setHistoryMode("month")}>Month by month</button>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>
+            <th style={{ padding: "8px 10px", textAlign: "left", color: "var(--muted)", fontSize: 12 }}>{historyMode === "week" ? "Week of" : "Month"}</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Plan Rev.</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Delivery Rev.</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Ingredient Cost</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Payroll</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Other Exp.</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>One-Time</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Referral Comm.</th>
+            <th style={{ padding: "8px 10px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>Margin</th>
+          </tr></thead>
+          <tbody>
+            {historyRows.map(r => (
+              <tr key={r.week_start} style={{ borderTop: "1px solid var(--bdr)" }}>
+                <td style={{ padding: 10, color: "#fff" }}>
+                  {r.week_start}{r.week_start === weekStartIso && <span style={{ color: "var(--dim)", fontSize: 11, marginLeft: 6 }}>(current)</span>}
+                  {historyMode === "month" && <span style={{ color: "var(--dim)", fontSize: 11, marginLeft: 6 }}>({r.weeks} wk{r.weeks !== 1 ? "s" : ""})</span>}
+                </td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--muted)" }}>¥{Number(r.plan_revenue).toFixed(0)}</td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--muted)" }}>¥{Number(r.delivery_revenue).toFixed(0)}</td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--muted)" }}>¥{Number(r.ingredient_cost).toFixed(0)}</td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--muted)" }}>¥{Number(r.payroll).toFixed(0)}</td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--muted)" }}>¥{Number(r.other_expenses).toFixed(0)}</td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--muted)" }}>¥{Number(r.one_time_expenses || 0).toFixed(0)}</td>
+                <td style={{ padding: 10, textAlign: "right", color: "var(--muted)" }}>¥{Number(r.referral_commission || 0).toFixed(0)}</td>
+                <td style={{ padding: 10, textAlign: "right", fontWeight: 700, color: Number(r.margin) >= 0 ? "var(--green)" : "#f87171" }}>¥{Number(r.margin).toFixed(0)}</td>
+              </tr>
+            ))}
+            {historyRows.length === 0 && <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: "var(--dim)" }}>No history yet — it builds up automatically each time this screen is opened during a given week.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </>}
   </>;
 }
 
@@ -1068,6 +2115,7 @@ export default function App() {
   // meals: { [clientId]: { [day]: [ {id, time, meals:[], snack, note} ] } }
   // Each day can have MULTIPLE delivery slots per client
   const [meals,      setMeals]      = useState({});
+  const [pendingMeals, setPendingMeals] = useState({});
   const [menu,       setMenu]       = useState({1:{},2:{}});
   const [currentWeekIndex, setCurrentWeekIndex] = useState(1);
   const [rotationOrder, setRotationOrder] = useState([1,2]);
@@ -1081,14 +2129,34 @@ export default function App() {
   // cookTimes: { Monday: "10:00", Tuesday: "09:30", ... }
   const [cookTimes,  setCookTimes]  = useState({});
   const mealLibraryRef = useRef([]);
+  const [ingredients,     setIngredients]     = useState([]);
+  const [mealIngredients, setMealIngredients] = useState([]);
+  const [paidPayments,    setPaidPayments]    = useState([]);
+  const [employees,       setEmployees]       = useState([]);
+  const [otherExpenses,   setOtherExpenses]   = useState([]);
+  const [acctSnapshots,   setAcctSnapshots]   = useState([]);
+  const [oneTimeExpenses, setOneTimeExpenses] = useState([]);
   const [mealLibraryState, setMealLibraryState] = useState([]);
   const [pdfUrls,    setPdfUrls]    = useState({en:"", cn:""});
+  const [batchTimes, setBatchTimes] = useState(DEFAULT_BATCHES);
   const [pdfUploading,setPdfUploading]= useState({en:false, cn:false});
   // customMealItems: extra meals added manually
   const [customItems, setCustomItems] = useState([]);
 
   const [tab,         setTab]         = useState("dashboard");
   const [kitDay,      setKitDay]      = useState("Monday");
+  const [showBatchEditor, setShowBatchEditor] = useState(false);
+  const [batchDraft,      setBatchDraft]      = useState([]);
+
+  const openBatchEditor = () => { setBatchDraft([...batchTimes]); setShowBatchEditor(true); };
+  const saveBatchEditor = async () => {
+    const cleaned = Array.from(new Set(batchDraft.map(t=>t.trim()).filter(Boolean))).sort();
+    if (cleaned.length === 0) { alert("Necesitás al menos un horario de batch."); return; }
+    setBatchTimes(cleaned);
+    setShowBatchEditor(false);
+    try { await upsertSetting("kitchen_batches", JSON.stringify(cleaned)); }
+    catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
+  };
   const [mealDay,     setMealDay]     = useState("Monday");
   const [deliveryDay, setDeliveryDay] = useState("Monday");
   const [sbOpen,    setSbOpen]    = useState(false);
@@ -1334,14 +2402,29 @@ export default function App() {
     (async () => {
       try {
         const {getSettings, getMealLibrary} = await import("./lib/supabase");
-        const [pl, cl, mn, ms, ch, st, lib, curWeek, rotOrder, tiersData] = await Promise.all([
+        const [pl, cl, mn, ms, ch, st, lib, curWeek, rotOrder, tiersData, ingr, mealIngr, pmts, emps, otherExp, snaps, oneTimeExp, pendingMs] = await Promise.all([
           getPlans(), getClients(), getMenu(), getMealSelections(), getChecklist(),
-          getSettings(["brochure_en","brochure_cn"]),
+          getSettings(["brochure_en","brochure_cn","kitchen_batches"]),
           getMealLibrary(),
           getCurrentWeekIndex(),
           getMenuRotationOrder(),
           getTiers().catch(() => []),
+          getIngredients().catch(() => []),
+          getMealIngredients().catch(() => []),
+          getPaidPayments().catch(() => []),
+          getEmployees().catch(() => []),
+          getOtherExpenses().catch(() => []),
+          getAccountingSnapshots().catch(() => []),
+          getOneTimeExpenses().catch(() => []),
+          getPendingMealSelections().catch(() => ({})),
         ]);
+        setIngredients(ingr || []);
+        setMealIngredients(mealIngr || []);
+        setPaidPayments(pmts || []);
+        setEmployees(emps || []);
+        setOtherExpenses(otherExp || []);
+        setAcctSnapshots(snaps || []);
+        setOneTimeExpenses(oneTimeExp || []);
         refreshOrders().catch(e => console.error(e));
         refreshNotifications().catch(e => console.error(e));
         refreshCoaches().catch(e => console.error(e));
@@ -1349,6 +2432,10 @@ export default function App() {
         mealLibraryRef.current = lib || [];
         setMealLibraryState(lib || []);
         setPdfUrls({en: st.brochure_en||"", cn: st.brochure_cn||""});
+        try {
+          const parsedBatches = st.kitchen_batches ? JSON.parse(st.kitchen_batches) : null;
+          setBatchTimes(Array.isArray(parsedBatches) && parsedBatches.length ? parsedBatches : DEFAULT_BATCHES);
+        } catch { setBatchTimes(DEFAULT_BATCHES); }
         setPlans(pl);
         setTiers(tiersData || []);
         setClients(cl);
@@ -1378,6 +2465,26 @@ export default function App() {
           }
         }
         setMeals(converted);
+
+        const convertedPending = {};
+        for (const cid of Object.keys(pendingMs)) {
+          convertedPending[cid] = {};
+          for (const day of DAYS) {
+            const slots = pendingMs[cid]?.[day] || [];
+            convertedPending[cid][day] = slots.map(s => ({
+              id:     String(s.id),
+              slot:   s.slot,
+              time:   s.deliveryTime || "",
+              meals:  s.mealIds || [],
+              snack:  s.snack || "",
+              sauceIds: s.sauceIds || [],
+              snackId: s.snackId || "",
+              snackObj: s.snackObj || null,
+              note:   s.note || "",
+            }));
+          }
+        }
+        setPendingMeals(convertedPending);
         setChecks(ch);
         // Load cook times and custom items from localStorage as lightweight storage
         try {
@@ -1454,16 +2561,6 @@ export default function App() {
     return filtered.slice(start, start + CLIENTS_PAGE_SIZE);
   }, [filtered, clientsPage]);
 
-  // Extract size tag from plan name: "Big x 2" → "BIG", "Small x 1" → "SMALL", "Vegetarian x 1" → "VEG"
-  const getPlanSize = (planName) => {
-    if (!planName) return "";
-    const lower = planName.toLowerCase();
-    if (lower.includes("big")) return "BIG";
-    if (lower.includes("small")) return "SMALL";
-    if (lower.includes("vegetarian")) return "VEG";
-    return "";
-  };
-
   // Helper: resolve meal ID to name using mealLibraryRef
   const mealName = (id) => {
     if (!id) return "";
@@ -1477,43 +2574,58 @@ export default function App() {
     [clients]
   );
 
-  // Kitchen: aggregate meals by batch + size for each day
+  // Kitchen: aggregate INGREDIENTS (not meal counts) needed per batch, per day.
+  // Each portion is expanded into its meal_ingredients rows so kitchen staff
+  // see "how much of X to prep for this batch" instead of "how many of meal Y".
   const kitchen = useMemo(() => {
+    const ingredientById = {};
+    ingredients.forEach(i => { ingredientById[i.id] = i; });
+    const mealIngredientsByMeal = {};
+    mealIngredients.forEach(mi => { (mealIngredientsByMeal[mi.meal_id] = mealIngredientsByMeal[mi.meal_id] || []).push(mi); });
+
     const d = {};
     DAYS.forEach(day => {
-      // key: "09:45__Minced Beef Bowl__BIG" → { count, who }
       const batches = {};
-      BATCHES.forEach(b => { batches[b] = {}; });
+      batchTimes.forEach(b => { batches[b] = { portionCount: 0, ingGrams: {}, unassigned: new Set() }; });
 
       deliveryClients.filter(c => clientActiveOnDay(c, day)).forEach(c => {
         const slots = meals[c.id]?.[day] || [];
-        const size = getPlanSize(c.planName);
-        const name = c.name.split(" ")[0];
-
         slots.forEach(slot => {
-          const batch = getBatch(slot.time || "");
-
+          const batch = getBatch(slot.time || "", batchTimes);
           (slot.meals||[]).filter(id => id && id.trim() && id !== "—").forEach(rawId => {
-            const m = mealName(rawId) || rawId;
-            const key = m + (size ? "__" + size : "");
-            if (!batches[batch][key]) batches[batch][key] = { count: 0, who: [], meal: m, size };
-            batches[batch][key].count++;
-            batches[batch][key].who.push(name);
+            batches[batch].portionCount++;
+            const rows = mealIngredientsByMeal[rawId];
+            if (!rows || rows.length === 0) {
+              batches[batch].unassigned.add(mealName(rawId) || rawId);
+              return;
+            }
+            rows.forEach(mi => {
+              batches[batch].ingGrams[mi.ingredient_id] = (batches[batch].ingGrams[mi.ingredient_id] || 0) + Number(mi.quantity_grams);
+            });
           });
         });
       });
 
       // Convert to sorted array per batch
-      d[day] = BATCHES.map(b => ({
-        time: b,
-        items: Object.values(batches[b])
-          .sort((a, bv) => bv.count - a.count)
-          .map(({ meal, size, count, who }) => ({ meal, size, count, who })),
-        total: Object.values(batches[b]).reduce((s, v) => s + v.count, 0),
-      })).filter(b => b.items.length > 0);
+      d[day] = batchTimes.map(b => {
+        const bd = batches[b];
+        const ingredientsList = Object.entries(bd.ingGrams)
+          .map(([id, grams]) => {
+            const ing = ingredientById[id];
+            return {
+              id, grams,
+              name: ing ? ing.name : id,
+              category: ing ? ing.category : null,
+              photoUrl: ing ? ing.photo_url : null,
+              cost: ing && ing.cost_per_kg != null ? grams / 1000 * ing.cost_per_kg : null,
+            };
+          })
+          .sort((a, bv) => bv.grams - a.grams);
+        return { time: b, total: bd.portionCount, ingredients: ingredientsList, unassignedMeals: Array.from(bd.unassigned) };
+      }).filter(b => b.total > 0);
     });
     return d;
-  }, [deliveryClients, meals, plans, mealLibraryState]);
+  }, [deliveryClients, meals, batchTimes, ingredients, mealIngredients, mealLibraryState]);
 
   // Delivery: group by time, filtered by selected day
   const delivery = useMemo(() => {
@@ -2023,11 +3135,6 @@ export default function App() {
     const dayName = kitDay;
     const dateStr = new Date().toLocaleDateString("en-GB");
     const batches = kitchen[kitDay] || [];
-    const allItems = {};
-    batches.forEach(b => b.items.forEach(({meal,size,count}) => {
-      const key = meal + (size ? "__" + size : "");
-      allItems[key] = (allItems[key]||0) + count;
-    }));
     const totalPortions = batches.reduce((s,b)=>s+b.total,0);
 
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
@@ -2039,23 +3146,10 @@ export default function App() {
     doc.rect(0, 0, W, 18, "F");
     doc.setTextColor(255,255,255);
     doc.setFontSize(14); doc.setFont("helvetica","bold");
-    doc.text("FIT IGNYTE — Kitchen Prep", 10, 12);
+    doc.text("FIT IGNYTE — Kitchen Prep (Ingredients)", 10, 12);
     doc.setFontSize(9); doc.setFont("helvetica","normal");
     doc.text(dayName + "  |  " + dateStr + "  |  " + totalPortions + " portions  |  " + batches.length + " batches", 10, 17);
     y = 24;
-
-    const sizeColor = (size) => {
-      if (size === "BIG")   return [251,146,60];
-      if (size === "VEG")   return [74,222,128];
-      if (size === "SMALL") return [96,165,250];
-      return [150,150,150];
-    };
-    const sizeBg = (size) => {
-      if (size === "BIG")   return [67,20,7];
-      if (size === "VEG")   return [5,46,22];
-      if (size === "SMALL") return [12,26,46];
-      return [30,30,30];
-    };
 
     // Batches
     batches.forEach(batch => {
@@ -2069,33 +3163,24 @@ export default function App() {
       doc.text(batch.total + " portion" + (batch.total!==1?"s":""), W-10, y+5.5, {align:"right"});
       y += 8;
 
-      batch.items.forEach(({meal,size,count,who},i) => {
+      if (batch.unassignedMeals.length) {
+        doc.setFillColor(255,251,235); doc.rect(0,y,W,7,"F");
+        doc.setTextColor(180,130,0); doc.setFontSize(7); doc.setFont("helvetica","italic");
+        doc.text(doc.splitTextToSize("No ingredients assigned yet: " + batch.unassignedMeals.join(", "), W-16)[0], 8, y+4.5);
+        y += 7;
+      }
+
+      batch.ingredients.forEach((ing,i) => {
         if (y > 275) { doc.addPage(); y = 10; }
         const rowH = 8;
         if (i%2===0) { doc.setFillColor(245,245,245); doc.rect(0,y,W,rowH,"F"); }
-        // Count badge
-        doc.setFillColor(232,52,42);
-        doc.rect(8, y+1, 10, 6, "F");
-        doc.setTextColor(255,255,255);
-        doc.setFontSize(9); doc.setFont("helvetica","bold");
-        doc.text(String(count), 13, y+5.5, {align:"center"});
-        // Meal name
+        // Ingredient name
         doc.setTextColor(20,20,20);
-        doc.setFont("helvetica","normal");
-        doc.text(doc.splitTextToSize(meal, 100)[0], 22, y+5.5);
-        // Size badge
-        if (size) {
-          const bg = sizeBg(size); const fg = sizeColor(size);
-          doc.setFillColor(bg[0],bg[1],bg[2]);
-          doc.rect(124, y+1.5, 14, 5, "F");
-          doc.setTextColor(fg[0],fg[1],fg[2]);
-          doc.setFontSize(7); doc.setFont("helvetica","bold");
-          doc.text(size, 131, y+5.2, {align:"center"});
-        }
-        // Who
-        doc.setTextColor(150,150,150);
-        doc.setFontSize(7); doc.setFont("helvetica","normal");
-        doc.text("→ " + who.join(", "), 140, y+5.5);
+        doc.setFontSize(9); doc.setFont("helvetica","normal");
+        doc.text(doc.splitTextToSize(ing.name, 140)[0], 10, y+5.5);
+        // Quantity
+        doc.setFont("helvetica","bold");
+        doc.text(fmtQty(ing.grams, ing.category), W-10, y+5.5, {align:"right"});
         y += rowH;
       });
       y += 4;
@@ -2159,6 +3244,8 @@ export default function App() {
               {id:"plans",    ic:"🗂️", lbl:"Plans"},
               {id:"menu",     ic:"📋",lbl:"Menu Reference"},
               {id:"mealstats",ic:"📊",lbl:"Meal Stats"},
+              {id:"ingredients",ic:"🥕",lbl:"Ingredients"},
+              {id:"accounting",ic:"💰",lbl:"Accounting"},
             ].map(n=>(
               <button key={n.id} className={`ni${tab===n.id?" on":""}`} onClick={()=>navTo(n.id)}>
                 <span className="ni-ic">{n.ic}</span>{n.lbl}
@@ -2168,7 +3255,6 @@ export default function App() {
           </nav>
           <div className="sb-footer">
             <div className="sb-stat">Active clients: <strong>{active.length}</strong></div>
-            <div className="sb-stat" style={{marginTop:6}}>Weekly revenue: <strong style={{color:"#22c55e"}}>¥{revenue}</strong></div>
             <button className="btn btn-g" style={{width:"100%",marginTop:14,padding:"11px 0",fontSize:13}} onClick={async()=>{await signOut(); setSession(null);}}>Log Out</button>
           </div>
         </div>
@@ -2177,7 +3263,7 @@ export default function App() {
         <div className="main">
           <div className="topbar">
             <div className="tb-title">
-              {{dashboard:"Operations Dashboard",clients:"Client Master List",meals:"Weekly Meal Selections",kitchen:"Kitchen Prep Summary",delivery:"Delivery Sheet",orders:"Orders",notifications:"Notifications",plans:"Plans",menu:"Menu Reference",mealstats:"Meal Stats"}[tab]}
+              {{dashboard:"Operations Dashboard",clients:"Client Master List",meals:"Weekly Meal Selections",kitchen:"Kitchen Prep Summary",delivery:"Delivery Sheet",orders:"Orders",notifications:"Notifications",plans:"Plans",menu:"Menu Reference",mealstats:"Meal Stats",ingredients:"Ingredients & Costs",accounting:"Accounting"}[tab]}
             </div>
             <div className="tb-right">
               {tab==="clients"&&<>
@@ -2197,8 +3283,11 @@ export default function App() {
               {tab==="plans"&&!selectedTierId&&<button className="btn btn-r" onClick={openAddTier}>+ New Tier</button>}
               {tab==="plans"&&selectedTierId&&<button className="btn btn-r" onClick={openAddPlan}>+ New Plan</button>}
               {tab==="kitchen"&&(
-                <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
-                  {DAYS.map(d=><button key={d} className={`tab${kitDay===d?" on":""}`} onClick={()=>setKitDay(d)}>{d.slice(0,3)}</button>)}
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
+                    {DAYS.map(d=><button key={d} className={`tab${kitDay===d?" on":""}`} onClick={()=>setKitDay(d)}>{d.slice(0,3)}</button>)}
+                  </div>
+                  <button className="btn btn-g btn-sm" onClick={openBatchEditor}>✎ Edit Batches</button>
                 </div>
               )}
               {tab==="delivery"&&(
@@ -2483,6 +3572,42 @@ export default function App() {
                       <div className="slot-add-btn">
                         <button className="btn btn-g btn-sm" onClick={()=>addSlot(c.id,mealDay)}>+ Add Delivery Slot</button>
                       </div>
+
+                      {(pendingMeals[c.id]?.[mealDay] || []).length > 0 && (
+                        <div style={{ marginTop: 10, border: "1px dashed #38bdf8", borderRadius: 8, overflow: "hidden" }}>
+                          <div style={{ padding: "6px 12px", background: "rgba(56,189,248,.12)", color: "#38bdf8", fontSize: 11, fontWeight: 700 }}>
+                            🔵 NEXT CYCLE — already chosen for after this client's renewal applies
+                          </div>
+                          {pendingMeals[c.id][mealDay].map((slot, si) => (
+                            <div className="slot-row" key={"pending-" + slot.id} style={{ opacity: .85 }}>
+                              <div className="slot-num">Slot {si + 1}</div>
+                              <div className="slot-fields">
+                                <div className="slot-field slot-field-sm">
+                                  <label>Delivery Time</label>
+                                  <div className="msel" style={{ display: "flex", alignItems: "center" }}>{slot.time || "—"}</div>
+                                </div>
+                                <div className="slot-field" style={{ flex: 2, minWidth: 200 }}>
+                                  <label>Meals</label>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                                    {(slot.meals || []).length === 0 ? <span style={{ color: "var(--dim)", fontSize: 11 }}>—</span> :
+                                      slot.meals.map((mealId, mi) => <div key={mi} style={{ fontSize: 12, color: "#fff" }}>{mealName(mealId) || mealId}</div>)}
+                                  </div>
+                                </div>
+                                {slot.snack && (
+                                  <div className="slot-field slot-field-sm">
+                                    <label>Snack</label>
+                                    <div className="msel" style={{ display: "flex", alignItems: "center" }}>{slot.snack}</div>
+                                  </div>
+                                )}
+                                <div className="slot-field">
+                                  <label>Note</label>
+                                  <div className="msel" style={{ display: "flex", alignItems: "center" }}>{slot.note || "—"}</div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 });
@@ -2536,12 +3661,22 @@ export default function App() {
                       <span>🔴 BATCH {batch.time}</span>
                       <span style={{fontSize:12,opacity:.85}}>{batch.total} portion{batch.total!==1?"s":""}</span>
                     </div>
-                    {batch.items.map(({meal,size,count,who},i)=>(
-                      <div className="kr" key={i} style={{background:i%2===0?"var(--s2)":"var(--s1)"}}>
-                        <div className="kc">{count}</div>
-                        <div className="km">{meal}</div>
-                        {size&&<span style={{background:size==="BIG"?"#431407":size==="VEG"?"#052e16":"#0c1a2e",color:size==="BIG"?"#fb923c":size==="VEG"?"#4ade80":"#60a5fa",fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:4,marginLeft:8,flexShrink:0}}>{size}</span>}
-                        <div className="kclients">→ {who.join(", ")}</div>
+                    {batch.unassignedMeals.length>0 && (
+                      <div style={{padding:"8px 14px",background:"rgba(251,191,36,.1)",color:"#fbbf24",fontSize:11}}>
+                        ⚠ No ingredients assigned yet for: {batch.unassignedMeals.join(", ")} — missing from the amounts below.
+                      </div>
+                    )}
+                    {batch.ingredients.length===0 ? (
+                      <div className="kr" style={{background:"var(--s2)",color:"var(--dim)",fontSize:11}}>No ingredients to show for this batch.</div>
+                    ) : batch.ingredients.map((ing,i)=>(
+                      <div className="kr" key={ing.id} style={{background:i%2===0?"var(--s2)":"var(--s1)"}}>
+                        <div style={{width:28,height:28,borderRadius:6,overflow:"hidden",background:"var(--s3,#242424)",flexShrink:0,marginRight:10,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {ing.photoUrl ? <img src={ing.photoUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/> : <span style={{fontSize:12,opacity:.4}}>🥕</span>}
+                        </div>
+                        <div className="km">{ing.name}</div>
+                        <div style={{marginLeft:"auto",fontWeight:700,color:"#fff",fontSize:13}}>
+                          {fmtQty(ing.grams, ing.category)}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2550,29 +3685,33 @@ export default function App() {
 
               {/* Day total summary */}
               {(kitchen[kitDay]||[]).length>0&&(()=>{
-                const allItems = {};
-                (kitchen[kitDay]||[]).forEach(b => b.items.forEach(({meal,size,count}) => {
-                  const key = meal + (size ? "__" + size : "");
-                  allItems[key] = (allItems[key]||0) + count;
+                const allGrams = {}; const allMeta = {};
+                (kitchen[kitDay]||[]).forEach(b => b.ingredients.forEach(ing => {
+                  allGrams[ing.id] = (allGrams[ing.id]||0) + ing.grams;
+                  allMeta[ing.id] = ing;
                 }));
+                const rows = Object.entries(allGrams).sort((a,b)=>b[1]-a[1]);
+                const totalCost = rows.reduce((s,[id,grams])=>{
+                  const ing = allMeta[id];
+                  return s + (ing.cost!=null ? grams/ing.grams*ing.cost : 0);
+                },0);
                 return (
                   <div style={{marginTop:8,marginBottom:20}}>
                     <div style={{background:"#0f0f0f",border:"1px solid var(--bdr)",borderRadius:"6px 6px 0 0",padding:"9px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <span style={{fontFamily:"'Rajdhani',sans-serif",fontSize:14,fontWeight:700,letterSpacing:1,color:"var(--dim)"}}>DAY TOTAL — {kitDay.toUpperCase()}</span>
-                      <span style={{fontSize:11,color:"var(--dim)"}}>{Object.values(allItems).reduce((s,v)=>s+v,0)} portions</span>
+                      <span style={{fontSize:11,color:"var(--dim)"}}>~¥{totalCost.toFixed(0)} in ingredients</span>
                     </div>
-                    {Object.entries(allItems).sort((a,b)=>b[1]-a[1]).map(([key,count],i)=>{
-                      const parts = key.split("__");
-                      const meal = parts[0];
-                      const size = parts[1] || "";
-                      return (
-                        <div className="kr" key={i} style={{background:i%2===0?"var(--s2)":"var(--s1)"}}>
-                          <div className="kc" style={{background:"#333",color:"#fff"}}>{count}</div>
-                          <div className="km" style={{color:"#aaa"}}>{meal}</div>
-                          {size&&<span style={{background:size==="BIG"?"#431407":size==="VEG"?"#052e16":"#0c1a2e",color:size==="BIG"?"#fb923c":size==="VEG"?"#4ade80":"#60a5fa",fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:4,marginLeft:8,flexShrink:0}}>{size}</span>}
+                    {rows.map(([id,grams],i)=>(
+                      <div className="kr" key={id} style={{background:i%2===0?"var(--s2)":"var(--s1)"}}>
+                        <div style={{width:28,height:28,borderRadius:6,overflow:"hidden",background:"var(--s3,#242424)",flexShrink:0,marginRight:10,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {allMeta[id].photoUrl ? <img src={allMeta[id].photoUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/> : <span style={{fontSize:12,opacity:.4}}>🥕</span>}
                         </div>
-                      );
-                    })}
+                        <div className="km" style={{color:"#aaa"}}>{allMeta[id].name}</div>
+                        <div style={{marginLeft:"auto",fontWeight:700,color:"#fff",fontSize:13}}>
+                          {fmtQty(grams, allMeta[id].category)}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 );
               })()}
@@ -2963,6 +4102,28 @@ export default function App() {
             {/* ═══ MEAL STATS ════════════════════════════════ */}
             {tab==="mealstats"&&<MealStatsTab plans={plans} />}
 
+            {/* ═══ INGREDIENTS & COSTS ════════════════════════ */}
+            {tab==="ingredients"&&<IngredientsTab
+              ingredients={ingredients} setIngredients={setIngredients}
+              mealIngredients={mealIngredients} setMealIngredients={setMealIngredients}
+              mealLibrary={mealLibraryState}
+              deliveryClients={deliveryClients} meals={meals}
+              flash={flash}
+            />}
+
+            {/* ═══ ACCOUNTING ═════════════════════════════════ */}
+            {tab==="accounting"&&<AccountingTab
+              active={active} plans={plans} paidPayments={paidPayments}
+              ingredients={ingredients} mealIngredients={mealIngredients}
+              mealLibrary={mealLibraryState}
+              deliveryClients={deliveryClients} meals={meals}
+              employees={employees} setEmployees={setEmployees}
+              otherExpenses={otherExpenses} setOtherExpenses={setOtherExpenses}
+              acctSnapshots={acctSnapshots} setAcctSnapshots={setAcctSnapshots}
+              oneTimeExpenses={oneTimeExpenses} setOneTimeExpenses={setOneTimeExpenses}
+              coaches={coaches} setCoaches={setCoaches}
+            />}
+
           </div>
         </div>
       </div>
@@ -3188,6 +4349,34 @@ export default function App() {
       )}
 
       {/* ═══ CUSTOM ITEM MODAL ═══════════════════════ */}
+      {showBatchEditor&&(
+        <div className="mo" onClick={e=>{if(e.target===e.currentTarget)setShowBatchEditor(false);}}>
+          <div className="mo-box" style={{maxWidth:380}}>
+            <div className="mo-hd">
+              <div className="mo-title">Kitchen Prep Batches</div>
+              <button className="btn btn-g btn-sm" onClick={()=>setShowBatchEditor(false)}>✕</button>
+            </div>
+            <div className="mo-body">
+              <p style={{fontSize:11,color:"var(--muted)",marginBottom:14}}>Cada horario es un corte de "cocinar hasta esta hora" — un pedido con delivery a las 10:30 cae en el batch 09:45 si el siguiente es 11:00. Formato 24hs, HH:MM.</p>
+              {batchDraft.map((t,i)=>(
+                <div key={i} style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
+                  <input className="inp" value={t} placeholder="HH:MM"
+                    onChange={e=>setBatchDraft(p=>p.map((x,j)=>j===i?e.target.value:x))}
+                    style={{width:110}} />
+                  <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}}
+                    onClick={()=>setBatchDraft(p=>p.filter((_,j)=>j!==i))}>Remove</button>
+                </div>
+              ))}
+              <button className="btn btn-g btn-sm" onClick={()=>setBatchDraft(p=>[...p,""])}>+ Add batch</button>
+            </div>
+            <div className="mo-ft">
+              <button className="btn btn-g" onClick={()=>setShowBatchEditor(false)}>Cancel</button>
+              <button className="btn btn-r" onClick={saveBatchEditor}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCustomItemModal&&(
         <div className="mo" onClick={e=>{if(e.target===e.currentTarget)setShowCustomItemModal(false);}}>
           <div className="mo-box" style={{maxWidth:440}}>

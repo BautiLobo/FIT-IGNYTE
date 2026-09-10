@@ -230,6 +230,37 @@ export async function getMealSelections() {
   return out;
 }
 
+// Elecciones ya confirmadas para el PRÓXIMO ciclo de una renovación
+// anticipada -- separado de meal_selections (que sigue siendo el ciclo
+// actual hasta que el cron las aplique el día que arranca el nuevo ciclo).
+export async function getPendingMealSelections() {
+  const data = check(
+    await supabase.from("pending_meal_selections")
+      .select("*, snack:snack_id(id,name,kcal,protein,carbs,fat,is_snack)"),
+    "getPendingMealSelections"
+  );
+  const out = {};
+  for (const row of (data || [])) {
+    const cid = String(row.client_id);
+    if (!out[cid]) out[cid] = {};
+    if (!out[cid][row.day]) out[cid][row.day] = [];
+    out[cid][row.day].push({
+      id:           row.id,
+      slot:         row.slot,
+      mealIds:      row.meals_json || [],
+      deliveryTime: row.delivery_time || "",
+      snackId:      row.snack_id || "",
+      snack:        row.snack?.name || "",
+      snackObj:     row.snack || null,
+      note:         row.note || "",
+      sauceIds:     row.sauce_ids || [],
+      outTradeNo:   row.out_trade_no || "",
+    });
+    out[cid][row.day].sort((a,b) => a.slot - b.slot);
+  }
+  return out;
+}
+
 export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, cookTime, snackId, note, sauceIds }) {
   check(await supabase.from("meal_selections").upsert({
     client_id:     clientId,
@@ -492,6 +523,78 @@ export async function createCoach(name, code) {
 export async function deleteCoach(id) {
   check(await supabase.from("coaches").delete().eq("id", id), "deleteCoach");
 }
+export async function updateCoachCommission(id, commission_per_referral) {
+  return check(await supabase.from("coaches").update({ commission_per_referral }).eq("id", id).select().single(), "updateCoachCommission");
+}
+
+// ── PAYMENTS (solo lectura -- toda escritura pasa por las Edge Functions) ──
+export async function getPaidPayments() {
+  return check(await supabase
+    .from("payments")
+    .select("id,client_id,type,amount_fen,status,start_date,expiry_date,paid_at,applied,referral_code")
+    .eq("status", "paid"), "getPaidPayments");
+}
+
+// ── EMPLOYEES / PAYROLL ────────────────────────────────────────
+export async function getEmployees() {
+  return check(await supabase.from("employees").select("*").order("name"), "getEmployees");
+}
+export async function upsertEmployee(employee) {
+  return check(await supabase.from("employees").upsert(employee).select().single(), "upsertEmployee");
+}
+export async function deleteEmployee(id) {
+  check(await supabase.from("employees").delete().eq("id", id), "deleteEmployee");
+}
+
+// ── OTHER EXPENSES (packaging, alquiler, etc.) ────────────────
+export async function getOtherExpenses() {
+  return check(await supabase.from("other_expenses").select("*").order("name"), "getOtherExpenses");
+}
+export async function upsertOtherExpense(expense) {
+  return check(await supabase.from("other_expenses").upsert(expense).select().single(), "upsertOtherExpense");
+}
+export async function deleteOtherExpense(id) {
+  check(await supabase.from("other_expenses").delete().eq("id", id), "deleteOtherExpense");
+}
+
+// ── ACCOUNTING SNAPSHOTS (historial semanal) ──────────────────
+export async function getAccountingSnapshots() {
+  return check(await supabase.from("accounting_snapshots").select("*").order("week_start"), "getAccountingSnapshots");
+}
+export async function upsertAccountingSnapshot(snapshot) {
+  return check(await supabase.from("accounting_snapshots").upsert(snapshot, { onConflict: "week_start" }).select().single(), "upsertAccountingSnapshot");
+}
+
+// ── ONE-TIME EXPENSES (no recurrentes, con fecha) ─────────────
+export async function getOneTimeExpenses() {
+  return check(await supabase.from("one_time_expenses").select("*").order("expense_date", { ascending: false }), "getOneTimeExpenses");
+}
+export async function upsertOneTimeExpense(expense) {
+  return check(await supabase.from("one_time_expenses").upsert(expense).select().single(), "upsertOneTimeExpense");
+}
+export async function deleteOneTimeExpense(id) {
+  check(await supabase.from("one_time_expenses").delete().eq("id", id), "deleteOneTimeExpense");
+}
+
+// ── INGREDIENTS / COSTOS ──────────────────────────────────────
+export async function getIngredients() {
+  return check(await supabase.from("ingredients").select("*").order("name"), "getIngredients");
+}
+export async function upsertIngredient(ingredient) {
+  return check(await supabase.from("ingredients").upsert(ingredient).select().single(), "upsertIngredient");
+}
+export async function deleteIngredient(id) {
+  check(await supabase.from("ingredients").delete().eq("id", id), "deleteIngredient");
+}
+export async function getMealIngredients() {
+  return check(await supabase.from("meal_ingredients").select("*"), "getMealIngredients");
+}
+export async function upsertMealIngredient(mealIngredient) {
+  return check(await supabase.from("meal_ingredients").upsert(mealIngredient).select().single(), "upsertMealIngredient");
+}
+export async function deleteMealIngredient(id) {
+  check(await supabase.from("meal_ingredients").delete().eq("id", id), "deleteMealIngredient");
+}
 
 // ── NOTIFICATIONS (in-app) ───────────────────────────────────
 export async function createNotification(clientId, title, message) {
@@ -569,6 +672,14 @@ export async function uploadMealPhoto(file, mealId) {
   const { error } = await supabase.storage.from("meal-photos").upload(path, file, { upsert: true });
   if (error) throw error;
   const { data } = supabase.storage.from("meal-photos").getPublicUrl(path);
+  return data.publicUrl;
+}
+export async function uploadIngredientPhoto(file, ingredientId) {
+  const ext  = file.name.split(".").pop();
+  const path = `${ingredientId}.${ext}`;
+  const { error } = await supabase.storage.from("ingredient-photos").upload(path, file, { upsert: true });
+  if (error) throw error;
+  const { data } = supabase.storage.from("ingredient-photos").getPublicUrl(path);
   return data.publicUrl;
 }
 export async function uploadDocument(file, name) {

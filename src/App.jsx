@@ -1,5 +1,5 @@
 // FitIgnyte.jsx — Full app connected to Supabase
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   getPlans, upsertPlan, deletePlan as dbDeletePlan,
   getTiers, upsertTier, deleteTier as dbDeleteTier,
@@ -2267,17 +2267,35 @@ export default function App() {
     } catch (e) { console.error(e); alert("Could not delete notification."); }
   };
 
+  // Clientes con una renovación ya pagada que `apply_pending_renewals` todavía
+  // no aplicó a `clients` (renovación anticipada -- ver complete-payment).
+  // Mientras tanto el ciclo viejo ya venció y getRealStatus() los marca
+  // "Inactive", aunque ya pagaron y tienen el próximo ciclo confirmado.
+  const pendingRenewalStartByClient = useMemo(() => {
+    const m = {};
+    paidPayments.forEach(p => {
+      if (p.applied === false && (!m[p.client_id] || p.start_date < m[p.client_id])) {
+        m[p.client_id] = p.start_date;
+      }
+    });
+    return m;
+  }, [paidPayments]);
+  const clientRealStatus = useCallback((c) => {
+    const rs = getRealStatus(c.startDate, c.expiryDate);
+    return rs === "Inactive" && pendingRenewalStartByClient[c.id] ? "Upcoming" : rs;
+  }, [pendingRenewalStartByClient]);
+
   const notifRecipients = useMemo(() => {
     if (notifForm.recipientMode === "all") return clients.map(c => c.id);
     if (notifForm.recipientMode === "status") {
       if (notifForm.statusFilter === "Expired") return clients.filter(c => c.expiryDate && daysUntil(c.expiryDate) < 0).map(c => c.id);
       // c.status queda desactualizado (se escribe una vez al pagar y nunca mas se
-      // sincroniza) -- usamos getRealStatus() como en el resto del panel, no la
+      // sincroniza) -- usamos clientRealStatus() como en el resto del panel, no la
       // columna cruda, para no mandarle el aviso al conjunto de clientes equivocado.
-      return clients.filter(c => getRealStatus(c.startDate, c.expiryDate) === notifForm.statusFilter).map(c => c.id);
+      return clients.filter(c => clientRealStatus(c) === notifForm.statusFilter).map(c => c.id);
     }
     return notifForm.clientIds;
-  }, [notifForm.recipientMode, notifForm.statusFilter, notifForm.clientIds, clients]);
+  }, [notifForm.recipientMode, notifForm.statusFilter, notifForm.clientIds, clients, clientRealStatus]);
 
   const toggleNotifClient = (id) => {
     setNotifForm(f => ({...f, clientIds: f.clientIds.includes(id) ? f.clientIds.filter(x=>x!==id) : [...f.clientIds, id]}));
@@ -2542,14 +2560,14 @@ export default function App() {
 
   const filtered = useMemo(() => {
     let l = clients.filter(c => c.paid || !c.phone || !approvedOrderPhones.has(c.phone));
-    if (filterSt!=="all") l=l.filter(c=>getRealStatus(c.startDate,c.expiryDate)===filterSt);
+    if (filterSt!=="all") l=l.filter(c=>clientRealStatus(c)===filterSt);
     if (search) l=l.filter(c=>
       c.name.toLowerCase().includes(search.toLowerCase())||
       (c.district||"").toLowerCase().includes(search.toLowerCase())||
       (c.planName||"").toLowerCase().includes(search.toLowerCase())
     );
     return l;
-  }, [clients,filterSt,search,approvedOrderPhones]);
+  }, [clients,filterSt,search,approvedOrderPhones,clientRealStatus]);
 
   // Volver a la página 1 cada vez que cambia el filtro/búsqueda -- si no,
   // se puede quedar mostrando una página vacía de un filtro anterior.
@@ -2570,8 +2588,8 @@ export default function App() {
 
   // Active + Upcoming clients — used by Kitchen Prep and Delivery Sheet
   const deliveryClients = useMemo(
-    () => clients.filter(c => ["Active","Upcoming"].includes(getRealStatus(c.startDate,c.expiryDate))),
-    [clients]
+    () => clients.filter(c => ["Active","Upcoming"].includes(clientRealStatus(c))),
+    [clients, clientRealStatus]
   );
 
   // Kitchen: aggregate INGREDIENTS (not meal counts) needed per batch, per day.
@@ -3441,7 +3459,7 @@ export default function App() {
                       <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
                       <td style={{color:"var(--muted)"}}>¥{c.deliveryFee ?? 35}</td>
                       <td>{(()=>{
-                        const rs = getRealStatus(c.startDate, c.expiryDate);
+                        const rs = clientRealStatus(c);
                         if (rs === "Active")   return <span className="bx bx-g">Active</span>;
                         if (rs === "Upcoming") return <span className="bx bx-a">Upcoming</span>;
                         return <span className="bx bx-gr">Inactive</span>;
@@ -3513,8 +3531,8 @@ export default function App() {
                       <div className="client-card-hd">
                         <div className="client-card-name">{c.name}</div>
                         <PlanBadge planName={c.planName} plans={plans}/>
-                        {getRealStatus(c.startDate,c.expiryDate)==="Upcoming"&&
-                          <span className="bx bx-a" style={{fontSize:9}}>Upcoming · starts {fmtDate(c.startDate)}</span>}
+                        {clientRealStatus(c)==="Upcoming"&&
+                          <span className="bx bx-a" style={{fontSize:9}}>Upcoming · starts {fmtDate(pendingRenewalStartByClient[c.id] || c.startDate)}</span>}
                         {c.customizations&&<span style={{fontSize:10,color:"#fcd34d"}}>⚠️ {c.customizations}</span>}
                         <button
                           onClick={()=>toggleCutlery(c.id)}

@@ -151,6 +151,42 @@ function clientActiveOnDay(c, dayName) {
   return targetDate >= start && targetDate <= expiry;
 }
 
+// Fecha calendario (this-week) de un nombre de día, misma resolución que usa
+// clientActiveOnDay -- se reutiliza para el chequeo de renovación anticipada.
+function calendarDateForDay(dayName) {
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const targetIdx = DAY_INDEX[dayName] ?? -1;
+  if (targetIdx === -1) return null;
+  const diff = (targetIdx - now.getDay() + 7) % 7;
+  const d = new Date(now);
+  d.setDate(now.getDate() + diff);
+  return d;
+}
+
+// Igual que clientActiveOnDay, pero además cuenta como activo ese día a un
+// cliente en el gap de renovación anticipada: su ciclo viejo ya venció
+// (clientActiveOnDay da false) pero ya pagó el próximo ciclo y ese día cae
+// en o después de pendingStart (el start_date del pago con applied=false --
+// ver pendingRenewalStartByClient). Sin esto, Kitchen Prep / Delivery Sheet /
+// Shopping List / Accounting perdían a estos clientes por completo durante
+// el gap, aunque ya tuvieran las comidas del ciclo nuevo elegidas.
+function clientActiveOnDayOrPending(c, dayName, pendingStart) {
+  if (clientActiveOnDay(c, dayName)) return true;
+  if (!pendingStart) return false;
+  const targetDate = calendarDateForDay(dayName);
+  if (!targetDate) return false;
+  return targetDate >= new Date(pendingStart + "T00:00:00");
+}
+
+// Slots de comida de un cliente para ese día: del ciclo en curso si está
+// activo, o de pending_meal_selections si está en el gap de renovación
+// anticipada (mismo criterio que clientActiveOnDayOrPending).
+function mealSlotsForDay(c, day, meals, pendingMeals, pendingStart) {
+  if (clientActiveOnDay(c, day)) return meals[c.id]?.[day] || [];
+  if (pendingStart) return pendingMeals[c.id]?.[day] || [];
+  return [];
+}
+
 // ─── STYLES ──────────────────────────────────────────────────────────────────
 const G = `
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
@@ -555,7 +591,7 @@ function MealStatsTab({ plans }) {
   </>;
 }
 
-function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealIngredients, mealLibrary, deliveryClients, meals, flash }) {
+function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealIngredients, mealLibrary, deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, flash }) {
   const [view, setView] = useState("ingredients"); // ingredients | assign | shopping
 
   const ingredientById = useMemo(() => {
@@ -743,8 +779,8 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
   const shoppingList = useMemo(() => {
     const totals = {}; // ingredientId -> grams
     const unassignedMeals = new Set();
-    deliveryClients.filter(c => clientActiveOnDay(c, shopDay)).forEach(c => {
-      const slots = meals[c.id]?.[shopDay] || [];
+    deliveryClients.filter(c => clientActiveOnDayOrPending(c, shopDay, pendingRenewalStartByClient?.[c.id])).forEach(c => {
+      const slots = mealSlotsForDay(c, shopDay, meals, pendingMeals, pendingRenewalStartByClient?.[c.id]);
       slots.forEach(slot => {
         (slot.meals || []).filter(id => id && id.trim() && id !== "—").forEach(mealId => {
           const rows = mealIngredientsByMeal[mealId];
@@ -765,7 +801,7 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
     const totalCost = rows.reduce((s, r) => s + (r.cost || 0), 0);
     const hasMissingCost = rows.some(r => r.cost == null);
     return { rows, totalCost, hasMissingCost, unassignedMeals: Array.from(unassignedMeals) };
-  }, [deliveryClients, meals, shopDay, mealIngredientsByMeal, ingredientById, mealLibrary]);
+  }, [deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, shopDay, mealIngredientsByMeal, ingredientById, mealLibrary]);
 
   const catColor = { protein: "#f87171", carb: "#fbbf24", veg: "#4ade80", sauce: "#38bdf8" };
 
@@ -983,7 +1019,7 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
   </>;
 }
 
-function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredients, mealLibrary, deliveryClients, meals, employees, setEmployees, otherExpenses, setOtherExpenses, acctSnapshots, setAcctSnapshots, oneTimeExpenses, setOneTimeExpenses, coaches, setCoaches }) {
+function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredients, mealLibrary, deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, employees, setEmployees, otherExpenses, setOtherExpenses, acctSnapshots, setAcctSnapshots, oneTimeExpenses, setOneTimeExpenses, coaches, setCoaches }) {
   const ACC_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
   const todayIso = new Date().toISOString().slice(0, 10);
   const [view, setView] = useState("current"); // current | history
@@ -1057,8 +1093,8 @@ function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredien
     const unassigned = new Set();
     const days = ACC_DAYS.map(day => {
       let dayCost = 0, missingCost = false;
-      deliveryClients.filter(c => clientActiveOnDay(c, day)).forEach(c => {
-        const slots = meals[c.id]?.[day] || [];
+      deliveryClients.filter(c => clientActiveOnDayOrPending(c, day, pendingRenewalStartByClient?.[c.id])).forEach(c => {
+        const slots = mealSlotsForDay(c, day, meals, pendingMeals, pendingRenewalStartByClient?.[c.id]);
         slots.forEach(slot => {
           (slot.meals || []).filter(id => id && id.trim() && id !== "—").forEach(mealId => {
             const rows = mealIngredientsByMeal[mealId];
@@ -1077,7 +1113,7 @@ function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredien
       return { day, cost: dayCost, missing: missingCost };
     });
     return { days, unassigned: Array.from(unassigned) };
-  }, [deliveryClients, meals, mealIngredientsByMeal, ingredientById, mealLibrary]);
+  }, [deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, mealIngredientsByMeal, ingredientById, mealLibrary]);
 
   const totalCost = costByDay.days.reduce((s, d) => s + d.cost, 0);
   const costHasGaps = costByDay.days.some(d => d.missing) || costByDay.unassigned.length > 0;
@@ -2606,8 +2642,8 @@ export default function App() {
       const batches = {};
       batchTimes.forEach(b => { batches[b] = { portionCount: 0, ingGrams: {}, unassigned: new Set() }; });
 
-      deliveryClients.filter(c => clientActiveOnDay(c, day)).forEach(c => {
-        const slots = meals[c.id]?.[day] || [];
+      deliveryClients.filter(c => clientActiveOnDayOrPending(c, day, pendingRenewalStartByClient[c.id])).forEach(c => {
+        const slots = mealSlotsForDay(c, day, meals, pendingMeals, pendingRenewalStartByClient[c.id]);
         slots.forEach(slot => {
           const batch = getBatch(slot.time || "", batchTimes);
           (slot.meals||[]).filter(id => id && id.trim() && id !== "—").forEach(rawId => {
@@ -2643,13 +2679,13 @@ export default function App() {
       }).filter(b => b.total > 0);
     });
     return d;
-  }, [deliveryClients, meals, batchTimes, ingredients, mealIngredients, mealLibraryState]);
+  }, [deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, batchTimes, ingredients, mealIngredients, mealLibraryState]);
 
   // Delivery: group by time, filtered by selected day
   const delivery = useMemo(() => {
     const allSlots = [];
-    deliveryClients.filter(c => clientActiveOnDay(c, deliveryDay)).forEach(c => {
-      (meals[c.id]?.[deliveryDay]||[]).forEach(slot => {
+    deliveryClients.filter(c => clientActiveOnDayOrPending(c, deliveryDay, pendingRenewalStartByClient[c.id])).forEach(c => {
+      mealSlotsForDay(c, deliveryDay, meals, pendingMeals, pendingRenewalStartByClient[c.id]).forEach(slot => {
         allSlots.push({ client: c, day: deliveryDay, slot });
       });
     });
@@ -2660,7 +2696,7 @@ export default function App() {
       (g[t]=g[t]||[]).push(x);
     });
     return g;
-  }, [deliveryClients, meals, deliveryDay, mealLibraryState]);
+  }, [deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, deliveryDay, mealLibraryState]);
 
   // ── Handlers
   const togglePaid = async id => {
@@ -3601,7 +3637,7 @@ export default function App() {
                       {(pendingMeals[c.id]?.[mealDay] || []).length > 0 && (
                         <div style={{ marginTop: 10, border: "1px dashed #38bdf8", borderRadius: 8, overflow: "hidden" }}>
                           <div style={{ padding: "6px 12px", background: "rgba(56,189,248,.12)", color: "#38bdf8", fontSize: 11, fontWeight: 700 }}>
-                            🔵 NEXT CYCLE — already chosen for after this client's renewal applies
+                            🔵 {c.name} — NEXT CYCLE (already chosen for after this client's renewal applies)
                           </div>
                           {pendingMeals[c.id][mealDay].map((slot, si) => (
                             <div className="slot-row" key={"pending-" + slot.id} style={{ opacity: .85 }}>
@@ -4133,6 +4169,7 @@ export default function App() {
               mealIngredients={mealIngredients} setMealIngredients={setMealIngredients}
               mealLibrary={mealLibraryState}
               deliveryClients={deliveryClients} meals={meals}
+              pendingMeals={pendingMeals} pendingRenewalStartByClient={pendingRenewalStartByClient}
               flash={flash}
             />}
 
@@ -4142,6 +4179,7 @@ export default function App() {
               ingredients={ingredients} mealIngredients={mealIngredients}
               mealLibrary={mealLibraryState}
               deliveryClients={deliveryClients} meals={meals}
+              pendingMeals={pendingMeals} pendingRenewalStartByClient={pendingRenewalStartByClient}
               employees={employees} setEmployees={setEmployees}
               otherExpenses={otherExpenses} setOtherExpenses={setOtherExpenses}
               acctSnapshots={acctSnapshots} setAcctSnapshots={setAcctSnapshots}

@@ -377,8 +377,19 @@ function PlanBadge({ planName, plans }) {
   if (!p) return <span className="bx bx-gr">{planName||"—"}</span>;
   return <span className="bx" style={{background:p.color+"22",color:p.color}}>{planName}</span>;
 }
-function RenewalBadge({ c }) {
+// pendingStart: start_date del próximo ciclo si el cliente tiene una
+// renovación paga todavía sin aplicar (ver pendingRenewalStartByClient).
+// Sin esto, un cliente en el gap de renovación anticipada (ciclo viejo ya
+// vencido, próximo ya pagado) mostraba "Expired Xd ago" con la fecha vieja
+// -- aunque el Status de al lado ya dijera "Upcoming" -- porque esta badge
+// solo miraba c.expiryDate, que no se actualiza hasta que el cron aplica
+// el pago.
+function RenewalBadge({ c, pendingStart }) {
   const d = daysUntil(c.expiryDate);
+  if (pendingStart && (isNaN(d) || d < 0)) {
+    const ds = daysUntil(pendingStart);
+    return <span className="bx bx-a">Renews in {ds}d</span>;
+  }
   if (isNaN(d)) return null;
   if (d < 0)  return <span className="bx bx-exp">Expired {Math.abs(d)}d ago</span>;
   if (d <= 1) return <span className="bx bx-a">Expires in {d}d</span>;
@@ -3403,7 +3414,7 @@ export default function App() {
                         <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
                         <td><PlanBadge planName={c.planName} plans={plans}/></td>
                         <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓ Paid":"Unpaid"}</button></td>
-                        <td><RenewalBadge c={c}/></td>
+                        <td><RenewalBadge c={c} pendingStart={pendingRenewalStartByClient[c.id]}/></td>
                       </tr>
                     ))}</tbody></table>
                     </div>
@@ -3500,7 +3511,7 @@ export default function App() {
                         if (rs === "Upcoming") return <span className="bx bx-a">Upcoming</span>;
                         return <span className="bx bx-gr">Inactive</span>;
                       })()}</td>
-                      <td><RenewalBadge c={c}/></td>
+                      <td><RenewalBadge c={c} pendingStart={pendingRenewalStartByClient[c.id]}/></td>
                       <td style={{textAlign:"center"}}><span style={{fontFamily:"'Rajdhani',sans-serif",fontSize:16,fontWeight:700,color:c.renewalCount>0?"var(--green)":"var(--dim)"}}>{c.renewalCount||0}</span></td>
                       <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓":"Unpaid"}</button></td>
                       <td style={{color:"var(--amber)"}}>¥{c.ltv}</td>

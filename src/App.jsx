@@ -77,11 +77,27 @@ const BLANK_PLAN = { id:"", name:"", name_zh:"", kcal:0, meals:1, price:0, tier:
 // A delivery slot for a client on a given day
 // { id, clientId, day, time, meals:[], snack:"", note:"" }
 
-// TODAY is normalized to local midnight so all date-diff math (daysUntil,
-// getRealStatus, clientActiveOnDay) agrees consistently — no more off-by-one
-// or "Active" vs "Expired" mismatches caused by time-of-day drift.
-const TODAY = new Date();
-TODAY.setHours(0, 0, 0, 0);
+// El negocio opera en hora de China -- todo "hoy" de la app se calcula en
+// esa zona (Asia/Shanghai), nunca en la del dispositivo que la mira. Si no,
+// dos personas viendo el panel al mismo tiempo desde husos distintos (ej.
+// Argentina UTC-3 vs China UTC+8, 11hs de diferencia) ven un "hoy" distinto
+// durante esa ventana, y los badges Active/Upcoming/Expired no coinciden.
+// TODAY queda fijo (Date local a medianoche de ESE día) para que todo el
+// math de fechas (daysUntil, getRealStatus, clientActiveOnDay) sea
+// consistente entre sí y entre viewers.
+function chinaTodayIso() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
+}
+// Formatea un Date ya construido (medianoche local) a "YYYY-MM-DD" usando
+// sus componentes LOCALES -- nunca .toISOString(), que trunca a UTC y en
+// husos adelantados a UTC (como China) muestra el día anterior.
+function dateToLocalIso(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+const TODAY = new Date(chinaTodayIso() + "T00:00:00");
 const daysUntil = d => {
   if (!d) return NaN;
   const target = new Date(d + "T00:00:00");
@@ -137,8 +153,7 @@ function getRealStatus(startDate, expiryDate) {
 const DAY_INDEX = {Monday:1,Tuesday:2,Wednesday:3,Thursday:4,Friday:5,Saturday:6,Sunday:0};
 function clientActiveOnDay(c, dayName) {
   if (!c.startDate || !c.expiryDate) return false;
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
+  const now = TODAY;
   const todayIdx = now.getDay(); // 0=Sun
   const targetIdx = DAY_INDEX[dayName] ?? -1;
   if (targetIdx === -1) return getRealStatus(c.startDate, c.expiryDate) === "Active";
@@ -154,7 +169,7 @@ function clientActiveOnDay(c, dayName) {
 // Fecha calendario (this-week) de un nombre de día, misma resolución que usa
 // clientActiveOnDay -- se reutiliza para el chequeo de renovación anticipada.
 function calendarDateForDay(dayName) {
-  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const now = TODAY;
   const targetIdx = DAY_INDEX[dayName] ?? -1;
   if (targetIdx === -1) return null;
   const diff = (targetIdx - now.getDay() + 7) % 7;
@@ -1032,21 +1047,20 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
 
 function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredients, mealLibrary, deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, employees, setEmployees, otherExpenses, setOtherExpenses, acctSnapshots, setAcctSnapshots, oneTimeExpenses, setOneTimeExpenses, coaches, setCoaches }) {
   const ACC_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = dateToLocalIso(TODAY);
   const [view, setView] = useState("current"); // current | history
 
   const weekStartIso = useMemo(() => {
-    const d = new Date();
+    const d = new Date(TODAY);
     const dow = d.getDay(); // 0=Sun..6=Sat
     const diffToMonday = dow === 0 ? -6 : 1 - dow;
-    d.setHours(0, 0, 0, 0);
     d.setDate(d.getDate() + diffToMonday);
-    return d.toISOString().slice(0, 10);
+    return dateToLocalIso(d);
   }, []);
   const weekEndIso = useMemo(() => {
     const d = new Date(weekStartIso + "T00:00:00");
     d.setDate(d.getDate() + 6);
-    return d.toISOString().slice(0, 10);
+    return dateToLocalIso(d);
   }, [weekStartIso]);
 
   const ingredientById = useMemo(() => {
@@ -1297,7 +1311,7 @@ function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredien
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const W = 210;
     let y = 0;
-    const dateStr = new Date().toLocaleDateString("en-GB");
+    const dateStr = TODAY.toLocaleDateString("en-GB");
 
     doc.setFillColor(232, 52, 42); doc.rect(0, 0, W, 18, "F");
     doc.setTextColor(255, 255, 255); doc.setFontSize(14); doc.setFont("helvetica", "bold");
@@ -3045,7 +3059,7 @@ export default function App() {
 
   const printDelivery = () => {
     const dayName = deliveryDay;
-    const dateStr = new Date().toLocaleDateString("en-GB");
+    const dateStr = TODAY.toLocaleDateString("en-GB");
     const rows = Object.entries(delivery).flatMap(([time, slots]) =>
       slots.map(({client:c, slot}, i) => ({
         num: i+1,
@@ -3198,7 +3212,7 @@ export default function App() {
   const printKitchen = async () => {
     const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm");
     const dayName = kitDay;
-    const dateStr = new Date().toLocaleDateString("en-GB");
+    const dateStr = TODAY.toLocaleDateString("en-GB");
     const batches = kitchen[kitDay] || [];
     const totalPortions = batches.reduce((s,b)=>s+b.total,0);
 

@@ -132,6 +132,7 @@ function dateToLocalIso(d) {
   return `${y}-${m}-${day}`;
 }
 const TODAY = new Date(chinaTodayIso() + "T00:00:00");
+const MEAL_WINDOW_DAYS = 10;
 const daysUntil = d => {
   if (!d) return NaN;
   const target = new Date(d + "T00:00:00");
@@ -2389,6 +2390,8 @@ export default function App() {
     catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
   };
   const [mealDay,     setMealDay]     = useState(todayIso());
+  const [mealWindow,  setMealWindow]  = useState(0);
+  const [showEmptyMealClients, setShowEmptyMealClients] = useState(false);
   const [deliveryDay, setDeliveryDay] = useState(todayIso());
   const [showKDS,     setShowKDS]     = useState(false);
   // Reloj vivo del Kitchen Display. TODAY/todayIso son constantes de módulo
@@ -2900,20 +2903,42 @@ export default function App() {
   // solo importan los días que ya tienen algo cargado).
   const upcomingDates = useMemo(() => collectUpcomingDates(meals, pendingMeals), [meals, pendingMeals]);
 
-  // Meal Selections es una pantalla de PLANIFICACIÓN: además de los días con
-  // algo cargado, necesita los próximos 14 días calendario aunque todavía
-  // estén vacíos, para poder agregar la primera selección de un cliente en
-  // un día futuro (si el tab no existe hasta que haya datos, nunca se podría
-  // cargar el primero).
+  // Meal Selections es una pantalla de PLANIFICACIÓN: muestra ventanas de 10
+  // días calendario desde hoy (vacíos incluidos, para poder cargar la
+  // primera selección de un día futuro), navegables de a 10.
   const mealTabDates = useMemo(() => {
-    const set = new Set(collectUpcomingDates(meals, pendingMeals));
-    let d = new Date(TODAY);
-    for (let i = 0; i < 14; i++) {
-      set.add(dateToLocalIso(d));
-      d = new Date(d); d.setDate(d.getDate() + 1);
+    const out = [];
+    const d = new Date(TODAY);
+    d.setDate(d.getDate() + mealWindow * MEAL_WINDOW_DAYS);
+    for (let i = 0; i < MEAL_WINDOW_DAYS; i++) {
+      out.push(dateToLocalIso(d));
+      d.setDate(d.getDate() + 1);
     }
-    return Array.from(set).sort();
+    return out;
+  }, [mealWindow]);
+
+  // Cuántos clientes tienen al menos una entrega (actual o pendiente) por fecha.
+  const mealClientCountByDate = useMemo(() => {
+    const byDate = {};
+    [meals, pendingMeals].forEach(byClient => {
+      Object.entries(byClient || {}).forEach(([cid, dates]) => {
+        Object.keys(dates || {}).forEach(d => {
+          if ((dates[d] || []).length > 0) (byDate[d] = byDate[d] || new Set()).add(cid);
+        });
+      });
+    });
+    const out = {};
+    Object.keys(byDate).forEach(d => { out[d] = byDate[d].size; });
+    return out;
   }, [meals, pendingMeals]);
+
+  const goMealWindow = (delta) => {
+    const next = Math.max(0, mealWindow + delta);
+    const first = new Date(TODAY);
+    first.setDate(first.getDate() + next * MEAL_WINDOW_DAYS);
+    setMealWindow(next);
+    setMealDay(dateToLocalIso(first));
+  };
 
   // Kitchen: aggregate INGREDIENTS (not meal counts) needed per batch, per day.
   // Each portion is expanded into its meal_ingredients rows so kitchen staff
@@ -3896,8 +3921,19 @@ export default function App() {
               <div className="alert-bar" style={{background:"#0a1020",borderColor:"#1e3a5f",color:"#93c5fd"}}>
                 💡 Each client can have multiple delivery slots per day. Use <strong>+ Add Slot</strong> for clients with 2 deliveries in one day.
               </div>
-              <div className="tabs" style={{flexWrap:"wrap"}}>
-                {mealTabDates.map(d=><button key={d} className={`tab${mealDay===d?" on":""}`} onClick={()=>setMealDay(d)}>{fmtDateTab(d)}</button>)}
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
+                <button className="btn btn-g btn-sm" disabled={mealWindow===0} onClick={()=>goMealWindow(-1)}>&#8592; Prev 10 days</button>
+                <div className="tabs" style={{flexWrap:"wrap",flex:1,marginBottom:0,overflowY:"hidden"}}>
+                  {mealTabDates.map(d=>{
+                    const n = mealClientCountByDate[d] || 0;
+                    return (
+                      <button key={d} className={`tab${mealDay===d?" on":""}`} style={n===0&&mealDay!==d?{opacity:.45}:undefined} onClick={()=>setMealDay(d)}>
+                        {fmtDateTab(d)}{n>0&&<span style={{marginLeft:5,fontSize:10,opacity:.8}}>({n})</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button className="btn btn-g btn-sm" onClick={()=>goMealWindow(1)}>Next 10 days &#8594;</button>
               </div>
               {(()=>{
                 // Meal Selections is a planning screen: show Active AND Upcoming clients
@@ -3915,16 +3951,35 @@ export default function App() {
                   const t = s.time||"";
                   return t && (!min || t<min) ? t : min;
                 }, "");
-                const visibleClients  = planningClients
-                  .filter(c => clientPlanningOnDate(c, mealDay, meals, pendingMeals))
-                  .sort((a,b) => (earliestTime(a)||"99:99").localeCompare(earliestTime(b)||"99:99"));
+                // Por defecto solo quien tiene una entrega ese día. Con el
+                // calendario de fechas reales los ciclos tienen huecos (findes,
+                // feriados, días salteados), así que "dentro del ciclo" ya no
+                // implica "tiene entrega": listarlos a todos llenaba la pantalla
+                // de tarjetas vacías. Los demás se muestran a pedido, para poder
+                // cargarles una primera entrega en ese día.
+                const byTime = (a,b) => (earliestTime(a)||"99:99").localeCompare(earliestTime(b)||"99:99");
+                const withDeliveries = planningClients
+                  .filter(c => hasAnyRowsForDate(c, mealDay, meals, pendingMeals))
+                  .sort(byTime);
+                const withoutDeliveries = planningClients
+                  .filter(c => !hasAnyRowsForDate(c, mealDay, meals, pendingMeals) && clientPlanningOnDate(c, mealDay, meals, pendingMeals))
+                  .sort((a,b) => a.name.localeCompare(b.name));
+                const visibleClients = showEmptyMealClients ? [...withDeliveries, ...withoutDeliveries] : withDeliveries;
                 if (planningClients.length === 0) return (
                   <div className="empty-state"><div className="empty-state-icon">🍱</div><div className="empty-state-title">No active or upcoming clients</div><div className="empty-state-sub">Add clients to manage their meals</div></div>
                 );
-                if (visibleClients.length === 0) return (
-                  <div className="empty-state"><div className="empty-state-icon">📅</div><div className="empty-state-title">No clients scheduled for {fmtDateTab(mealDay)}</div><div className="empty-state-sub">All clients either haven't started yet or have expired for this day</div></div>
+                const emptyToggle = withoutDeliveries.length > 0 && (
+                  <button className="btn btn-g btn-sm" style={{margin:"4px 0 12px"}} onClick={()=>setShowEmptyMealClients(v=>!v)}>
+                    {showEmptyMealClients
+                      ? `Hide ${withoutDeliveries.length} client${withoutDeliveries.length>1?"s":""} without deliveries`
+                      : `+ Show ${withoutDeliveries.length} client${withoutDeliveries.length>1?"s":""} without deliveries on this day`}
+                  </button>
                 );
-                return visibleClients.map(c => {
+                if (visibleClients.length === 0) return (<>
+                  <div className="empty-state"><div className="empty-state-icon">📅</div><div className="empty-state-title">No deliveries scheduled for {fmtDateTab(mealDay)}</div><div className="empty-state-sub">{withoutDeliveries.length>0?"Use the button below to add a delivery for a client":"No active client has this day in their cycle"}</div></div>
+                  {emptyToggle}
+                </>);
+                return <>{visibleClients.map(c => {
                   const slots = [...(meals[c.id]?.[mealDay] || [])].sort((a,b) => (a.time||"99:99").localeCompare(b.time||"99:99"));
                   return (
                     <div className="client-card" key={c.id}>
@@ -4038,7 +4093,7 @@ export default function App() {
                       )}
                     </div>
                   );
-                });
+                })}{emptyToggle}</>;
               })()}
             </>}
 

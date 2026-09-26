@@ -153,7 +153,7 @@ function DateWindowTabs({ windowIndex, onShift, selected, onSelect, counts }) {
   return (
     <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
       <button className="btn btn-g btn-sm" disabled={windowIndex===0} onClick={()=>onShift(-1)}>&#8592; Prev 10 days</button>
-      <div className="tabs" style={{flexWrap:"wrap",flex:1,marginBottom:0,overflowY:"hidden"}}>
+      <div className="tabs date-tabs" style={{flex:1,minWidth:0,marginBottom:0,overflowY:"hidden"}}>
         {dates.map(d=>{
           const n = counts[d] || 0;
           return (
@@ -394,6 +394,8 @@ tbody tr:hover{background:#1e1e1e}
 .km{flex:1;color:#ddd;font-weight:500}
 .kclients{font-size:10px;color:var(--dim);margin-left:12px}
 .del-grp{margin-bottom:14px}
+.del-tbl td{text-align:left;vertical-align:top;line-height:1.45}
+.date-tabs .tab{flex:1 1 0;text-align:center;padding-left:6px;padding-right:6px}
 .del-time{background:var(--s3);color:var(--red);padding:6px 14px;border-radius:5px;font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;letter-spacing:1px;margin-bottom:4px;border:1px solid var(--bdr)}
 .pb{height:3px;background:var(--s3);border-radius:2px;overflow:hidden;margin-top:5px}
 .pb-f{height:100%;border-radius:2px;transition:width .3s}
@@ -4251,34 +4253,34 @@ export default function App() {
               ):Object.entries(delivery).map(([time,entries])=>(
                 <div className="del-grp" key={time}>
                   <div className="del-time">👨‍🍳 Cook {time} — {entries.length} stop{entries.length>1?"s":""}</div>
-                  <div className="tbl-wrap"><table style={{tableLayout:"fixed",width:"100%"}}>
+                  <div className="tbl-wrap"><table className="del-tbl" style={{tableLayout:"fixed",width:"100%"}}>
                     <colgroup>
                       <col style={{width:"3%"}}/>
-                      <col style={{width:"12%"}}/>
-                      <col style={{width:"8%"}}/>
-                      <col style={{width:"7%"}}/>
+                      <col style={{width:"11%"}}/>
+                      <col style={{width:"13%"}}/>
+                      <col style={{width:"6%"}}/>
                       <col style={{width:"16%"}}/>
-                      <col style={{width:"9%"}}/>
-                      <col style={{width:"21%"}}/>
-                      <col style={{width:"6%"}}/>
+                      <col style={{width:"10%"}}/>
+                      <col style={{width:"17%"}}/>
+                      <col style={{width:"5%"}}/>
                       <col style={{width:"12%"}}/>
-                      <col style={{width:"6%"}}/>
+                      <col style={{width:"7%"}}/>
                     </colgroup>
                     <thead><tr><th>#</th><th>Client</th><th>Plan</th><th>Delivery</th><th>Address</th><th>Access</th><th>Meals</th><th>Cutlery</th><th>Note</th><th>Done</th></tr></thead>
                     <tbody>{entries.map(({client:c, slot},i)=>(
                       <tr key={slot.id}>
                         <td style={{color:"var(--dim)",whiteSpace:"nowrap"}}>{i+1}</td>
-                        <td style={{color:"#fff",fontWeight:500,whiteSpace:"nowrap"}}>{c.name}</td>
+                        <td style={{color:"#fff",fontWeight:500,wordBreak:"break-word"}}>{c.name}</td>
                         <td style={{whiteSpace:"nowrap"}}><PlanBadge planName={clientPlanName(c)} plans={plans}/></td>
                         <td style={{whiteSpace:"nowrap",fontWeight:600,color:"var(--amber)"}}>🛵 {slot.time||"TBD"}</td>
-                        <td style={{color:"var(--muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.address||"TBC"}</td>
+                        <td style={{color:"var(--muted)",wordBreak:"break-word"}}>{c.address||"TBC"}</td>
                         <td style={{color:"var(--muted)",fontSize:10}}>{c.access||"—"}</td>
                         <td>
                           {(slot.meals||[]).filter(Boolean).map((m,i)=>(
-                            <div key={i} style={{fontSize:10,color:"#ccc",whiteSpace:"nowrap"}}>{mealName(m)||m}</div>
+                            <div key={i} style={{fontSize:10,color:"#ccc"}}>{mealName(m)||m}</div>
                           ))}
                         </td>
-                        <td style={{textAlign:"center",fontSize:11,whiteSpace:"nowrap"}}>{c.cutlery ? "Yes" : "No"}</td>
+                        <td style={{fontSize:11,whiteSpace:"nowrap"}}>{c.cutlery ? "Yes" : "No"}</td>
                         <td style={{color:"#fcd34d",fontSize:10}}>{slot.note||c.customizations||"—"}</td>
                         <td style={{whiteSpace:"nowrap"}}><button className={`bx bx-clk ${checks["d_"+slot.id]?"bx-g":"bx-gr"}`} onClick={()=>toggleCheck("d_"+slot.id)}>{checks["d_"+slot.id]?"✓ Done":"Pending"}</button></td>
                       </tr>

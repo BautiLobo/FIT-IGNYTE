@@ -133,6 +133,40 @@ function dateToLocalIso(d) {
 }
 const TODAY = new Date(chinaTodayIso() + "T00:00:00");
 const MEAL_WINDOW_DAYS = 10;
+
+// Fechas de la ventana N (de a MEAL_WINDOW_DAYS días calendario desde hoy).
+function dateWindow(windowIndex) {
+  const out = [];
+  const d = new Date(TODAY);
+  d.setDate(d.getDate() + windowIndex * MEAL_WINDOW_DAYS);
+  for (let i = 0; i < MEAL_WINDOW_DAYS; i++) {
+    out.push(dateToLocalIso(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+// Barra de fechas de Meal Selections / Delivery Sheet: ventana de 10 días
+// con Prev/Next y cuántos clientes tienen entrega cada día.
+function DateWindowTabs({ windowIndex, onShift, selected, onSelect, counts }) {
+  const dates = dateWindow(windowIndex);
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
+      <button className="btn btn-g btn-sm" disabled={windowIndex===0} onClick={()=>onShift(-1)}>&#8592; Prev 10 days</button>
+      <div className="tabs" style={{flexWrap:"wrap",flex:1,marginBottom:0,overflowY:"hidden"}}>
+        {dates.map(d=>{
+          const n = counts[d] || 0;
+          return (
+            <button key={d} className={`tab${selected===d?" on":""}`} style={n===0&&selected!==d?{opacity:.45}:undefined} onClick={()=>onSelect(d)}>
+              {fmtDateTab(d)}{n>0&&<span style={{marginLeft:5,fontSize:10,opacity:.8}}>({n})</span>}
+            </button>
+          );
+        })}
+      </div>
+      <button className="btn btn-g btn-sm" onClick={()=>onShift(1)}>Next 10 days &#8594;</button>
+    </div>
+  );
+}
 const daysUntil = d => {
   if (!d) return NaN;
   const target = new Date(d + "T00:00:00");
@@ -2393,6 +2427,7 @@ export default function App() {
   const [mealWindow,  setMealWindow]  = useState(0);
   const [showEmptyMealClients, setShowEmptyMealClients] = useState(false);
   const [deliveryDay, setDeliveryDay] = useState(todayIso());
+  const [deliveryWindow, setDeliveryWindow] = useState(0);
   const [showKDS,     setShowKDS]     = useState(false);
   // Reloj vivo del Kitchen Display. TODAY/todayIso son constantes de módulo
   // (se fijan al cargar la página); esta pantalla queda proyectada horas en
@@ -2903,20 +2938,6 @@ export default function App() {
   // solo importan los días que ya tienen algo cargado).
   const upcomingDates = useMemo(() => collectUpcomingDates(meals, pendingMeals), [meals, pendingMeals]);
 
-  // Meal Selections es una pantalla de PLANIFICACIÓN: muestra ventanas de 10
-  // días calendario desde hoy (vacíos incluidos, para poder cargar la
-  // primera selección de un día futuro), navegables de a 10.
-  const mealTabDates = useMemo(() => {
-    const out = [];
-    const d = new Date(TODAY);
-    d.setDate(d.getDate() + mealWindow * MEAL_WINDOW_DAYS);
-    for (let i = 0; i < MEAL_WINDOW_DAYS; i++) {
-      out.push(dateToLocalIso(d));
-      d.setDate(d.getDate() + 1);
-    }
-    return out;
-  }, [mealWindow]);
-
   // Cuántos clientes tienen al menos una entrega (actual o pendiente) por fecha.
   const mealClientCountByDate = useMemo(() => {
     const byDate = {};
@@ -2934,10 +2955,8 @@ export default function App() {
 
   const goMealWindow = (delta) => {
     const next = Math.max(0, mealWindow + delta);
-    const first = new Date(TODAY);
-    first.setDate(first.getDate() + next * MEAL_WINDOW_DAYS);
     setMealWindow(next);
-    setMealDay(dateToLocalIso(first));
+    setMealDay(dateWindow(next)[0]);
   };
 
   // Kitchen: aggregate INGREDIENTS (not meal counts) needed per batch, per day.
@@ -3017,6 +3036,23 @@ export default function App() {
     });
     return g;
   }, [deliveryClients, meals, pendingMeals, deliveryDay, mealLibraryState]);
+
+  // Clientes con parada en la hoja de reparto, por fecha de la ventana
+  // visible -- mismo filtro que `delivery`, para que el número del tab
+  // coincida con lo que se ve al abrirlo.
+  const deliveryClientCountByDate = useMemo(() => {
+    const out = {};
+    dateWindow(deliveryWindow).forEach(d => {
+      out[d] = deliveryClients.filter(c => clientActiveOnDateOrPending(c, d, meals, pendingMeals)).length;
+    });
+    return out;
+  }, [deliveryClients, meals, pendingMeals, deliveryWindow]);
+
+  const goDeliveryWindow = (delta) => {
+    const next = Math.max(0, deliveryWindow + delta);
+    setDeliveryWindow(next);
+    setDeliveryDay(dateWindow(next)[0]);
+  };
 
   // ── Kitchen Display: qué hay que cocinar en esta hora y en la siguiente.
   // Se bucketea por HORA DE COCINA (slot.cookTime, o la hora de entrega menos
@@ -3734,11 +3770,6 @@ export default function App() {
                   <button className="btn btn-g btn-sm" onClick={openBatchEditor}>✎ Edit Batches</button>
                 </div>
               )}
-              {tab==="delivery"&&(
-                <div className="tabs" style={{margin:0,border:"none",paddingBottom:0,flexWrap:"wrap"}}>
-                  {upcomingDates.map(d=><button key={d} className={`tab${deliveryDay===d?" on":""}`} onClick={()=>setDeliveryDay(d)}>{fmtDateTab(d)}</button>)}
-                </div>
-              )}
             </div>
           </div>
 
@@ -3921,20 +3952,7 @@ export default function App() {
               <div className="alert-bar" style={{background:"#0a1020",borderColor:"#1e3a5f",color:"#93c5fd"}}>
                 💡 Each client can have multiple delivery slots per day. Use <strong>+ Add Slot</strong> for clients with 2 deliveries in one day.
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
-                <button className="btn btn-g btn-sm" disabled={mealWindow===0} onClick={()=>goMealWindow(-1)}>&#8592; Prev 10 days</button>
-                <div className="tabs" style={{flexWrap:"wrap",flex:1,marginBottom:0,overflowY:"hidden"}}>
-                  {mealTabDates.map(d=>{
-                    const n = mealClientCountByDate[d] || 0;
-                    return (
-                      <button key={d} className={`tab${mealDay===d?" on":""}`} style={n===0&&mealDay!==d?{opacity:.45}:undefined} onClick={()=>setMealDay(d)}>
-                        {fmtDateTab(d)}{n>0&&<span style={{marginLeft:5,fontSize:10,opacity:.8}}>({n})</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-                <button className="btn btn-g btn-sm" onClick={()=>goMealWindow(1)}>Next 10 days &#8594;</button>
-              </div>
+              <DateWindowTabs windowIndex={mealWindow} onShift={goMealWindow} selected={mealDay} onSelect={setMealDay} counts={mealClientCountByDate}/>
               {(()=>{
                 // Meal Selections is a planning screen: show Active AND Upcoming clients
                 // (Max needs to load meals ahead of time for clients who haven't started yet).
@@ -4220,6 +4238,7 @@ export default function App() {
 
             {/* ═══ DELIVERY ═══════════════════════════ */}
             {tab==="delivery"&&<>
+              <DateWindowTabs windowIndex={deliveryWindow} onShift={goDeliveryWindow} selected={deliveryDay} onSelect={setDeliveryDay} counts={deliveryClientCountByDate}/>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
                 <div className="alert-bar" style={{background:"#0d1a0d",borderColor:"#14532d",color:"#86efac",margin:0,flex:1}}>
                   👨‍🍳 Sorted by cooking time. Each group is a cooking batch; the delivery column shows when each stop goes out.

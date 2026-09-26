@@ -381,6 +381,8 @@ export async function reApproveOrder(order, deliveryFee) {
 }
 
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const LEGACY_DAY_KEYS = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday" };
 
 // La tabla `menu` (catálogo de rotación) sigue siendo por día de semana --
 // esto solo traduce una fecha real a ese nombre para poder consultarla.
@@ -439,13 +441,18 @@ export async function approveOrder(order, deliveryFee) {
     : null;
   const weekIndex = await getCurrentWeekIndex();
 
-  // `order.meals` viene keyed por fecha real ISO (ver mini-program
-  // pages/meal-select) -- ya no un template fijo Lun-Vie.
+  // `order.meals` viene keyed por fecha real ISO (mini-program nuevo) o por
+  // etiqueta mon..fri (versión vieja, que sigue en celulares con el paquete
+  // cacheado). Para las etiquetas se guarda solo `day`, como hacía el panel
+  // anterior: el trigger de la base deriva delivery_date y la vuelve a
+  // calcular cuando el pago escribe el start_date real.
   const meals = order.meals || {};
-  for (const dateStr of Object.keys(meals)) {
-    const slot = meals[dateStr];
+  for (const key of Object.keys(meals)) {
+    const slot = meals[key];
     if (!slot) continue;
-    const dayName = weekdayNameForDate(dateStr);
+    const isDate = ISO_DATE_RE.test(key);
+    const dayName = isDate ? weekdayNameForDate(key) : LEGACY_DAY_KEYS[key.toLowerCase()];
+    if (!dayName) continue;
 
     let mealIds = slot.meal_ids || [];
     if (planTier && mealIds.length > 0) {
@@ -460,7 +467,7 @@ export async function approveOrder(order, deliveryFee) {
 
     check(await supabase.from("meal_selections").upsert({
       client_id:     clientId,
-      delivery_date: dateStr,
+      ...(isDate ? { delivery_date: key } : { day: dayName }),
       slot:          1,
       meals_json:    mealIds,
       delivery_time: slot.time || "",

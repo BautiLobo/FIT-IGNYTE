@@ -10,7 +10,6 @@ import {
   signIn, signOut, getSession, onAuthChange,
   getPendingOrders, getRejectedOrders, getApprovedOrders, approveOrder, rejectOrder, reApproveOrder, deleteNewOrder,
   getCoaches, createCoach, deleteCoach,
-  incrementRenewalCount,
   getPendingAddressChanges, approveAddressChange, rejectAddressChange,
   getNotifications, sendNotification, deleteNotification,
   getMealWeeklyStats,
@@ -38,7 +37,6 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
-const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const DEFAULT_BATCHES = ["09:45", "11:00", "12:00", "16:00", "16:45", "17:45"];
 
 // Sauces se miden en ml/L (son líquidos) -- todo lo demás en g/kg. La cantidad
@@ -61,6 +59,23 @@ function getBatch(time, batchList) {
     else break;
   }
   return assigned;
+}
+// Hora de cocina: 1h antes de la hora de entrega, para que la cocina sepa
+// cuándo tiene que tener listo cada pedido. Si el horario no está definido
+// (slot "TBD"), no hay nada que restarle. Vive en scope de módulo porque es
+// pura y la necesitan tanto el PDF del Delivery Sheet como el Kitchen
+// Display, que se calcula antes en el render.
+// Ventana de entrega al cliente, igual a la del picker del mini-program
+// (pages/meal-select y pages/edit-meals). Si cambia allá, cambia acá.
+const DELIVERY_MIN_TIME = "10:15";
+const DELIVERY_MAX_TIME = "19:30";
+
+function cookingTimeFor(timeStr) {
+  if (!timeStr || timeStr === "TBD") return "TBD";
+  const [h, m] = timeStr.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return "TBD";
+  const hh = (h - 1 + 24) % 24;
+  return String(hh).padStart(2,"0") + ":" + String(m).padStart(2,"0");
 }
 const PLAN_COLORS = ["#38BDF8","#A78BFA","#F472B6","#FBBF24","#FB923C","#F87171","#34D399","#60A5FA","#E879F9","#FCD34D"];
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -88,6 +103,25 @@ const BLANK_PLAN = { id:"", name:"", name_zh:"", kcal:0, meals:1, price:0, tier:
 function chinaTodayIso() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
 }
+// Hora actual en Asia/Shanghai, en minutos desde medianoche. Misma razon que
+// chinaTodayIso: la cocina esta en China, el monitor puede estar en cualquier
+// huso, y "que toca cocinar ahora" siempre se decide con el reloj de la
+// cocina. A diferencia de TODAY (constante de modulo), esto se vuelve a
+// llamar con un interval: el Kitchen Display queda proyectado horas.
+function chinaNowMinutes() {
+  const hm = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).format(new Date());
+  const [h, m] = hm.split(":").map(Number);
+  return Number.isNaN(h) || Number.isNaN(m) ? 0 : h * 60 + m;
+}
+const hmToMinutes = hm => {
+  if (!hm || hm === "TBD") return null;
+  const [h, m] = String(hm).split(":").map(Number);
+  return Number.isNaN(h) || Number.isNaN(m) ? null : h * 60 + m;
+};
+const hourLabel = h => String(((h % 24) + 24) % 24).padStart(2, "0") + ":00";
+
 // Formatea un Date ya construido (medianoche local) a "YYYY-MM-DD" usando
 // sus componentes LOCALES -- nunca .toISOString(), que trunca a UTC y en
 // husos adelantados a UTC (como China) muestra el día anterior.
@@ -114,6 +148,15 @@ const fmtDate   = d => {
     const dt = /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + "T00:00:00") : new Date(d);
     return dt.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
   } catch { return d||"—"; }
+};
+// Corto, para tabs de fecha (Kitchen Prep / Delivery Sheet / Shopping List /
+// Meal Selections): "Fri 19 Sep" -- misma fecha real que ya trae `day` ahora
+// (antes esos tabs eran 5 nombres de día fijos, Lun-Vie).
+const fmtDateTab = d => {
+  try {
+    const dt = new Date(d + "T00:00:00");
+    return dt.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  } catch { return d || "—"; }
 };
 // .toISOString() siempre da la fecha en UTC -- en husos adelantados a UTC
 // (China, UTC+8) la medianoche local ya es el dia siguiente en UTC, y
@@ -147,59 +190,77 @@ function getRealStatus(startDate, expiryDate) {
   return "Active";                         // plan running right now
 }
 
-// Returns true if the client is Active (by computed status) on the given
-// weekday name (e.g. "Monday"). Finds the closest occurrence of that weekday
-// (this week) and checks if it falls within start_date..expiry_date.
-const DAY_INDEX = {Monday:1,Tuesday:2,Wednesday:3,Thursday:4,Friday:5,Saturday:6,Sunday:0};
-function clientActiveOnDay(c, dayName) {
-  if (!c.startDate || !c.expiryDate) return false;
-  const now = TODAY;
-  const todayIdx = now.getDay(); // 0=Sun
-  const targetIdx = DAY_INDEX[dayName] ?? -1;
-  if (targetIdx === -1) return getRealStatus(c.startDate, c.expiryDate) === "Active";
-  // diff=0 means today, 1-6 means that many days ahead (always forward-looking)
-  const diff = (targetIdx - todayIdx + 7) % 7;
-  const targetDate = new Date(now);
-  targetDate.setDate(now.getDate() + diff);
-  const start  = new Date(c.startDate  + "T00:00:00");
-  const expiry = new Date(c.expiryDate + "T00:00:00");
-  return targetDate >= start && targetDate <= expiry;
+// `day` ya es una fecha real ("2026-09-19"), no un nombre de día de semana
+// reusado cada ciclo -- "¿tiene entrega este cliente en esta fecha?" es
+// simplemente "¿hay una fila de meal_selections para esa fecha exacta?".
+// Antes esto reconstruía "la ocurrencia de este día de semana esta semana"
+// contra start_date/expiry_date porque `day` no cargaba ninguna fecha real;
+// ya no hace falta esa reconstrucción.
+// Qué filas de comida manda este cliente en una fecha dada. Decide LA FECHA,
+// no "lo que exista": si cae dentro de su ciclo vigente manda
+// meal_selections; si es posterior al vencimiento, esa fecha pertenece al
+// ciclo siguiente y mandan las de pending_meal_selections (lo que el cliente
+// eligió al renovar, que el cron todavía no aplicó); si es anterior al
+// arranque del ciclo, no le corresponde nada.
+//
+// Antes era "lo que haya en meal_selections gana, si no pending", sin mirar
+// fechas. Con eso, un cliente con filas sueltas posteriores a su expiry --una
+// renovación anticipada ya paga, o slots cargados a mano desde el panel--
+// salía en la hoja de reparto con las comidas y el horario VIEJOS, tapando
+// los que había elegido de verdad para ese día. Caso visto en dev: un
+// cliente aparecía dos veces el 23/9 (09:30 y 10:30, 5 porciones) cuando lo
+// que había pedido era una sola entrega a las 10:00 con 3.
+function mealSlotsForDate(c, dateStr, meals, pendingMeals) {
+  if (c.startDate && dateStr < c.startDate) return [];
+  const pending = pendingMeals[c.id]?.[dateStr] || [];
+  if (c.expiryDate && dateStr > c.expiryDate) return pending;
+  const current = meals[c.id]?.[dateStr] || [];
+  return current.length > 0 ? current : pending;
 }
 
-// Fecha calendario (this-week) de un nombre de día, misma resolución que usa
-// clientActiveOnDay -- se reutiliza para el chequeo de renovación anticipada.
-function calendarDateForDay(dayName) {
-  const now = TODAY;
-  const targetIdx = DAY_INDEX[dayName] ?? -1;
-  if (targetIdx === -1) return null;
-  const diff = (targetIdx - now.getDay() + 7) % 7;
-  const d = new Date(now);
-  d.setDate(now.getDate() + diff);
-  return d;
+// ¿Tiene entrega este cliente en esta fecha? Se responde con las MISMAS
+// filas que después se van a cocinar y repartir, así el filtro y los datos
+// no pueden discrepar.
+function clientActiveOnDateOrPending(c, dateStr, meals, pendingMeals) {
+  return mealSlotsForDate(c, dateStr, meals, pendingMeals).length > 0;
 }
 
-// Igual que clientActiveOnDay, pero además cuenta como activo ese día a un
-// cliente en el gap de renovación anticipada: su ciclo viejo ya venció
-// (clientActiveOnDay da false) pero ya pagó el próximo ciclo y ese día cae
-// en o después de pendingStart (el start_date del pago con applied=false --
-// ver pendingRenewalStartByClient). Sin esto, Kitchen Prep / Delivery Sheet /
-// Shopping List / Accounting perdían a estos clientes por completo durante
-// el gap, aunque ya tuvieran las comidas del ciclo nuevo elegidas.
-function clientActiveOnDayOrPending(c, dayName, pendingStart) {
-  if (clientActiveOnDay(c, dayName)) return true;
-  if (!pendingStart) return false;
-  const targetDate = calendarDateForDay(dayName);
-  if (!targetDate) return false;
-  return targetDate >= new Date(pendingStart + "T00:00:00");
+// Para la pantalla de planificación NO se filtra por ciclo: si quedó una
+// fila fuera de ventana, el admin tiene que poder verla para corregirla o
+// borrarla. Ocultarla ahí la volvería inalcanzable desde el panel.
+function hasAnyRowsForDate(c, dateStr, meals, pendingMeals) {
+  return !!(meals[c.id]?.[dateStr]?.length || pendingMeals[c.id]?.[dateStr]?.length);
 }
 
-// Slots de comida de un cliente para ese día: del ciclo en curso si está
-// activo, o de pending_meal_selections si está en el gap de renovación
-// anticipada (mismo criterio que clientActiveOnDayOrPending).
-function mealSlotsForDay(c, day, meals, pendingMeals, pendingStart) {
-  if (clientActiveOnDay(c, day)) return meals[c.id]?.[day] || [];
-  if (pendingStart) return pendingMeals[c.id]?.[day] || [];
-  return [];
+// Para la pantalla de planificación (Meal Selections tab): ¿tiene sentido
+// mostrar a este cliente en el tab de esta fecha? Sí si ya hay algo cargado
+// ahí (actual o pendiente), o si la fecha cae dentro de la ventana de su
+// ciclo actual (startDate..expiryDate, ya no necesariamente 5 días
+// corridos) -- así se lo puede seguir viendo para agregarle la primera
+// selección de un día todavía sin nada, sin listar a TODOS los clientes
+// activos en TODOS los tabs.
+function clientPlanningOnDate(c, dateStr, meals, pendingMeals) {
+  if (hasAnyRowsForDate(c, dateStr, meals, pendingMeals)) return true;
+  return !!(c.startDate && c.expiryDate && dateStr >= c.startDate && dateStr <= c.expiryDate);
+}
+
+// Fechas reales (ordenadas) con al menos una entrega en meal_selections o
+// pending_meal_selections, entre todos los clientes -- reemplaza los 5 tabs
+// fijos Lun-Vie de Kitchen Prep / Delivery Sheet / Shopping List / Meal
+// Selections, que ya no describen ningún cliente en particular (cada uno
+// puede tener un patrón de días distinto dentro de la ventana de 14 días
+// hábiles). Siempre incluye "hoy" aunque no haya entregas ese día, para que
+// la pestaña activa por default nunca quede vacía de opciones.
+function collectUpcomingDates(meals, pendingMeals) {
+  const set = new Set([todayIso()]);
+  [meals, pendingMeals].forEach(byClient => {
+    Object.values(byClient || {}).forEach(byDate => {
+      Object.keys(byDate || {}).forEach(d => {
+        if ((byDate[d] || []).length > 0) set.add(d);
+      });
+    });
+  });
+  return Array.from(set).sort();
 }
 
 // ─── STYLES ──────────────────────────────────────────────────────────────────
@@ -314,6 +375,52 @@ tbody tr:hover{background:#1e1e1e}
 .plan-card{background:var(--s2);border:1px solid var(--bdr);border-radius:8px;padding:14px;border-left:3px solid var(--pc,#555)}
 .chip{background:var(--s3);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--muted);display:inline-block}
 .sec-title{font-family:'Rajdhani',sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+
+/* ── KITCHEN DISPLAY (KDS) ──────────────────────────────────────────────────
+   Pantalla para proyectar en un monitor de cocina. Todo va en clamp()/vw
+   porque se mira desde 2-3 metros: el layout tiene que crecer con la
+   pantalla, no quedarse en los 11px del resto del panel (que se mira de
+   cerca en un laptop). Fondo negro puro para que rinda en un TV barato. */
+.kds{position:fixed;inset:0;z-index:600;background:#000;color:#fff;display:flex;flex-direction:column;overflow:hidden;font-family:'DM Sans',sans-serif}
+.kds-top{display:flex;align-items:center;gap:clamp(10px,1.4vw,26px);padding:clamp(7px,.9vw,16px) clamp(14px,1.8vw,30px);background:#0d0d0d;border-bottom:2px solid var(--red);flex-shrink:0}
+.kds-clock{font-family:'Rajdhani',sans-serif;font-size:clamp(32px,4.4vw,82px);font-weight:700;line-height:1;letter-spacing:2px;color:#fff;font-variant-numeric:tabular-nums}
+.kds-date{font-family:'Rajdhani',sans-serif;font-size:clamp(12px,1.25vw,23px);font-weight:600;letter-spacing:2px;color:var(--muted);text-transform:uppercase;line-height:1.3}
+.kds-kpi{text-align:center;padding:0 clamp(7px,.95vw,18px);border-left:1px solid #242424;flex-shrink:0}
+.kds-kpi-v{font-family:'Rajdhani',sans-serif;font-size:clamp(22px,2.9vw,54px);font-weight:700;line-height:1.05;font-variant-numeric:tabular-nums}
+.kds-kpi-l{font-size:clamp(8px,.6vw,13px);letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);white-space:nowrap}
+.kds-late{flex-shrink:0;background:var(--red);color:#fff;padding:clamp(5px,.55vw,11px) clamp(14px,1.8vw,30px);font-size:clamp(12px,1.2vw,23px);font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;display:flex;gap:clamp(10px,1.2vw,22px);flex-wrap:wrap}
+.kds-cols{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:2px;background:#1c1c1c;overflow:hidden;min-height:0}
+.kds-col{display:flex;flex-direction:column;background:#000;overflow:hidden;min-height:0}
+.kds-col-hd{padding:clamp(6px,.75vw,14px) clamp(12px,1.4vw,26px);font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:2px;text-transform:uppercase;display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-shrink:0}
+.kds-col-hd .t{font-size:clamp(17px,2vw,38px);white-space:nowrap}
+.kds-col-hd .s{font-size:clamp(11px,1.05vw,21px);opacity:.88;white-space:nowrap}
+.kds-now  .kds-col-hd{background:var(--red);color:#fff}
+.kds-next .kds-col-hd{background:#16263b;color:#9ecbff}
+.kds-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(8px,.95vw,18px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(200px,18vw,340px),1fr));gap:clamp(8px,.85vw,16px);align-content:start}
+.kds-card{background:#141414;border:1px solid #262626;border-left:6px solid var(--red);border-radius:8px;cursor:pointer;user-select:none;overflow:hidden;transition:opacity .15s,background .15s}
+.kds-next .kds-card{border-left-color:#3b82f6}
+.kds-card.done{opacity:.25;background:#0a0a0a}
+.kds-tk-hd{display:flex;align-items:baseline;gap:clamp(6px,.6vw,12px);padding:clamp(7px,.6vw,13px) clamp(10px,.95vw,20px);background:#1d1d1d;border-bottom:1px solid #2a2a2a}
+.kds-tk-time{font-family:'Rajdhani',sans-serif;font-size:clamp(19px,2vw,38px);font-weight:700;color:#fff;line-height:1;letter-spacing:1px;font-variant-numeric:tabular-nums;flex-shrink:0}
+.kds-tk-who{font-size:clamp(12px,1.1vw,22px);font-weight:600;color:#9a9a9a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kds-tk-n{margin-left:auto;font-size:clamp(9px,.72vw,14px);color:var(--dim);letter-spacing:1px;text-transform:uppercase;flex-shrink:0}
+.kds-tk-body{padding:clamp(8px,.8vw,16px) clamp(10px,.95vw,20px)}
+.kds-line{display:flex;align-items:baseline;gap:clamp(8px,.8vw,16px);padding:clamp(3px,.28vw,6px) 0}
+.kds-line .q{font-family:'Rajdhani',sans-serif;font-size:clamp(26px,2.8vw,54px);font-weight:700;line-height:1;color:#fff;min-width:1.4em;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0}
+.kds-line .n{font-size:clamp(15px,1.45vw,29px);font-weight:600;color:#fff;line-height:1.2;overflow-wrap:anywhere}
+.kds-card.done .kds-line .q,.kds-card.done .kds-line .n{color:#777}
+.kds-tag{display:block;border-radius:4px;padding:clamp(3px,.3vw,7px) clamp(7px,.6vw,13px);margin-top:7px;font-size:clamp(11px,1vw,20px);font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+.kds-tag.al{background:#3b1111;color:#fca5a5}
+.kds-tag.nt{background:#31240a;color:#fcd34d}
+.kds-clear{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(6px,.8vw,16px);background:#000;text-align:center}
+.kds-clear .big{font-family:'Rajdhani',sans-serif;font-size:clamp(34px,5vw,96px);font-weight:700;letter-spacing:4px;color:#1f3d26;line-height:1.05}
+.kds-clear .sub{font-size:clamp(11px,1.1vw,22px);color:#2a2a2a;letter-spacing:2px;text-transform:uppercase}
+.kds-empty{grid-column:1/-1;text-align:center;color:#333;font-family:'Rajdhani',sans-serif;font-size:clamp(19px,2.2vw,44px);font-weight:700;letter-spacing:3px;padding-top:5vh}
+.kds-foot{flex-shrink:0;background:#0d0d0d;border-top:1px solid #242424;padding:clamp(6px,.65vw,13px) clamp(14px,1.8vw,30px);display:flex;gap:clamp(12px,1.4vw,26px);flex-wrap:wrap;align-items:center;font-size:clamp(10px,.88vw,17px);color:var(--dim)}
+.kds-foot b{color:#ccc;font-weight:600}
+.kds-btn{background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:6px;padding:clamp(6px,.55vw,12px) clamp(10px,.95vw,20px);font-size:clamp(11px,.9vw,18px);font-family:'DM Sans',sans-serif;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.kds-btn:hover{background:#262626;color:#fff}
+@media (max-width:820px){.kds-cols{grid-template-columns:1fr}.kds-kpi{padding:0 8px}}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .saving{position:fixed;bottom:16px;right:16px;background:var(--green);color:#fff;padding:7px 14px;border-radius:6px;font-size:11px;font-weight:600;z-index:600;animation:fadeOut 2s forwards}
 @keyframes fadeOut{0%{opacity:1}70%{opacity:1}100%{opacity:0}}
@@ -385,6 +492,51 @@ tbody tr:hover{background:#1e1e1e}
   .btn{padding:6px 10px;font-size:10px}
 }
 `;
+
+// ─── KITCHEN DISPLAY ──────────────────────────────────────────────────────────
+// Una columna del monitor de cocina: un bloque de una hora. Cada tarjeta es
+// UN pedido (una parada), no un plato: así la alergia y la nota de cada
+// cliente quedan pegadas a lo suyo y no se mezclan con las de otro, que es
+// justo lo que hay que poder leer de un vistazo al emplatar.
+// Tocar una tarjeta la marca lista (se guarda en `checklist` con la key
+// `k_<slot id>`, así el monitor y el celular del cocinero ven lo mismo).
+function KdsBucket({ kind, title, bucket, checks, onToggle, emptyText }) {
+  return (
+    <div className={`kds-col kds-${kind}`}>
+      <div className="kds-col-hd">
+        <span className="t">{title}</span>
+        <span className="s">{bucket.portions} portion{bucket.portions!==1?"s":""} · {bucket.stops} stop{bucket.stops!==1?"s":""}</span>
+      </div>
+      <div className="kds-body">
+        {bucket.tickets.length===0 ? (
+          <div className="kds-empty">{emptyText}</div>
+        ) : bucket.tickets.map(t => {
+          const key  = `k_${t.id}`;
+          const done = !!checks[key];
+          return (
+            <div key={t.id} className={`kds-card${done?" done":""}`} onClick={()=>onToggle(key)}>
+              <div className="kds-tk-hd">
+                <span className="kds-tk-time">{t.out}</span>
+                <span className="kds-tk-who">{t.client}</span>
+                <span className="kds-tk-n">{done?"ready ✓":`${t.portions} pc`}</span>
+              </div>
+              <div className="kds-tk-body">
+                {t.meals.map(m=>(
+                  <div className="kds-line" key={m.id}>
+                    <span className="q">{m.qty}</span>
+                    <span className="n">{m.name}</span>
+                  </div>
+                ))}
+                {t.allergies&&<span className="kds-tag al">⚠ {t.allergies}</span>}
+                {t.note&&<span className="kds-tag nt">✎ {t.note}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // ─── BADGES ───────────────────────────────────────────────────────────────────
 function PlanBadge({ planName, plans }) {
@@ -617,7 +769,7 @@ function MealStatsTab({ plans }) {
   </>;
 }
 
-function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealIngredients, mealLibrary, deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, flash }) {
+function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealIngredients, mealLibrary, deliveryClients, meals, pendingMeals, flash }) {
   const [view, setView] = useState("ingredients"); // ingredients | assign | shopping
 
   const ingredientById = useMemo(() => {
@@ -793,8 +945,8 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
   };
 
   // ═══ SHOPPING LIST ═══
-  const [shopDay, setShopDay] = useState("Monday");
-  const SHOP_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+  const shopDates = useMemo(() => collectUpcomingDates(meals, pendingMeals), [meals, pendingMeals]);
+  const [shopDay, setShopDay] = useState(todayIso());
 
   const mealIngredientsByMeal = useMemo(() => {
     const m = {};
@@ -805,8 +957,8 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
   const shoppingList = useMemo(() => {
     const totals = {}; // ingredientId -> grams
     const unassignedMeals = new Set();
-    deliveryClients.filter(c => clientActiveOnDayOrPending(c, shopDay, pendingRenewalStartByClient?.[c.id])).forEach(c => {
-      const slots = mealSlotsForDay(c, shopDay, meals, pendingMeals, pendingRenewalStartByClient?.[c.id]);
+    deliveryClients.filter(c => clientActiveOnDateOrPending(c, shopDay, meals, pendingMeals)).forEach(c => {
+      const slots = mealSlotsForDate(c, shopDay, meals, pendingMeals);
       slots.forEach(slot => {
         (slot.meals || []).filter(id => id && id.trim() && id !== "—").forEach(mealId => {
           const rows = mealIngredientsByMeal[mealId];
@@ -827,7 +979,7 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
     const totalCost = rows.reduce((s, r) => s + (r.cost || 0), 0);
     const hasMissingCost = rows.some(r => r.cost == null);
     return { rows, totalCost, hasMissingCost, unassignedMeals: Array.from(unassignedMeals) };
-  }, [deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, shopDay, mealIngredientsByMeal, ingredientById, mealLibrary]);
+  }, [deliveryClients, meals, pendingMeals, shopDay, mealIngredientsByMeal, ingredientById, mealLibrary]);
 
   const catColor = { protein: "#f87171", carb: "#fbbf24", veg: "#4ade80", sauce: "#38bdf8" };
 
@@ -1005,12 +1157,12 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
     </>}
 
     {view === "shopping" && <>
-      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-        {SHOP_DAYS.map(d => <button key={d} className={`btn ${shopDay === d ? "" : "btn-g"}`} style={{ padding: "8px 14px", fontSize: 13 }} onClick={() => setShopDay(d)}>{d.slice(0, 3)}</button>)}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {shopDates.map(d => <button key={d} className={`btn ${shopDay === d ? "" : "btn-g"}`} style={{ padding: "8px 14px", fontSize: 13 }} onClick={() => setShopDay(d)}>{fmtDateTab(d)}</button>)}
       </div>
       {shoppingList.unassignedMeals.length > 0 && (
         <div style={{ padding: 10, borderRadius: 8, background: "rgba(251,191,36,.1)", border: "1px solid #fbbf24", color: "#fbbf24", fontSize: 12, marginBottom: 14 }}>
-          ⚠ These meals were ordered for {shopDay} but have no ingredients assigned yet, so they're missing from the totals below: {shoppingList.unassignedMeals.join(", ")}.
+          ⚠ These meals were ordered for {fmtDateTab(shopDay)} but have no ingredients assigned yet, so they're missing from the totals below: {shoppingList.unassignedMeals.join(", ")}.
         </div>
       )}
       <div style={{ overflowX: "auto" }}>
@@ -1030,13 +1182,13 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
                 <td style={{ padding: 10, textAlign: "right", color: "var(--dim)" }}>{r.cost == null ? "sin costo" : `¥${r.cost.toFixed(2)}`}</td>
               </tr>
             ))}
-            {shoppingList.rows.length === 0 && <tr><td colSpan={3} style={{ padding: 30, textAlign: "center", color: "var(--dim)" }}>No active deliveries for {shopDay}.</td></tr>}
+            {shoppingList.rows.length === 0 && <tr><td colSpan={3} style={{ padding: 30, textAlign: "center", color: "var(--dim)" }}>No active deliveries for {fmtDateTab(shopDay)}.</td></tr>}
           </tbody>
         </table>
       </div>
       {shoppingList.rows.length > 0 && (
         <div style={{ marginTop: 14, padding: 12, borderRadius: 8, background: "var(--s3,#161b22)", border: "1px solid var(--bdr)" }}>
-          <span style={{ color: "var(--muted)", fontSize: 13 }}>Estimated total cost for {shopDay}: </span>
+          <span style={{ color: "var(--muted)", fontSize: 13 }}>Estimated total cost for {fmtDateTab(shopDay)}: </span>
           <span style={{ fontWeight: 700, color: "#fff", fontSize: 15 }}>¥{shoppingList.totalCost.toFixed(2)}</span>
           {shoppingList.hasMissingCost && <span style={{ color: "#fbbf24", fontSize: 12, marginLeft: 10 }}>⚠ some ingredients have no cost yet, total is partial</span>}
         </div>
@@ -1045,8 +1197,7 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
   </>;
 }
 
-function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredients, mealLibrary, deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, employees, setEmployees, otherExpenses, setOtherExpenses, acctSnapshots, setAcctSnapshots, oneTimeExpenses, setOneTimeExpenses, coaches, setCoaches }) {
-  const ACC_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+function AccountingTab({ active, paidPayments, ingredients, mealIngredients, mealLibrary, deliveryClients, meals, pendingMeals, employees, setEmployees, otherExpenses, setOtherExpenses, acctSnapshots, setAcctSnapshots, oneTimeExpenses, setOneTimeExpenses, coaches, setCoaches }) {
   const todayIso = dateToLocalIso(TODAY);
   const [view, setView] = useState("current"); // current | history
 
@@ -1061,6 +1212,15 @@ function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredien
     const d = new Date(weekStartIso + "T00:00:00");
     d.setDate(d.getDate() + 6);
     return dateToLocalIso(d);
+  }, [weekStartIso]);
+  const currentWeekDates = useMemo(() => {
+    const dates = [];
+    let d = new Date(weekStartIso + "T00:00:00");
+    for (let i = 0; i < 7; i++) {
+      dates.push(dateToLocalIso(d));
+      d = new Date(d); d.setDate(d.getDate() + 1);
+    }
+    return dates;
   }, [weekStartIso]);
 
   const ingredientById = useMemo(() => {
@@ -1091,7 +1251,13 @@ function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredien
         .sort((a, b) => (b.paid_at || "").localeCompare(a.paid_at || ""))[0];
       let weeklyRevenue, deliveryRevenue, planRevenue, hasPayment;
       if (payment) {
-        const weeksCovered = c.weeks || Math.max(1, Math.round((new Date(payment.expiry_date) - new Date(payment.start_date)) / (7 * 86400000)));
+        // Cada `payment` cubre un ciclo = 5 días de entrega, no necesariamente
+        // 7 días de calendario (el cliente puede elegir sus 5 días repartidos
+        // en la ventana de 14 días hábiles) -- ya no tiene sentido estimar
+        // "semanas cubiertas" a partir de la distancia entre start/expiry.
+        // `c.weeks` sigue siendo un override manual explícito para el caso
+        // excepcional de un pago que de verdad cubre varios ciclos.
+        const weeksCovered = c.weeks || 1;
         weeklyRevenue = (payment.amount_fen / 100) / weeksCovered;
         deliveryRevenue = deliveryFee / weeksCovered;
         planRevenue = weeklyRevenue - deliveryRevenue;
@@ -1112,14 +1278,18 @@ function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredien
   const totalRevenue = totalPlanRevenue + totalDeliveryRevenue;
   const totalListRevenue = revenueRows.reduce((s, r) => s + r.listPrice, 0);
 
-  // ── COSTS: mismo cálculo que la Shopping List de Ingredients, sumado
-  // Lunes a Viernes -- el costo real de ingredientes de la semana.
+  // ── COSTS: mismo cálculo que la Shopping List de Ingredients, sumado para
+  // los 7 días calendario de la semana actual -- el costo real de
+  // ingredientes de la semana. Ya no son "Lunes a Viernes fijo": con el
+  // calendario propio de días de entrega un cliente puede tener su ciclo
+  // repartido de forma distinta, así que se suma por fecha real dentro de
+  // la semana, no por 5 slots fijos.
   const costByDay = useMemo(() => {
     const unassigned = new Set();
-    const days = ACC_DAYS.map(day => {
+    const days = currentWeekDates.map(day => {
       let dayCost = 0, missingCost = false;
-      deliveryClients.filter(c => clientActiveOnDayOrPending(c, day, pendingRenewalStartByClient?.[c.id])).forEach(c => {
-        const slots = mealSlotsForDay(c, day, meals, pendingMeals, pendingRenewalStartByClient?.[c.id]);
+      deliveryClients.filter(c => clientActiveOnDateOrPending(c, day, meals, pendingMeals)).forEach(c => {
+        const slots = mealSlotsForDate(c, day, meals, pendingMeals);
         slots.forEach(slot => {
           (slot.meals || []).filter(id => id && id.trim() && id !== "—").forEach(mealId => {
             const rows = mealIngredientsByMeal[mealId];
@@ -1138,7 +1308,7 @@ function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredien
       return { day, cost: dayCost, missing: missingCost };
     });
     return { days, unassigned: Array.from(unassigned) };
-  }, [deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, mealIngredientsByMeal, ingredientById, mealLibrary]);
+  }, [deliveryClients, meals, pendingMeals, currentWeekDates, mealIngredientsByMeal, ingredientById, mealLibrary]);
 
   const totalCost = costByDay.days.reduce((s, d) => s + d.cost, 0);
   const costHasGaps = costByDay.days.some(d => d.missing) || costByDay.unassigned.length > 0;
@@ -1376,7 +1546,7 @@ function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredien
     y += 4;
 
     section("INGREDIENT COST BY DAY");
-    costByDay.days.forEach((d, i) => row([d.day, `¥${d.cost.toFixed(0)}${d.missing ? " (partial)" : ""}`], i));
+    costByDay.days.forEach((d, i) => row([fmtDateTab(d.day), `¥${d.cost.toFixed(0)}${d.missing ? " (partial)" : ""}`], i));
 
     doc.save("accounting-week-" + weekStartIso + ".pdf");
   };
@@ -1588,7 +1758,7 @@ function AccountingTab({ active, plans, paidPayments, ingredients, mealIngredien
         <tbody>
           {costByDay.days.map(d => (
             <tr key={d.day} style={{ borderTop: "1px solid var(--bdr)" }}>
-              <td style={{ padding: 10, color: "#fff" }}>{d.day}</td>
+              <td style={{ padding: 10, color: "#fff" }}>{fmtDateTab(d.day)}</td>
               <td style={{ padding: 10, textAlign: "right", color: "var(--dim)" }}>
                 ¥{d.cost.toFixed(0)}{d.missing && <span style={{ color: "#fbbf24", marginLeft: 8 }}>⚠ partial</span>}
               </td>
@@ -2205,7 +2375,7 @@ export default function App() {
   const [customItems, setCustomItems] = useState([]);
 
   const [tab,         setTab]         = useState("dashboard");
-  const [kitDay,      setKitDay]      = useState("Monday");
+  const [kitDay,      setKitDay]      = useState(todayIso());
   const [showBatchEditor, setShowBatchEditor] = useState(false);
   const [batchDraft,      setBatchDraft]      = useState([]);
 
@@ -2218,8 +2388,13 @@ export default function App() {
     try { await upsertSetting("kitchen_batches", JSON.stringify(cleaned)); }
     catch (e) { alert(`No se pudo guardar: ${e.message || e}`); }
   };
-  const [mealDay,     setMealDay]     = useState("Monday");
-  const [deliveryDay, setDeliveryDay] = useState("Monday");
+  const [mealDay,     setMealDay]     = useState(todayIso());
+  const [deliveryDay, setDeliveryDay] = useState(todayIso());
+  const [showKDS,     setShowKDS]     = useState(false);
+  // Reloj vivo del Kitchen Display. TODAY/todayIso son constantes de módulo
+  // (se fijan al cargar la página); esta pantalla queda proyectada horas en
+  // un monitor y tiene que re-bucketear sola cuando pasa la hora.
+  const [kdsNow,      setKdsNow]      = useState(chinaNowMinutes);
   const [sbOpen,    setSbOpen]    = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [loaded,    setLoaded]    = useState(false);
@@ -2234,10 +2409,6 @@ export default function App() {
   const [editPlanId,    setEditPlanId]    = useState(null);
   const [planForm,      setPlanForm]      = useState({...BLANK_PLAN});
 
-  const [showMenuModal, setShowMenuModal] = useState(false);
-  const [menuEditDay] = useState("Monday");
-  const [menuForm,      setMenuForm]      = useState({meals:["","",""],snack:""});
-
   const [showCustomItemModal, setShowCustomItemModal] = useState(false);
   const [newCustomItem,       setNewCustomItem]       = useState("");
 
@@ -2245,6 +2416,8 @@ export default function App() {
   const [filterSt, setFilterSt] = useState("all");
   const [clientsPage, setClientsPage] = useState(1);
   const CLIENTS_PAGE_SIZE = 20;
+  const [notifPage, setNotifPage] = useState(1);
+  const NOTIFS_PAGE_SIZE = 20;
 
   const [pendingOrders,      setPendingOrders]      = useState([]);
   const [approvedOrders,     setApprovedOrders]     = useState([]);
@@ -2341,10 +2514,62 @@ export default function App() {
     });
     return m;
   }, [paidPayments]);
+  // Mismo criterio que pendingRenewalStartByClient (la renovación pendiente
+  // más próxima, por start_date), pero guarda el plan_id en vez de la
+  // fecha -- para saber a QUÉ plan corresponde ese hueco, no solo cuándo
+  // arranca. Sin esto, c.planName (el del cliente en `clients`, todavía sin
+  // pisar) mostraba el plan VIEJO en las tablas/tarjetas mientras dura el
+  // hueco, aunque el reparto de esos días ya cocina el plan nuevo (ver
+  // mealSlotsForDate) -- la insignia de plan no coincidía con las comidas
+  // mostradas debajo.
+  const pendingRenewalPlanByClient = useMemo(() => {
+    const m = {};
+    const startById = {};
+    paidPayments.forEach(p => {
+      if (p.applied === false && (!(p.client_id in startById) || p.start_date < startById[p.client_id])) {
+        startById[p.client_id] = p.start_date;
+        m[p.client_id] = p.plan_id;
+      }
+    });
+    return m;
+  }, [paidPayments]);
+  // Renovaciones por cliente, derivadas de `payments` -- la unica fuente de
+  // verdad real. Antes esto vivia en la columna `clients.renewal_count`, que
+  // solo incrementaba el panel al detectar que cambio el expiry date al
+  // guardar un cliente: ninguno de los dos caminos de pago (complete-payment
+  // para la renovacion inmediata, apply_pending_renewals() para la
+  // anticipada) la tocaba nunca. Resultado en prod: renovaciones pagadas por
+  // WeChat que no sumaban, y correcciones de fecha a mano que si sumaban.
+  // Solo cuentan las `applied` -- una renovacion anticipada ya pagada pero
+  // cuyo ciclo todavia no arranco se muestra con el badge "Upcoming"
+  // (ver pendingRenewalStartByClient), no como renovacion cumplida.
+  const renewalCountByClient = useMemo(() => {
+    const m = {};
+    paidPayments.forEach(p => {
+      if (p.type === "renewal" && p.applied === true) {
+        m[p.client_id] = (m[p.client_id] || 0) + 1;
+      }
+    });
+    return m;
+  }, [paidPayments]);
+
   const clientRealStatus = useCallback((c) => {
     const rs = getRealStatus(c.startDate, c.expiryDate);
     return rs === "Inactive" && pendingRenewalStartByClient[c.id] ? "Upcoming" : rs;
   }, [pendingRenewalStartByClient]);
+
+  // Mismo hueco que clientRealStatus, pero para el nombre de plan a
+  // mostrar: durante la renovación pendiente, el plan que corresponde
+  // mostrar es el NUEVO (pendingRenewalPlanByClient), no c.planName (sigue
+  // siendo el viejo hasta que el cron aplica el cambio).
+  const clientPlanName = useCallback((c) => {
+    const pendingPlanId = pendingRenewalStartByClient[c.id] ? pendingRenewalPlanByClient[c.id] : null;
+    if (pendingPlanId) {
+      const p = plans.find(x => x.id === pendingPlanId);
+      if (p) return p.name;
+    }
+    return c.planName;
+  }, [pendingRenewalStartByClient, pendingRenewalPlanByClient, plans]);
 
   const notifRecipients = useMemo(() => {
     if (notifForm.recipientMode === "all") return clients.map(c => c.id);
@@ -2522,13 +2747,17 @@ export default function App() {
         setCurrentWeekIndex(curWeek);
         setRotationOrder(rotOrder);
         // New schema: getMealSelections already returns {cid: {day: [slots]}}
+        // `day` es una fecha real ISO (columna meal_selections.delivery_date)
+        // -- se itera lo que efectivamente haya, no un set fijo
+        // de 5 días de semana (dos fechas distintas pueden caer en el mismo
+        // día de semana dentro de la ventana de 14 días hábiles).
         // Each slot has: {id, slot, mealIds, deliveryTime, snackId, snack, snackObj, note}
         // Convert to internal format used by App: {id, time, meals, snack, note}
         const converted = {};
         for (const cid of Object.keys(ms)) {
           converted[cid] = {};
-          for (const day of DAYS) {
-            const slots = ms[cid]?.[day] || [];
+          for (const day of Object.keys(ms[cid] || {})) {
+            const slots = ms[cid][day] || [];
             converted[cid][day] = slots.map(s => ({
               id:     String(s.id),
               slot:   s.slot,
@@ -2548,8 +2777,8 @@ export default function App() {
         const convertedPending = {};
         for (const cid of Object.keys(pendingMs)) {
           convertedPending[cid] = {};
-          for (const day of DAYS) {
-            const slots = pendingMs[cid]?.[day] || [];
+          for (const day of Object.keys(pendingMs[cid] || {})) {
+            const slots = pendingMs[cid][day] || [];
             convertedPending[cid][day] = slots.map(s => ({
               id:     String(s.id),
               slot:   s.slot,
@@ -2634,6 +2863,19 @@ export default function App() {
   // se puede quedar mostrando una página vacía de un filtro anterior.
   useEffect(() => { setClientsPage(1); }, [filterSt, search]);
 
+  // Notificaciones enviadas: la lista solo crece (cada renovación aplicada
+  // inserta una), así que sin paginar la pestaña se volvía un scroll infinito.
+  const notifTotalPages = Math.max(1, Math.ceil(notifications.length / NOTIFS_PAGE_SIZE));
+  const pagedNotifications = useMemo(() => {
+    const start = (notifPage - 1) * NOTIFS_PAGE_SIZE;
+    return notifications.slice(start, start + NOTIFS_PAGE_SIZE);
+  }, [notifications, notifPage]);
+  // Al borrar la última de una página, esa página deja de existir: sin esto
+  // quedaba una tabla vacía con el paginador marcando "Page 3 / 2".
+  useEffect(() => {
+    setNotifPage(p => Math.min(p, notifTotalPages));
+  }, [notifTotalPages]);
+
   const clientsTotalPages = Math.max(1, Math.ceil(filtered.length / CLIENTS_PAGE_SIZE));
   const paginatedClients = useMemo(() => {
     const start = (clientsPage - 1) * CLIENTS_PAGE_SIZE;
@@ -2653,6 +2895,26 @@ export default function App() {
     [clients, clientRealStatus]
   );
 
+  // Fechas reales con entregas, para las pestañas de Kitchen Prep / Delivery
+  // Sheet -- reemplaza los 5 tabs fijos Lun-Vie (pantallas de ejecución,
+  // solo importan los días que ya tienen algo cargado).
+  const upcomingDates = useMemo(() => collectUpcomingDates(meals, pendingMeals), [meals, pendingMeals]);
+
+  // Meal Selections es una pantalla de PLANIFICACIÓN: además de los días con
+  // algo cargado, necesita los próximos 14 días calendario aunque todavía
+  // estén vacíos, para poder agregar la primera selección de un cliente en
+  // un día futuro (si el tab no existe hasta que haya datos, nunca se podría
+  // cargar el primero).
+  const mealTabDates = useMemo(() => {
+    const set = new Set(collectUpcomingDates(meals, pendingMeals));
+    let d = new Date(TODAY);
+    for (let i = 0; i < 14; i++) {
+      set.add(dateToLocalIso(d));
+      d = new Date(d); d.setDate(d.getDate() + 1);
+    }
+    return Array.from(set).sort();
+  }, [meals, pendingMeals]);
+
   // Kitchen: aggregate INGREDIENTS (not meal counts) needed per batch, per day.
   // Each portion is expanded into its meal_ingredients rows so kitchen staff
   // see "how much of X to prep for this batch" instead of "how many of meal Y".
@@ -2663,12 +2925,12 @@ export default function App() {
     mealIngredients.forEach(mi => { (mealIngredientsByMeal[mi.meal_id] = mealIngredientsByMeal[mi.meal_id] || []).push(mi); });
 
     const d = {};
-    DAYS.forEach(day => {
+    upcomingDates.forEach(day => {
       const batches = {};
       batchTimes.forEach(b => { batches[b] = { portionCount: 0, ingGrams: {}, unassigned: new Set() }; });
 
-      deliveryClients.filter(c => clientActiveOnDayOrPending(c, day, pendingRenewalStartByClient[c.id])).forEach(c => {
-        const slots = mealSlotsForDay(c, day, meals, pendingMeals, pendingRenewalStartByClient[c.id]);
+      deliveryClients.filter(c => clientActiveOnDateOrPending(c, day, meals, pendingMeals)).forEach(c => {
+        const slots = mealSlotsForDate(c, day, meals, pendingMeals);
         slots.forEach(slot => {
           const batch = getBatch(slot.time || "", batchTimes);
           (slot.meals||[]).filter(id => id && id.trim() && id !== "—").forEach(rawId => {
@@ -2704,24 +2966,138 @@ export default function App() {
       }).filter(b => b.total > 0);
     });
     return d;
-  }, [deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, batchTimes, ingredients, mealIngredients, mealLibraryState]);
+  }, [deliveryClients, meals, pendingMeals, upcomingDates, batchTimes, ingredients, mealIngredients, mealLibraryState]);
 
-  // Delivery: group by time, filtered by selected day
+  // Delivery: agrupado y ordenado por HORA DE COCINA (la que puso el admin en
+  // el slot, o la de entrega menos 1h si no la puso), no por hora de entrega.
+  // La hora de entrega de cada parada sigue en su propia columna. La clave de
+  // cada grupo es la hora de cocina -- `kds` y `printDelivery()` la leen de
+  // ahí, así que el cálculo vive en un solo lugar.
   const delivery = useMemo(() => {
     const allSlots = [];
-    deliveryClients.filter(c => clientActiveOnDayOrPending(c, deliveryDay, pendingRenewalStartByClient[c.id])).forEach(c => {
-      mealSlotsForDay(c, deliveryDay, meals, pendingMeals, pendingRenewalStartByClient[c.id]).forEach(slot => {
-        allSlots.push({ client: c, day: deliveryDay, slot });
+    deliveryClients.filter(c => clientActiveOnDateOrPending(c, deliveryDay, meals, pendingMeals)).forEach(c => {
+      mealSlotsForDate(c, deliveryDay, meals, pendingMeals).forEach(slot => {
+        allSlots.push({ client: c, day: deliveryDay, slot, cook: slot.cookTime || cookingTimeFor(slot.time) });
       });
     });
-    allSlots.sort((a,b) => (a.slot.time||"99").localeCompare(b.slot.time||"99"));
+    // A igual hora de cocina, ordena por hora de entrega: dentro de una misma
+    // tanda, el que sale antes va primero.
+    allSlots.sort((a,b) =>
+      (a.cook||"99").localeCompare(b.cook||"99") ||
+      (a.slot.time||"99").localeCompare(b.slot.time||"99"));
     const g = {};
     allSlots.forEach(x => {
-      const t = x.slot.time || "TBD";
+      const t = x.cook || "TBD";
       (g[t]=g[t]||[]).push(x);
     });
     return g;
-  }, [deliveryClients, meals, pendingMeals, pendingRenewalStartByClient, deliveryDay, mealLibraryState]);
+  }, [deliveryClients, meals, pendingMeals, deliveryDay, mealLibraryState]);
+
+  // ── Kitchen Display: qué hay que cocinar en esta hora y en la siguiente.
+  // Se bucketea por HORA DE COCINA (slot.cookTime, o la hora de entrega menos
+  // 1h si nadie la puso a mano), no por hora de entrega: lo que la cocina
+  // necesita saber es cuándo tiene que estar listo, no cuándo sale el
+  // repartidor. Y se agrega por PLATO, no por pedido -- la cocina cocina
+  // platos: "14 × Chicken Teriyaki" es accionable, 14 filas de clientes no.
+  // Cuánto tiempo después de su hora de cocina algo sigue contando como
+  // "atrasado". Sin esto, a las 23:00 el monitor seguía en rojo por el
+  // desayuno de las 09:00 -- un cartel que nadie va a accionar y que tapa
+  // los que sí importan. Pasado el margen deja de listarse.
+  const KDS_LATE_WINDOW_H = 3;
+
+  const kds = useMemo(() => {
+    const isToday = deliveryDay === todayIso();
+    const rows = [];
+    Object.entries(delivery).forEach(([cook, entries]) => {
+      entries.forEach(({ client: c, slot }) => {
+        rows.push({ client: c, slot, out: slot.time || "TBD", cookMin: hmToMinutes(cook) });
+      });
+    });
+    const timed = rows.filter(r => r.cookMin != null);
+    const tbd   = rows.filter(r => r.cookMin == null);
+
+    // Hora de referencia: la hora en curso si el tab es HOY. Si se está
+    // mirando otro día (revisar mañana desde la oficina), se ancla en la
+    // primera hora de cocina de ese día para que no salga una pantalla
+    // vacía -- se marca como PREVIEW arriba para no confundirlo con vivo.
+    const baseHour = isToday
+      ? Math.floor(kdsNow / 60)
+      : (timed.length ? Math.floor(Math.min(...timed.map(r => r.cookMin)) / 60) : 0);
+
+    // Un ticket = una parada = un cliente en un horario. NO se agrega por
+    // plato entre clientes: la alergia y la nota son del pedido, y juntarlas
+    // en una tarjeta compartida mezclaba el "sin maní" de uno con el "salsa
+    // aparte" de otro. Dentro del ticket sí se cuentan los repetidos (2× lo
+    // mismo para la misma persona es una línea, no dos).
+    const ticketsOf = list => list
+      .map(r => {
+        const counts = [];
+        (r.slot.meals || []).filter(id => id && String(id).trim() && id !== "—").forEach(id => {
+          const hit = counts.find(c => c.id === id);
+          if (hit) hit.qty++;
+          else counts.push({ id, name: mealName(id) || id, qty: 1 });
+        });
+        const al = (r.client.allergies || "").trim();
+        const nt = (r.slot.note || r.client.customizations || "").trim();
+        return {
+          id: r.slot.id,
+          out: r.out && r.out !== "TBD" ? r.out : "TBD",
+          client: r.client.name || "?",
+          meals: counts,
+          portions: counts.reduce((n, c) => n + c.qty, 0),
+          allergies: al && al !== "—" ? al : "",
+          note: nt && nt !== "—" ? nt : "",
+        };
+      })
+      .filter(t => t.meals.length > 0)
+      .sort((a, b) => a.out.localeCompare(b.out) || a.client.localeCompare(b.client));
+
+    const bucket = h => {
+      const list = timed.filter(r => Math.floor(r.cookMin / 60) === h);
+      const tickets = ticketsOf(list);
+      return { hour: h, stops: tickets.length, tickets, portions: tickets.reduce((n, t) => n + t.portions, 0) };
+    };
+
+    // Atrasados: solo en vivo (hoy), y solo dentro de la ventana -- ver
+    // KDS_LATE_WINDOW_H. Se agrupan por hora para que la key de "listo"
+    // siga siendo estable cuando pasa el tiempo.
+    const lateHours = isToday
+      ? Array.from(new Set(timed
+          .filter(r => { const h = Math.floor(r.cookMin / 60); return h < baseHour && h >= baseHour - KDS_LATE_WINDOW_H; })
+          .map(r => Math.floor(r.cookMin / 60)))).sort((a, b) => a - b)
+      : [];
+
+    const laterRows = timed.filter(r => Math.floor(r.cookMin / 60) > baseHour + 1);
+    const laterTickets = ticketsOf(laterRows);
+
+    return {
+      isToday,
+      now:  bucket(baseHour),
+      next: bucket(baseHour + 1),
+      late: lateHours.map(bucket),
+      later: { stops: laterTickets.length, portions: laterTickets.reduce((n, t) => n + t.portions, 0) },
+      tbd:  { stops: ticketsOf(tbd).length },
+    };
+  }, [delivery, deliveryDay, kdsNow, mealLibraryState]);
+
+  // Tick del reloj del KDS. 20s es suficiente: lo único que cambia el
+  // contenido es cruzar una hora en punto, y no vale la pena re-renderizar
+  // una pantalla de TV cada segundo. Solo corre con el display abierto.
+  useEffect(() => {
+    if (!showKDS) return;
+    const id = setInterval(() => setKdsNow(chinaNowMinutes()), 20000);
+    return () => clearInterval(id);
+  }, [showKDS]);
+
+  // Esc cierra el display. Se escucha aparte del fullscreen del browser
+  // porque Esc sale del fullscreen sin desmontar nada: sin esto quedaba la
+  // pantalla negra tapando el panel y no se entendía cómo volver.
+  useEffect(() => {
+    if (!showKDS) return;
+    const onKey = e => { if (e.key === "Escape") setShowKDS(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showKDS]);
 
   // ── Handlers
   const togglePaid = async id => {
@@ -2885,20 +3261,12 @@ export default function App() {
         statusNote:   rawSaved.status_note     || "",
       };
       if (editClientId) {
-        const prev = clients.find(c=>c.id===editClientId);
-        if (prev && clientForm.expiryDate && prev.expiryDate !== clientForm.expiryDate) {
-          incrementRenewalCount(editClientId).catch(()=>{});
-          saved.renewalCount = (prev.renewalCount||0) + 1;
-        }
         setClients(p=>p.map(c=>c.id===editClientId?saved:c));
       } else {
         setClients(p=>[...p,saved]);
-        const defaultMeals = {};
-        for (const day of DAYS) {
-          defaultMeals[day] = [];
-          // No need to pre-create rows — slots are created on demand
-        }
-        setMeals(p=>({...p,[saved.id]:defaultMeals}));
+        // Slots se crean on-demand por fecha real (Meal Selections tab) --
+        // no hay un set fijo de días que pre-sembrar.
+        setMeals(p=>({...p,[saved.id]:{}}));
       }
       setShowClientModal(false);
       flash();
@@ -2986,29 +3354,6 @@ export default function App() {
     catch(e){ console.error(e); const restored = await getTiers(); setTiers(restored||[]); }
   };
 
-  // ── Menu modal
-  const saveMenu = async () => {
-    try {
-      // Look up IDs from meal names in library
-      const lib = mealLibraryRef.current;
-      const mealIds = menuForm.meals.filter(Boolean).map(name => {
-        const found = lib.find(m=>m.name===name);
-        return found ? found.id : null;
-      }).filter(Boolean);
-      const snackObj = lib.find(m=>m.name===menuForm.snack);
-      await updateMenuDay(menuEditDay, {
-        mealIds,
-        snackId: snackObj?.id || "",
-      });
-      const mealObjs = mealIds.map(id=>lib.find(m=>m.id===id)).filter(Boolean);
-      setMenu(p=>({...p,[menuEditDay]:{
-        meals:mealObjs, mealIds,
-        snack:snackObj?.name||"", snackId:snackObj?.id||"", snackObj:snackObj||null
-      }}));
-      setShowMenuModal(false); flash();
-    } catch(e){ console.error(e); }
-  };
-
   const upsertMenuDay = async (day, tier, weekIndex, {mealIds, snackId}) => {
     try {
       await updateMenuDay(day, tier, weekIndex, {mealIds, snackId});
@@ -3046,25 +3391,18 @@ export default function App() {
   };
 
   // ── Print / Save as PDF delivery sheet (supports Chinese characters)
-  // Hora de cocina: 1h antes de la hora de entrega, para que la cocina sepa
-  // cuándo tiene que tener listo cada pedido. Si el horario no está definido
-  // (slot "TBD"), no hay nada que restarle.
-  const cookingTimeFor = (timeStr) => {
-    if (!timeStr || timeStr === "TBD") return "TBD";
-    const [h, m] = timeStr.split(":").map(Number);
-    if (Number.isNaN(h) || Number.isNaN(m)) return "TBD";
-    const hh = (h - 1 + 24) % 24;
-    return String(hh).padStart(2,"0") + ":" + String(m).padStart(2,"0");
-  };
-
   const printDelivery = () => {
-    const dayName = deliveryDay;
-    const dateStr = TODAY.toLocaleDateString("en-GB");
-    const rows = Object.entries(delivery).flatMap(([time, slots]) =>
+    // deliveryDay ya es la fecha real elegida en el tab -- antes esto
+    // siempre mostraba la fecha de HOY sin importar qué tab estuviera
+    // seleccionado (bug latente: imprimir el sheet de otro día mostraba la
+    // fecha de hoy en el header).
+    const dayName = fmtDateTab(deliveryDay);
+    const dateStr = fmtDate(deliveryDay);
+    const rows = Object.entries(delivery).flatMap(([cook, slots]) =>
       slots.map(({client:c, slot}, i) => ({
         num: i+1,
-        time,
-        cookTime: slot.cookTime || cookingTimeFor(time),
+        time: slot.time || "TBD",
+        cookTime: cook,
         name: c.name,
         phone: c.phone || "",
         plan: c.planName,
@@ -3211,8 +3549,10 @@ export default function App() {
   // ── Print Kitchen Prep sheet
   const printKitchen = async () => {
     const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm");
-    const dayName = kitDay;
-    const dateStr = TODAY.toLocaleDateString("en-GB");
+    // kitDay ya es la fecha real elegida en el tab -- antes esto siempre
+    // mostraba la fecha de HOY sin importar qué tab estuviera seleccionado.
+    const dayName = fmtDateTab(kitDay);
+    const dateStr = fmtDate(kitDay);
     const batches = kitchen[kitDay] || [];
     const totalPortions = batches.reduce((s,b)=>s+b.total,0);
 
@@ -3265,7 +3605,7 @@ export default function App() {
       y += 4;
     });
 
-    doc.save("kitchen-" + dayName.toLowerCase() + ".pdf");
+    doc.save("kitchen-" + kitDay + ".pdf");
   };
 
 
@@ -3362,16 +3702,16 @@ export default function App() {
               {tab==="plans"&&!selectedTierId&&<button className="btn btn-r" onClick={openAddTier}>+ New Tier</button>}
               {tab==="plans"&&selectedTierId&&<button className="btn btn-r" onClick={openAddPlan}>+ New Plan</button>}
               {tab==="kitchen"&&(
-                <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                  <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
-                    {DAYS.map(d=><button key={d} className={`tab${kitDay===d?" on":""}`} onClick={()=>setKitDay(d)}>{d.slice(0,3)}</button>)}
+                <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                  <div className="tabs" style={{margin:0,border:"none",paddingBottom:0,flexWrap:"wrap"}}>
+                    {upcomingDates.map(d=><button key={d} className={`tab${kitDay===d?" on":""}`} onClick={()=>setKitDay(d)}>{fmtDateTab(d)}</button>)}
                   </div>
                   <button className="btn btn-g btn-sm" onClick={openBatchEditor}>✎ Edit Batches</button>
                 </div>
               )}
               {tab==="delivery"&&(
-                <div className="tabs" style={{margin:0,border:"none",paddingBottom:0}}>
-                  {DAYS.map(d=><button key={d} className={`tab${deliveryDay===d?" on":""}`} onClick={()=>setDeliveryDay(d)}>{d.slice(0,3)}</button>)}
+                <div className="tabs" style={{margin:0,border:"none",paddingBottom:0,flexWrap:"wrap"}}>
+                  {upcomingDates.map(d=><button key={d} className={`tab${deliveryDay===d?" on":""}`} onClick={()=>setDeliveryDay(d)}>{fmtDateTab(d)}</button>)}
                 </div>
               )}
             </div>
@@ -3405,8 +3745,8 @@ export default function App() {
                   {lbl:"Weekly Revenue", val:`¥${revenue}`,  sub:"this week",                                                  c:"var(--green)"},
                   {lbl:"Unpaid",         val:unpaid.length,  sub:unpaid.length?"Follow up":"All paid ✓",                      c:unpaid.length?"var(--amber)":"var(--green)"},
                   {lbl:"Renewals ≤1d",   val:renewDue.length+overdue.length, sub:"includes overdue",                          c:"var(--amber)"},
-                  {lbl:"Meals / Week",   val:totalMl,        sub:"total portions",                                             c:"var(--blue)"},
-                  {lbl:"Deliveries/Wk",  val:active.reduce((s,c)=>s+c.deliveries,0)*5, sub:"Mon–Fri",                         c:"#a78bfa"},
+                  {lbl:"Meals / Cycle",  val:totalMl,        sub:"total portions",                                             c:"var(--blue)"},
+                  {lbl:"Deliveries/Cycle",val:active.reduce((s,c)=>s+c.deliveries,0)*5, sub:"5 days per client",             c:"#a78bfa"},
                 ].map((k,i)=>(
                   <div className="kpi" key={i} style={{"--kc":k.c}}>
                     <div className="kpi-lbl">{k.lbl}</div>
@@ -3426,7 +3766,7 @@ export default function App() {
                     <tbody>{active.map(c=>(
                       <tr key={c.id}>
                         <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                        <td><PlanBadge planName={c.planName} plans={plans}/></td>
+                        <td><PlanBadge planName={clientPlanName(c)} plans={plans}/></td>
                         <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓ Paid":"Unpaid"}</button></td>
                         <td><RenewalBadge c={c} pendingStart={pendingRenewalStartByClient[c.id]}/></td>
                       </tr>
@@ -3516,8 +3856,8 @@ export default function App() {
                       <td style={{color:"var(--dim)",fontSize:10}}>{c.id}</td>
                       <td style={{color:"#fff",fontWeight:500,whiteSpace:"nowrap"}}>{c.name}</td>
                       <td style={{color:"var(--muted)"}}>{c.phone||"—"}</td>
-                      <td><PlanBadge planName={c.planName} plans={plans}/></td>
-                      <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===c.planName)?.price||0}</td>
+                      <td><PlanBadge planName={clientPlanName(c)} plans={plans}/></td>
+                      <td style={{color:"var(--green)"}}>¥{plans.find(p=>p.name===clientPlanName(c))?.price||0}</td>
                       <td style={{color:"var(--muted)"}}>¥{c.deliveryFee ?? 35}</td>
                       <td>{(()=>{
                         const rs = clientRealStatus(c);
@@ -3526,7 +3866,7 @@ export default function App() {
                         return <span className="bx bx-gr">Inactive</span>;
                       })()}</td>
                       <td><RenewalBadge c={c} pendingStart={pendingRenewalStartByClient[c.id]}/></td>
-                      <td style={{textAlign:"center"}}><span style={{fontFamily:"'Rajdhani',sans-serif",fontSize:16,fontWeight:700,color:c.renewalCount>0?"var(--green)":"var(--dim)"}}>{c.renewalCount||0}</span></td>
+                      <td style={{textAlign:"center"}}><span style={{fontFamily:"'Rajdhani',sans-serif",fontSize:16,fontWeight:700,color:renewalCountByClient[c.id]?"var(--green)":"var(--dim)"}}>{renewalCountByClient[c.id]||0}</span></td>
                       <td><button className={`bx bx-clk ${c.paid?"bx-g":"bx-r"}`} onClick={()=>togglePaid(c.id)}>{c.paid?"✓":"Unpaid"}</button></td>
                       <td style={{color:"var(--amber)"}}>¥{c.ltv}</td>
                       <td style={{display:"flex",gap:5}}>
@@ -3556,8 +3896,8 @@ export default function App() {
               <div className="alert-bar" style={{background:"#0a1020",borderColor:"#1e3a5f",color:"#93c5fd"}}>
                 💡 Each client can have multiple delivery slots per day. Use <strong>+ Add Slot</strong> for clients with 2 deliveries in one day.
               </div>
-              <div className="tabs">
-                {DAYS.map(d=><button key={d} className={`tab${mealDay===d?" on":""}`} onClick={()=>setMealDay(d)}>{d}</button>)}
+              <div className="tabs" style={{flexWrap:"wrap"}}>
+                {mealTabDates.map(d=><button key={d} className={`tab${mealDay===d?" on":""}`} onClick={()=>setMealDay(d)}>{fmtDateTab(d)}</button>)}
               </div>
               {(()=>{
                 // Meal Selections is a planning screen: show Active AND Upcoming clients
@@ -3566,24 +3906,23 @@ export default function App() {
                 // execution screens for "what happens today/this specific day".
                 // Un cliente con renovación pendiente sigue siendo "de planificación"
                 // aunque su ciclo actual ya haya vencido -- y para el día puntual que se
-                // está mirando, cuenta como visible si su ciclo actual lo cubre O si ya
-                // tiene elegidas comidas para el ciclo nuevo ese día (clientActiveOnDay
-                // por sí solo no lo sabe, porque solo mira start/expiry del ciclo viejo).
+                // está mirando, cuenta como visible si ya tiene una fila (ciclo actual o
+                // pending_meal_selections) para esa fecha exacta, o si el día cae dentro
+                // de su ventana de planificación aunque todavía no haya elegido nada ahí.
                 const hasAnyPending = c => Object.keys(pendingMeals[c.id] || {}).length > 0;
-                const hasPendingForDay = c => (pendingMeals[c.id]?.[mealDay] || []).length > 0;
                 const planningClients = clients.filter(c => getRealStatus(c.startDate, c.expiryDate) !== "Inactive" || hasAnyPending(c));
                 const earliestTime = c => (meals[c.id]?.[mealDay]||[]).reduce((min,s) => {
                   const t = s.time||"";
                   return t && (!min || t<min) ? t : min;
                 }, "");
                 const visibleClients  = planningClients
-                  .filter(c => clientActiveOnDay(c, mealDay) || hasPendingForDay(c))
+                  .filter(c => clientPlanningOnDate(c, mealDay, meals, pendingMeals))
                   .sort((a,b) => (earliestTime(a)||"99:99").localeCompare(earliestTime(b)||"99:99"));
                 if (planningClients.length === 0) return (
                   <div className="empty-state"><div className="empty-state-icon">🍱</div><div className="empty-state-title">No active or upcoming clients</div><div className="empty-state-sub">Add clients to manage their meals</div></div>
                 );
                 if (visibleClients.length === 0) return (
-                  <div className="empty-state"><div className="empty-state-icon">📅</div><div className="empty-state-title">No clients scheduled for {mealDay}</div><div className="empty-state-sub">All clients either haven't started yet or have expired for this day</div></div>
+                  <div className="empty-state"><div className="empty-state-icon">📅</div><div className="empty-state-title">No clients scheduled for {fmtDateTab(mealDay)}</div><div className="empty-state-sub">All clients either haven't started yet or have expired for this day</div></div>
                 );
                 return visibleClients.map(c => {
                   const slots = [...(meals[c.id]?.[mealDay] || [])].sort((a,b) => (a.time||"99:99").localeCompare(b.time||"99:99"));
@@ -3591,7 +3930,7 @@ export default function App() {
                     <div className="client-card" key={c.id}>
                       <div className="client-card-hd">
                         <div className="client-card-name">{c.name}</div>
-                        <PlanBadge planName={c.planName} plans={plans}/>
+                        <PlanBadge planName={clientPlanName(c)} plans={plans}/>
                         {clientRealStatus(c)==="Upcoming"&&
                           <span className="bx bx-a" style={{fontSize:9}}>Upcoming · starts {fmtDate(pendingRenewalStartByClient[c.id] || c.startDate)}</span>}
                         {c.customizations&&<span style={{fontSize:10,color:"#fcd34d"}}>⚠️ {c.customizations}</span>}
@@ -3604,7 +3943,7 @@ export default function App() {
                       </div>
 
                       {slots.length===0&&(
-                        <div style={{padding:"12px 14px",color:"var(--dim)",fontSize:11}}>No deliveries added yet for {mealDay}.</div>
+                        <div style={{padding:"12px 14px",color:"var(--dim)",fontSize:11}}>No deliveries added yet for {fmtDateTab(mealDay)}.</div>
                       )}
 
                       {slots.map((slot, si) => (
@@ -3614,7 +3953,10 @@ export default function App() {
                             {/* Delivery time */}
                             <div className="slot-field slot-field-sm">
                               <label>Delivery Time</label>
-                              <input className="msel" type="time" value={slot.time||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"time",e.target.value)}/>
+                              {/* Misma ventana de entrega que ofrece el mini-program
+                                  (10:15-19:30). El input de Cooking Time de al lado NO
+                                  la lleva a propósito: se cocina antes de repartir. */}
+                              <input className="msel" type="time" min={DELIVERY_MIN_TIME} max={DELIVERY_MAX_TIME} value={slot.time||""} onChange={e=>updateSlot(c.id,mealDay,slot.id,"time",e.target.value)}/>
                             </div>
 
                             {/* Cooking time — manual override shown on the Delivery Sheet */}
@@ -3738,7 +4080,7 @@ export default function App() {
               {/* Batches */}
               {(kitchen[kitDay]||[]).length===0?(
                 <div style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:8,padding:20,textAlign:"center",color:"var(--dim)",fontSize:11}}>
-                  No meal selections for {kitDay} yet
+                  No meal selections for {fmtDateTab(kitDay)} yet
                 </div>
               ):(
                 (kitchen[kitDay]||[]).map((batch)=>(
@@ -3784,7 +4126,7 @@ export default function App() {
                 return (
                   <div style={{marginTop:8,marginBottom:20}}>
                     <div style={{background:"#0f0f0f",border:"1px solid var(--bdr)",borderRadius:"6px 6px 0 0",padding:"9px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <span style={{fontFamily:"'Rajdhani',sans-serif",fontSize:14,fontWeight:700,letterSpacing:1,color:"var(--dim)"}}>DAY TOTAL — {kitDay.toUpperCase()}</span>
+                      <span style={{fontFamily:"'Rajdhani',sans-serif",fontSize:14,fontWeight:700,letterSpacing:1,color:"var(--dim)"}}>DAY TOTAL — {fmtDateTab(kitDay).toUpperCase()}</span>
                       <span style={{fontSize:11,color:"var(--dim)"}}>~¥{totalCost.toFixed(0)} in ingredients</span>
                     </div>
                     {rows.map(([id,grams],i)=>(
@@ -3811,7 +4153,7 @@ export default function App() {
                   <tbody>{active.filter(c=>c.customizations||c.allergies).map(c=>(
                     <tr key={c.id}>
                       <td style={{color:"#fff",fontWeight:500}}>{c.name}</td>
-                      <td><PlanBadge planName={c.planName} plans={plans}/></td>
+                      <td><PlanBadge planName={clientPlanName(c)} plans={plans}/></td>
                       <td style={{color:"#f87171"}}>{c.allergies||"—"}</td>
                       <td style={{color:"#fcd34d"}}>{c.customizations||"—"}</td>
                       <td style={{color:"var(--muted)"}}>{c.access||"—"}</td>
@@ -3825,33 +4167,36 @@ export default function App() {
             {tab==="delivery"&&<>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
                 <div className="alert-bar" style={{background:"#0d1a0d",borderColor:"#14532d",color:"#86efac",margin:0,flex:1}}>
-                  🛵 Sorted by delivery time.
+                  👨‍🍳 Sorted by cooking time. Each group is a cooking batch; the delivery column shows when each stop goes out.
                 </div>
+                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setShowKDS(true);}} style={{flexShrink:0}}>📺 Kitchen Display</button>
                 <button className="btn btn-r" onClick={()=>printDelivery()} style={{flexShrink:0}}>⬇ Download PDF</button>
               </div>
               {Object.keys(delivery).length===0?(
                 <div className="empty-state"><div className="empty-state-icon">🛵</div><div className="empty-state-title">No deliveries scheduled</div><div className="empty-state-sub">Add delivery slots in Meal Selections</div></div>
               ):Object.entries(delivery).map(([time,entries])=>(
                 <div className="del-grp" key={time}>
-                  <div className="del-time">🕐 {time} — {entries.length} stop{entries.length>1?"s":""}</div>
+                  <div className="del-time">👨‍🍳 Cook {time} — {entries.length} stop{entries.length>1?"s":""}</div>
                   <div className="tbl-wrap"><table style={{tableLayout:"fixed",width:"100%"}}>
                     <colgroup>
                       <col style={{width:"3%"}}/>
-                      <col style={{width:"13%"}}/>
-                      <col style={{width:"9%"}}/>
-                      <col style={{width:"18%"}}/>
-                      <col style={{width:"10%"}}/>
-                      <col style={{width:"22%"}}/>
+                      <col style={{width:"12%"}}/>
+                      <col style={{width:"8%"}}/>
                       <col style={{width:"7%"}}/>
+                      <col style={{width:"16%"}}/>
+                      <col style={{width:"9%"}}/>
+                      <col style={{width:"21%"}}/>
+                      <col style={{width:"6%"}}/>
                       <col style={{width:"12%"}}/>
                       <col style={{width:"6%"}}/>
                     </colgroup>
-                    <thead><tr><th>#</th><th>Client</th><th>Plan</th><th>Address</th><th>Access</th><th>Meals</th><th>Cutlery</th><th>Note</th><th>Done</th></tr></thead>
+                    <thead><tr><th>#</th><th>Client</th><th>Plan</th><th>Delivery</th><th>Address</th><th>Access</th><th>Meals</th><th>Cutlery</th><th>Note</th><th>Done</th></tr></thead>
                     <tbody>{entries.map(({client:c, slot},i)=>(
                       <tr key={slot.id}>
                         <td style={{color:"var(--dim)",whiteSpace:"nowrap"}}>{i+1}</td>
                         <td style={{color:"#fff",fontWeight:500,whiteSpace:"nowrap"}}>{c.name}</td>
-                        <td style={{whiteSpace:"nowrap"}}><PlanBadge planName={c.planName} plans={plans}/></td>
+                        <td style={{whiteSpace:"nowrap"}}><PlanBadge planName={clientPlanName(c)} plans={plans}/></td>
+                        <td style={{whiteSpace:"nowrap",fontWeight:600,color:"var(--amber)"}}>🛵 {slot.time||"TBD"}</td>
                         <td style={{color:"var(--muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.address||"TBC"}</td>
                         <td style={{color:"var(--muted)",fontSize:10}}>{c.access||"—"}</td>
                         <td>
@@ -4098,7 +4443,7 @@ export default function App() {
                 <div className="tbl-wrap"><table>
                   <thead><tr><th>Client</th><th>Title</th><th>Message</th><th>Status</th><th>Sent</th><th></th></tr></thead>
                   <tbody>
-                    {notifications.map(n=>(
+                    {pagedNotifications.map(n=>(
                       <tr key={n.id}>
                         <td style={{color:"#fff",fontWeight:500}}>{n.client?.name||`Client #${n.client_id}`}</td>
                         <td style={{color:"var(--muted)",fontSize:11}}>{n.title}</td>
@@ -4113,6 +4458,18 @@ export default function App() {
                     ))}
                   </tbody>
                 </table></div>
+              )}
+              {notifications.length>NOTIFS_PAGE_SIZE&&(
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:12,marginBottom:24}}>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>
+                    Showing {(notifPage-1)*NOTIFS_PAGE_SIZE+1}&ndash;{Math.min(notifPage*NOTIFS_PAGE_SIZE,notifications.length)} of {notifications.length}
+                  </div>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <button className="btn btn-g btn-sm" disabled={notifPage<=1} onClick={()=>setNotifPage(p=>p-1)}>&#8592; Prev</button>
+                    <span style={{fontSize:11,color:"var(--muted)"}}>Page {notifPage} / {notifTotalPages}</span>
+                    <button className="btn btn-g btn-sm" disabled={notifPage>=notifTotalPages} onClick={()=>setNotifPage(p=>p+1)}>Next &#8594;</button>
+                  </div>
+                </div>
               )}
             </>}
 
@@ -4380,39 +4737,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ═══ MENU MODAL ══════════════════════════════ */}
-      {showMenuModal&&(
-        <div className="mo" onClick={e=>{if(e.target===e.currentTarget)setShowMenuModal(false);}}>
-          <div className="mo-box" style={{maxWidth:520}}>
-            <div className="mo-hd">
-              <div className="mo-title">Edit Menu — {menuEditDay}</div>
-              <button className="btn btn-g btn-sm" onClick={()=>setShowMenuModal(false)}>✕</button>
-            </div>
-            <div className="mo-body">
-              <div style={{marginBottom:16}}>
-                <div className="sec-title" style={{marginBottom:8}}>Meals of the Day</div>
-                {menuForm.meals.map((m,i)=>(
-                  <div key={i} style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
-                    <span style={{fontSize:10,color:"var(--dim)",minWidth:60}}>Meal {i+1}</span>
-                    <input className="inp" placeholder={`Meal ${i+1} name`} value={m||""} onChange={e=>{
-                      const nm=[...menuForm.meals]; nm[i]=e.target.value; setMenuForm(p=>({...p,meals:nm}));
-                    }}/>
-                    {menuForm.meals.length>1&&(
-                      <button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} onClick={()=>setMenuForm(p=>({...p,meals:p.meals.filter((_,j)=>j!==i)}))}>✕</button>
-                    )}
-                  </div>
-                ))}
-                <button className="btn btn-g btn-sm" onClick={()=>setMenuForm(p=>({...p,meals:[...p.meals,""]}))}>+ Add Meal</button>
-              </div>
-            </div>
-            <div className="mo-ft">
-              <button className="btn btn-g" onClick={()=>setShowMenuModal(false)}>Cancel</button>
-              <button className="btn btn-r" onClick={saveMenu}>Save Menu</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ═══ TIER MODAL ══════════════════════════════ */}
       {showTierModal&&(
         <div className="mo" onClick={e=>{if(e.target===e.currentTarget)setShowTierModal(false);}}>
@@ -4501,6 +4825,80 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ═══ KITCHEN DISPLAY ════════════════════════
+          Pantalla de cocina a pantalla completa, para dejar proyectada en un
+          monitor. Sale del mismo `delivery` que el Delivery Sheet (mismo día
+          del tab de arriba), así que no hay una segunda fuente de verdad. */}
+      {showKDS&&(()=>{
+        const clock = String(Math.floor(kdsNow/60)).padStart(2,"0")+":"+String(kdsNow%60).padStart(2,"0");
+        // Los atrasados ya marcados listos no son un atraso: se filtran con
+        // la misma key que usa la tarjeta, si no el banner rojo nunca se iba.
+        const late = kds.late
+          .map(b=>({...b, tickets:b.tickets.filter(t=>!checks[`k_${t.id}`])}))
+          .filter(b=>b.tickets.length>0);
+        const latePortions = late.reduce((n,b)=>n+b.tickets.reduce((m,t)=>m+t.portions,0),0);
+        const toggleFull = () => {
+          try {
+            if (document.fullscreenElement) document.exitFullscreen?.();
+            else document.documentElement.requestFullscreen?.().catch(()=>{});
+          } catch { /* fullscreen puede estar bloqueado (iframe, permisos) */ }
+        };
+        return (
+          <div className="kds">
+            <div className="kds-top">
+              <div className="kds-clock">{kds.isToday?clock:"--:--"}</div>
+              <div>
+                <div className="kds-date">{fmtDateTab(deliveryDay)}</div>
+                <div className="kds-date" style={{color:kds.isToday?"var(--green)":"var(--amber)"}}>
+                  {kds.isToday?"● Live · Shanghai":"Preview · not today"}
+                </div>
+              </div>
+              <div style={{flex:1}}/>
+              {[{l:"Cook now",v:kds.now.portions,c:"var(--red)"},
+                {l:"Next hour",v:kds.next.portions,c:"#60a5fa"},
+                {l:"Later today",v:kds.later.portions,c:"var(--dim)"}].map(k=>(
+                <div className="kds-kpi" key={k.l}>
+                  <div className="kds-kpi-v" style={{color:k.c}}>{k.v}</div>
+                  <div className="kds-kpi-l">{k.l}</div>
+                </div>
+              ))}
+              <button className="kds-btn" onClick={toggleFull}>⛶ Fullscreen</button>
+              <button className="kds-btn" onClick={()=>setShowKDS(false)}>✕ Exit</button>
+            </div>
+
+            {latePortions>0&&(
+              <div className="kds-late">
+                <span>⚠ Behind · {latePortions} portion{latePortions!==1?"s":""} past cook time</span>
+                {late.map(b=>(
+                  <span key={b.hour} style={{opacity:.9}}>{hourLabel(b.hour)} — {b.tickets.map(t=>`${t.out} ${t.client}`).join(" · ")}</span>
+                ))}
+              </div>
+            )}
+
+            {kds.now.portions===0&&kds.next.portions===0&&kds.later.portions===0&&latePortions===0?(
+              <div className="kds-clear">
+                <div className="big">{kds.isToday?"ALL DONE FOR TODAY":"NOTHING SCHEDULED"}</div>
+                <div className="sub">{fmtDateTab(deliveryDay)}{kds.tbd.stops>0?` · ${kds.tbd.stops} stop${kds.tbd.stops!==1?"s":""} with no time set`:""}</div>
+              </div>
+            ):(
+            <div className="kds-cols">
+              <KdsBucket kind="now"  title={`Cook now · ${hourLabel(kds.now.hour)}`}   bucket={kds.now}
+                         checks={checks} onToggle={toggleCheck} emptyText="NOTHING THIS HOUR"/>
+              <KdsBucket kind="next" title={`Next up · ${hourLabel(kds.next.hour)}`}   bucket={kds.next}
+                         checks={checks} onToggle={toggleCheck} emptyText="NOTHING NEXT HOUR"/>
+            </div>
+            )}
+
+            <div className="kds-foot">
+              <span>Tap a card when it's plated.</span>
+              <span><b>{kds.later.stops}</b> more stop{kds.later.stops!==1?"s":""} later today</span>
+              {kds.tbd.stops>0&&<span style={{color:"var(--amber)"}}>⚠ <b style={{color:"var(--amber)"}}>{kds.tbd.stops}</b> stop{kds.tbd.stops!==1?"s":""} with no delivery time set — not shown in any hour</span>}
+              <span style={{marginLeft:"auto"}}>Cook time = delivery time − 1h unless set per slot · Esc to exit</span>
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }

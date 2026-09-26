@@ -70,7 +70,6 @@ export async function getClients() {
     acqChannel:     c.acq_channel     || "",
     wechatOpenid:   c.wechat_openid   || "",
     statusNote:     c.status_note     || "",
-    renewalCount:   c.renewal_count   || 0,
     cutlery:        c.cutlery         ?? false,
   }));
 }
@@ -99,14 +98,10 @@ export async function upsertClient(client) {
     weeks:          client.weeks          || 0,
     wechat_openid:  client.wechatOpenid   || "",
     status_note:    client.statusNote     || "",
-    renewal_count:  client.renewalCount   ?? 0,
     cutlery:        client.cutlery        ?? false,
   };
   if (client.id) mapped.id = client.id;
   return check(await supabase.from("clients").upsert(mapped).select().single(), "upsertClient");
-}
-export async function incrementRenewalCount(id) {
-  await supabase.rpc("increment_renewal_count", { client_id: id });
 }
 export async function deleteClient(id) {
   check(await supabase.from("clients").delete().eq("id", id), "deleteClient");
@@ -187,16 +182,6 @@ export async function getCurrentWeekIndex() {
   return order[slot];
 }
 
-// Shifts the live week forward/backward by `delta` weeks (e.g. +1 to advance
-// to next week's menu, -1 to go back) by moving the anchor date.
-export async function shiftMenuRotation(delta) {
-  const settings = await getSettings(["menu_rotation_anchor"]);
-  const anchor = settings.menu_rotation_anchor ? new Date(settings.menu_rotation_anchor + "T00:00:00") : new Date();
-  anchor.setDate(anchor.getDate() - delta * 7);
-  const y = anchor.getFullYear(), m = String(anchor.getMonth()+1).padStart(2,"0"), d = String(anchor.getDate()).padStart(2,"0");
-  await upsertSetting("menu_rotation_anchor", `${y}-${m}-${d}`);
-  return getCurrentWeekIndex();
-}
 
 // ── MEAL SELECTIONS ──────────────────────────────────────────
 export async function getMealSelections() {
@@ -206,13 +191,14 @@ export async function getMealSelections() {
       .select("*, snack:snack_id(id,name,kcal,protein,carbs,fat,is_snack)"),
     "getMealSelections"
   );
-  // Index by client_id -> day -> array of slots
+  // Index by client_id -> delivery_date -> array of slots
   const out = {};
   for (const row of (data || [])) {
+    if (!row.delivery_date) continue;
     const cid = String(row.client_id);
     if (!out[cid]) out[cid] = {};
-    if (!out[cid][row.day]) out[cid][row.day] = [];
-    out[cid][row.day].push({
+    if (!out[cid][row.delivery_date]) out[cid][row.delivery_date] = [];
+    out[cid][row.delivery_date].push({
       id:           row.id,
       slot:         row.slot,
       mealIds:      row.meals_json || [],
@@ -225,7 +211,7 @@ export async function getMealSelections() {
       sauceIds:     row.sauce_ids || [],
     });
     // Sort by slot
-    out[cid][row.day].sort((a,b) => a.slot - b.slot);
+    out[cid][row.delivery_date].sort((a,b) => a.slot - b.slot);
   }
   return out;
 }
@@ -239,12 +225,15 @@ export async function getPendingMealSelections() {
       .select("*, snack:snack_id(id,name,kcal,protein,carbs,fat,is_snack)"),
     "getPendingMealSelections"
   );
+  // delivery_date NULL = fila legacy de un pago que todavía no se cobró:
+  // no tiene fecha real todavía (se completa sola al marcarse 'paid').
   const out = {};
   for (const row of (data || [])) {
+    if (!row.delivery_date) continue;
     const cid = String(row.client_id);
     if (!out[cid]) out[cid] = {};
-    if (!out[cid][row.day]) out[cid][row.day] = [];
-    out[cid][row.day].push({
+    if (!out[cid][row.delivery_date]) out[cid][row.delivery_date] = [];
+    out[cid][row.delivery_date].push({
       id:           row.id,
       slot:         row.slot,
       mealIds:      row.meals_json || [],
@@ -256,7 +245,7 @@ export async function getPendingMealSelections() {
       sauceIds:     row.sauce_ids || [],
       outTradeNo:   row.out_trade_no || "",
     });
-    out[cid][row.day].sort((a,b) => a.slot - b.slot);
+    out[cid][row.delivery_date].sort((a,b) => a.slot - b.slot);
   }
   return out;
 }
@@ -264,7 +253,7 @@ export async function getPendingMealSelections() {
 export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, cookTime, snackId, note, sauceIds }) {
   check(await supabase.from("meal_selections").upsert({
     client_id:     clientId,
-    day,
+    delivery_date: day,
     slot:          slot || 1,
     meals_json:    mealIds || [],
     delivery_time: deliveryTime || "",
@@ -272,14 +261,14 @@ export async function upsertMealSelection(clientId, day, slot, { mealIds, delive
     snack_id:      snackId || null,
     note:          note || "",
     sauce_ids:     sauceIds || [],
-  }, { onConflict: "client_id,day,slot" }), "upsertMealSelection");
+  }, { onConflict: "client_id,delivery_date,slot" }), "upsertMealSelection");
 }
 
 export async function deleteMealSelection(clientId, day, slot) {
   check(await supabase.from("meal_selections")
     .delete()
     .eq("client_id", clientId)
-    .eq("day", day)
+    .eq("delivery_date", day)
     .eq("slot", slot),
   "deleteMealSelection");
 }
@@ -370,10 +359,6 @@ export async function getMealWeeklyStats() {
   }));
 }
 
-// ── NEW ORDERS ───────────────────────────────────────────────
-export async function createNewOrder(order) {
-  return check(await supabase.from("new_orders").insert(order).select().single(), "createNewOrder");
-}
 export async function getPendingOrders() {
   return check(await supabase.from("new_orders").select("*").eq("status","pending").order("created_at"), "getPendingOrders");
 }
@@ -394,11 +379,14 @@ export async function reApproveOrder(order, deliveryFee) {
   await supabase.from("new_orders").update({ status: "pending", note: "" }).eq("id", order.id);
   return approveOrder({...order, status:"pending", note:""}, deliveryFee);
 }
-export async function updateOrderStatus(id, status, note) {
-  check(await supabase.from("new_orders").update({ status, note: note||"" }).eq("id", id), "updateOrderStatus");
-}
 
-const ORDER_DAY_KEYS = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday" };
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// La tabla `menu` (catálogo de rotación) sigue siendo por día de semana --
+// esto solo traduce una fecha real a ese nombre para poder consultarla.
+function weekdayNameForDate(dateStr) {
+  return WEEKDAY_NAMES[new Date(dateStr + "T00:00:00").getDay()];
+}
 
 // Approve a pending new_order: upsert the client, sync its weekly meal
 // selections, mark the order approved, then push-notify the client.
@@ -451,10 +439,13 @@ export async function approveOrder(order, deliveryFee) {
     : null;
   const weekIndex = await getCurrentWeekIndex();
 
+  // `order.meals` viene keyed por fecha real ISO (ver mini-program
+  // pages/meal-select) -- ya no un template fijo Lun-Vie.
   const meals = order.meals || {};
-  for (const [key, dayName] of Object.entries(ORDER_DAY_KEYS)) {
-    const slot = meals[key];
+  for (const dateStr of Object.keys(meals)) {
+    const slot = meals[dateStr];
     if (!slot) continue;
+    const dayName = weekdayNameForDate(dateStr);
 
     let mealIds = slot.meal_ids || [];
     if (planTier && mealIds.length > 0) {
@@ -469,13 +460,13 @@ export async function approveOrder(order, deliveryFee) {
 
     check(await supabase.from("meal_selections").upsert({
       client_id:     clientId,
-      day:           dayName,
+      delivery_date: dateStr,
       slot:          1,
       meals_json:    mealIds,
       delivery_time: slot.time || "",
       snack_id:      slot.snack_id || null,
       note:          slot.notes || "",
-    }, { onConflict: "client_id,day,slot" }), "approveOrder:syncMealSelection");
+    }, { onConflict: "client_id,delivery_date,slot" }), "approveOrder:syncMealSelection");
   }
 
   check(await supabase.from("new_orders").update({ status: "approved", delivery_fee: deliveryFee }).eq("id", order.id), "approveOrder:markApproved");
@@ -531,7 +522,12 @@ export async function updateCoachCommission(id, commission_per_referral) {
 export async function getPaidPayments() {
   return check(await supabase
     .from("payments")
-    .select("id,client_id,type,amount_fen,status,start_date,expiry_date,paid_at,applied,referral_code")
+    // plan_id: hace falta para saber a QUE plan renovó un cliente cuyo pago
+    // sigue sin aplicar (applied=false, renovación anticipada) -- ver
+    // pendingRenewalPlanByClient en App.jsx. Sin esto, la UI mostraba el
+    // plan VIEJO durante ese hueco (mismo dato que ya usaba
+    // pendingRenewalStartByClient para la fecha, pero faltaba para el plan).
+    .select("id,client_id,type,plan_id,amount_fen,status,start_date,expiry_date,paid_at,applied,referral_code")
     .eq("status", "paid"), "getPaidPayments");
 }
 
@@ -600,6 +596,27 @@ export async function deleteMealIngredient(id) {
 export async function createNotification(clientId, title, message) {
   check(await supabase.from("notifications").insert({ client_id: clientId, title, message, is_read: false }), "createNotification");
 }
+// ── WECHAT PUSH ───────────────────────────────────────────────
+// Best-effort: never throws, never blocks the calling flow.
+export async function pushNotify(clientId, writer, content) {
+  try {
+    await fetch(`${SUPABASE_URL}/functions/v1/wx-notify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: clientId,
+        template_id: "A7o5PTcftFBe1nYsidWchFofz2z_DN9Whn_96H60x2M",
+        data: {
+          name1:  { value: String(writer).slice(0,10) },
+          thing2: { value: String(content).slice(0,20) },
+          time4:  { value: new Date().toISOString().slice(0,16).replace("T"," ") },
+        },
+      }),
+    });
+  } catch (e) {
+    console.error("[pushNotify]", e);
+  }
+}
 export async function getNotifications() {
   return check(await supabase
     .from("notifications")
@@ -627,32 +644,7 @@ export async function upsertPushSubscription(sub) {
 export async function removePushSubscription(endpoint) {
   check(await supabase.from("push_subscriptions").delete().eq("endpoint", endpoint), "removePushSubscription");
 }
-export async function getPushSubscriptionCount() {
-  const { count } = await supabase.from("push_subscriptions").select("*", { count: "exact", head: true });
-  return count || 0;
-}
 
-// ── WECHAT PUSH ───────────────────────────────────────────────
-// Best-effort: never throws, never blocks the calling flow.
-export async function pushNotify(clientId, writer, content) {
-  try {
-    await fetch(`${SUPABASE_URL}/functions/v1/wx-notify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id: clientId,
-        template_id: "A7o5PTcftFBe1nYsidWchFofz2z_DN9Whn_96H60x2M",
-        data: {
-          name1:  { value: String(writer).slice(0,10) },
-          thing2: { value: String(content).slice(0,20) },
-          time4:  { value: new Date().toISOString().slice(0,16).replace("T"," ") },
-        },
-      }),
-    });
-  } catch (e) {
-    console.error("[pushNotify]", e);
-  }
-}
 
 // ── SETTINGS ─────────────────────────────────────────────────
 export async function getSettings(keys) {

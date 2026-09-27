@@ -3531,10 +3531,16 @@ export default function App() {
         plan: c.planName,
         address: c.address || "TBC",
         access: c.access || "—",
-        meals: (slot.meals||[]).filter(Boolean).map((id,mi) => ({
-          name:  mealName(id) || id,
-          sauce: (slot.sauceIds||[])[mi] ? mealName((slot.sauceIds||[])[mi]) : "",
-        })),
+        meals: (slot.meals||[]).filter(Boolean).map((id,mi) => {
+          // Tamaño de porción según el tier de la COMIDA (meal_library.tier):
+          // Performance (Athlete Build, Serious Gains...) = BIG, Balance = SMALL.
+          const tier = (mealLibraryRef.current.find(m => m.id === id)?.tier || "").toLowerCase();
+          return {
+            name:  mealName(id) || id,
+            sauce: (slot.sauceIds||[])[mi] ? mealName((slot.sauceIds||[])[mi]) : "",
+            size:  tier === "performance" ? "BIG" : tier === "balance" ? "SMALL" : "",
+          };
+        }),
         snack: slot.snackId ? mealName(slot.snackId) : slot.snack || "—",
         note: slot.note || c.customizations || "—",
         allergies: c.allergies || "",
@@ -3595,6 +3601,10 @@ export default function App() {
     .meal-bullet { color: #e8342a; font-weight: 900; font-size: 11px; line-height: 1; flex-shrink: 0; }
     .meal-name { font-weight: 700; font-size: 10.5px; }
     .meal-sauce { font-size: 9px; color: #999; font-style: italic; }
+    .size-tags { margin-top: 6px; }
+    .size-tag { display: inline-block; font-weight: 900; font-size: 11px; letter-spacing: .8px; padding: 1px 6px; border-radius: 3px; margin-right: 5px; line-height: 1.3; vertical-align: 1px; }
+    .size-big   { background: #dc2626; color: #fff; border: 2px solid #dc2626; }
+    .size-small { background: #16a34a; color: #fff; border: 2px solid #16a34a; }
     .snack-val { font-size: 10.5px; font-weight: 600; }
     .note-block { font-size: 10px; }
     .note-text { color: #92400e; font-weight: 700; }
@@ -3645,7 +3655,15 @@ export default function App() {
                   "<span class=\"meal-name\">" + (m.name||m) + "</span>" +
                 "</div>" +
               "</div>"
-            ).join("")
+            ).join("") +
+            // Un solo cartel por parada, debajo de las comidas. Si mezcla
+            // tiers (raro), sale uno de cada.
+            (() => {
+              const sizes = [...new Set(r.meals.map(m => m.size).filter(Boolean))];
+              return sizes.length
+                ? "<div class=\"size-tags\">" + sizes.map(s => "<span class=\"size-tag size-" + s.toLowerCase() + "\">" + s + "</span>").join("") + "</div>"
+                : "";
+            })()
           : "<span class=\"dash\">&mdash;</span>";
         return "<tr>" +
           "<td class=\"cn-num\">" + (i+1) + "</td>" +

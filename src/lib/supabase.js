@@ -238,6 +238,7 @@ export async function getPendingMealSelections() {
       slot:         row.slot,
       mealIds:      row.meals_json || [],
       deliveryTime: row.delivery_time || "",
+      cookTime:     row.cook_time || "",
       snackId:      row.snack_id || "",
       snack:        row.snack?.name || "",
       snackObj:     row.snack || null,
@@ -248,6 +249,16 @@ export async function getPendingMealSelections() {
     out[cid][row.delivery_date].sort((a,b) => a.slot - b.slot);
   }
   return out;
+}
+
+// El staff solo toca el cooking time de las filas del próximo ciclo; el
+// resto (comidas, horario, nota) es lo que eligió el cliente. El cron
+// apply_pending_renewals() lo copia a meal_selections al aplicar la renovación.
+export async function updatePendingCookTime(id, cookTime) {
+  check(await supabase.from("pending_meal_selections")
+    .update({ cook_time: cookTime || "" })
+    .eq("id", id),
+  "updatePendingCookTime");
 }
 
 export async function upsertMealSelection(clientId, day, slot, { mealIds, deliveryTime, cookTime, snackId, note, sauceIds }) {

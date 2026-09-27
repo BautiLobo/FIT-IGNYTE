@@ -120,7 +120,6 @@ const hmToMinutes = hm => {
   const [h, m] = String(hm).split(":").map(Number);
   return Number.isNaN(h) || Number.isNaN(m) ? null : h * 60 + m;
 };
-const hourLabel = h => String(((h % 24) + 24) % 24).padStart(2, "0") + ":00";
 
 // Formatea un Date ya construido (medianoche local) a "YYYY-MM-DD" usando
 // sus componentes LOCALES -- nunca .toISOString(), que trunca a UTC y en
@@ -537,12 +536,53 @@ tbody tr:hover{background:#1e1e1e}
 // justo lo que hay que poder leer de un vistazo al emplatar.
 // Tocar una tarjeta la marca lista (se guarda en `checklist` con la key
 // `k_<slot id>`, así el monitor y el celular del cocinero ven lo mismo).
-function KdsBucket({ kind, title, bucket, checks, onToggle, emptyText }) {
+// Textos fijos del KDS en inglés y chino. Lo que viene de la base (nombre de
+// comida) usa name_zh si está cargado; nombres de cliente, alergias y notas
+// son texto libre y se muestran tal cual.
+const KDS_TXT = {
+  en: {
+    live:"● Live · Shanghai", preview:"Preview · not today",
+    cookNow:"Cook now", nextHour:"Next batch", laterToday:"Later today",
+    fullscreen:"⛶ Fullscreen", exit:"✕ Exit", lang:"中文",
+    behind:n=>`⚠ Behind · ${n} portion${n!==1?"s":""} past cook time`,
+    allDone:"ALL DONE FOR TODAY", nothing:"NOTHING SCHEDULED",
+    noTime:n=>`${n} stop${n!==1?"s":""} with no time set`,
+    colNow:h=>`Cook now · Batch ${h}`, colNext:h=>`Next up · Batch ${h}`,
+    emptyNow:"NOTHING THIS BATCH", emptyNext:"NOTHING NEXT BATCH",
+    portions:n=>`${n} portion${n!==1?"s":""}`, stops:n=>`${n} stop${n!==1?"s":""}`,
+    ready:"ready ✓", pc:n=>`${n} pc`, batch:"Batch",
+    tap:"Tap a card when it's plated.",
+    moreLater:n=>`more stop${n!==1?"s":""} later today`,
+    tbdWarn:n=>`stop${n!==1?"s":""} with no delivery time set — not shown in any hour`,
+    footNote:"Grouped by cook time into kitchen batches · Cook time = delivery − 1h unless set per slot · Esc to exit",
+    date:d=>fmtDateTab(d),
+  },
+  zh: {
+    live:"● 实时 · 上海", preview:"预览 · 非今天",
+    cookNow:"现在做", nextHour:"下一批", laterToday:"今天稍后",
+    fullscreen:"⛶ 全屏", exit:"✕ 退出", lang:"EN",
+    behind:n=>`⚠ 落后 · ${n} 份已过烹饪时间`,
+    allDone:"今天全部完成", nothing:"没有安排",
+    noTime:n=>`${n} 单未设置时间`,
+    colNow:h=>`现在做 · 批次 ${h}`, colNext:h=>`下一批 · 批次 ${h}`,
+    emptyNow:"这一批没有", emptyNext:"下一批没有",
+    portions:n=>`${n} 份`, stops:n=>`${n} 单`,
+    ready:"已完成 ✓", pc:n=>`${n} 份`, batch:"批次",
+    tap:"装好后点一下卡片。",
+    moreLater:()=>"单今天稍后",
+    tbdWarn:()=>"单未设置送达时间 — 不在任何时段显示",
+    footNote:"按烹饪时间分批 · 烹饪时间 = 送达时间 − 1小时（除非单独设置）· Esc 退出",
+    date:d=>{ try { return new Date(d+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"}); } catch { return d||"—"; } },
+  },
+};
+
+function KdsBucket({ kind, title, bucket, checks, onToggle, emptyText, lang = "en" }) {
+  const T = KDS_TXT[lang];
   return (
     <div className={`kds-col kds-${kind}`}>
       <div className="kds-col-hd">
         <span className="t">{title}</span>
-        <span className="s">{bucket.portions} portion{bucket.portions!==1?"s":""} · {bucket.stops} stop{bucket.stops!==1?"s":""}</span>
+        <span className="s">{T.portions(bucket.portions)} · {T.stops(bucket.stops)}</span>
       </div>
       <div className="kds-body">
         {bucket.tickets.length===0 ? (
@@ -553,15 +593,15 @@ function KdsBucket({ kind, title, bucket, checks, onToggle, emptyText }) {
           return (
             <div key={t.id} className={`kds-card${done?" done":""}`} onClick={()=>onToggle(key)}>
               <div className="kds-tk-hd">
-                <span className="kds-tk-time">{t.out}</span>
-                <span className="kds-tk-who">{t.client}</span>
-                <span className="kds-tk-n">{done?"ready ✓":`${t.portions} pc`}</span>
+                <span className="kds-tk-time">{t.cook}</span>
+                <span className="kds-tk-who">{t.client} · 🚚 {t.out}</span>
+                <span className="kds-tk-n">{done?T.ready:T.pc(t.portions)}</span>
               </div>
               <div className="kds-tk-body">
                 {t.meals.map(m=>(
                   <div className="kds-line" key={m.id}>
                     <span className="q">{m.qty}</span>
-                    <span className="n">{m.name}</span>
+                    <span className="n">{lang==="zh"&&m.nameZh?m.nameZh:m.name}</span>
                   </div>
                 ))}
                 {t.allergies&&<span className="kds-tag al">⚠ {t.allergies}</span>}
@@ -2435,6 +2475,10 @@ export default function App() {
   // (se fijan al cargar la página); esta pantalla queda proyectada horas en
   // un monitor y tiene que re-bucketear sola cuando pasa la hora.
   const [kdsNow,      setKdsNow]      = useState(chinaNowMinutes);
+  // Idioma del Kitchen Display, recordado por navegador (el monitor de la
+  // cocina queda en chino aunque el panel se use en inglés).
+  const [kdsLang,     setKdsLang]     = useState(() => { try { return localStorage.getItem("kds_lang") === "zh" ? "zh" : "en"; } catch { return "en"; } });
+  const toggleKdsLang = () => setKdsLang(l => { const n = l === "zh" ? "en" : "zh"; try { localStorage.setItem("kds_lang", n); } catch { /* sin storage */ } return n; });
   const [sbOpen,    setSbOpen]    = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [loaded,    setLoaded]    = useState(false);
@@ -2823,6 +2867,7 @@ export default function App() {
               id:     String(s.id),
               slot:   s.slot,
               time:   s.deliveryTime || "",
+              cookTime: s.cookTime || "",
               meals:  s.mealIds || [],
               snack:  s.snack || "",
               sauceIds: s.sauceIds || [],
@@ -3056,13 +3101,14 @@ export default function App() {
     setDeliveryDay(dateWindow(next)[0]);
   };
 
-  // ── Kitchen Display: qué hay que cocinar en esta hora y en la siguiente.
-  // Se bucketea por HORA DE COCINA (slot.cookTime, o la hora de entrega menos
-  // 1h si nadie la puso a mano), no por hora de entrega: lo que la cocina
-  // necesita saber es cuándo tiene que estar listo, no cuándo sale el
-  // repartidor. Y se agrega por PLATO, no por pedido -- la cocina cocina
-  // platos: "14 × Chicken Teriyaki" es accionable, 14 filas de clientes no.
-  // Cuánto tiempo después de su hora de cocina algo sigue contando como
+  // ── Kitchen Display: qué hay que cocinar en este batch y en el siguiente.
+  // Cada pedido cae en un batch de cocina (los mismos horarios de "Edit
+  // Batches") según su HORA DE COCINA (slot.cookTime, o la hora de entrega
+  // menos 1h si nadie la puso a mano), no según la hora de entrega: lo que la
+  // cocina necesita saber es en qué tanda se cocina, no cuándo sale el
+  // repartidor. Un pedido va al último batch que arranca <= su hora de cocina
+  // (getBatch); si cocina antes del primero, cae en el primero.
+  // Cuánto tiempo después del arranque de su batch algo sigue contando como
   // "atrasado". Sin esto, a las 23:00 el monitor seguía en rojo por el
   // desayuno de las 09:00 -- un cartel que nadie va a accionar y que tapa
   // los que sí importan. Pasado el margen deja de listarse.
@@ -3070,22 +3116,27 @@ export default function App() {
 
   const kds = useMemo(() => {
     const isToday = deliveryDay === todayIso();
+    const batchList = batchTimes && batchTimes.length ? batchTimes : DEFAULT_BATCHES;
     const rows = [];
     Object.entries(delivery).forEach(([cook, entries]) => {
       entries.forEach(({ client: c, slot }) => {
-        rows.push({ client: c, slot, out: slot.time || "TBD", cookMin: hmToMinutes(cook) });
+        const cookMin = hmToMinutes(cook);
+        rows.push({ client: c, slot, out: slot.time || "TBD", cook, cookMin,
+                    batch: cookMin == null ? null : getBatch(cook, batchList) });
       });
     });
     const timed = rows.filter(r => r.cookMin != null);
     const tbd   = rows.filter(r => r.cookMin == null);
 
-    // Hora de referencia: la hora en curso si el tab es HOY. Si se está
-    // mirando otro día (revisar mañana desde la oficina), se ancla en la
-    // primera hora de cocina de ese día para que no salga una pantalla
+    // Batch de referencia: el que está en curso si el tab es HOY. Si se está
+    // mirando otro día (revisar mañana desde la oficina), se ancla en el
+    // primer batch con pedidos de ese día para que no salga una pantalla
     // vacía -- se marca como PREVIEW arriba para no confundirlo con vivo.
-    const baseHour = isToday
-      ? Math.floor(kdsNow / 60)
-      : (timed.length ? Math.floor(Math.min(...timed.map(r => r.cookMin)) / 60) : 0);
+    const clockHm = String(Math.floor(kdsNow / 60)).padStart(2, "0") + ":" + String(kdsNow % 60).padStart(2, "0");
+    const firstUsed = batchList.findIndex(b => timed.some(r => r.batch === b));
+    const baseIdx = isToday
+      ? batchList.indexOf(getBatch(clockHm, batchList))
+      : Math.max(0, firstUsed);
 
     // Un ticket = una parada = un cliente en un horario. NO se agrega por
     // plato entre clientes: la alergia y la nota son del pedido, y juntarlas
@@ -3098,12 +3149,13 @@ export default function App() {
         (r.slot.meals || []).filter(id => id && String(id).trim() && id !== "—").forEach(id => {
           const hit = counts.find(c => c.id === id);
           if (hit) hit.qty++;
-          else counts.push({ id, name: mealName(id) || id, qty: 1 });
+          else counts.push({ id, name: mealName(id) || id, nameZh: mealLibraryRef.current.find(m => m.id === id)?.name_zh || "", qty: 1 });
         });
         const al = (r.client.allergies || "").trim();
         const nt = (r.slot.note || r.client.customizations || "").trim();
         return {
           id: r.slot.id,
+          cook: r.cook || "TBD",
           out: r.out && r.out !== "TBD" ? r.out : "TBD",
           client: r.client.name || "?",
           meals: counts,
@@ -3113,35 +3165,33 @@ export default function App() {
         };
       })
       .filter(t => t.meals.length > 0)
-      .sort((a, b) => a.out.localeCompare(b.out) || a.client.localeCompare(b.client));
+      .sort((a, b) => a.cook.localeCompare(b.cook) || a.out.localeCompare(b.out) || a.client.localeCompare(b.client));
 
-    const bucket = h => {
-      const list = timed.filter(r => Math.floor(r.cookMin / 60) === h);
-      const tickets = ticketsOf(list);
-      return { hour: h, stops: tickets.length, tickets, portions: tickets.reduce((n, t) => n + t.portions, 0) };
+    // idx fuera de la lista (no hay batch siguiente al último) => columna vacía.
+    const bucket = idx => {
+      const label = batchList[idx] || null;
+      const tickets = label ? ticketsOf(timed.filter(r => r.batch === label)) : [];
+      return { label, stops: tickets.length, tickets, portions: tickets.reduce((n, t) => n + t.portions, 0) };
     };
 
-    // Atrasados: solo en vivo (hoy), y solo dentro de la ventana -- ver
-    // KDS_LATE_WINDOW_H. Se agrupan por hora para que la key de "listo"
-    // siga siendo estable cuando pasa el tiempo.
-    const lateHours = isToday
-      ? Array.from(new Set(timed
-          .filter(r => { const h = Math.floor(r.cookMin / 60); return h < baseHour && h >= baseHour - KDS_LATE_WINDOW_H; })
-          .map(r => Math.floor(r.cookMin / 60)))).sort((a, b) => a - b)
+    // Atrasados: solo en vivo (hoy), batches anteriores al actual que
+    // arrancaron dentro de la ventana -- ver KDS_LATE_WINDOW_H.
+    const lateIdx = isToday
+      ? batchList.map((b, i) => i).filter(i => i < baseIdx && kdsNow - hmToMinutes(batchList[i]) <= KDS_LATE_WINDOW_H * 60)
       : [];
 
-    const laterRows = timed.filter(r => Math.floor(r.cookMin / 60) > baseHour + 1);
-    const laterTickets = ticketsOf(laterRows);
+    const laterBatches = new Set(batchList.slice(baseIdx + 2));
+    const laterTickets = ticketsOf(timed.filter(r => laterBatches.has(r.batch)));
 
     return {
       isToday,
-      now:  bucket(baseHour),
-      next: bucket(baseHour + 1),
-      late: lateHours.map(bucket),
+      now:  bucket(baseIdx),
+      next: bucket(baseIdx + 1),
+      late: lateIdx.map(bucket),
       later: { stops: laterTickets.length, portions: laterTickets.reduce((n, t) => n + t.portions, 0) },
       tbd:  { stops: ticketsOf(tbd).length },
     };
-  }, [delivery, deliveryDay, kdsNow, mealLibraryState]);
+  }, [delivery, deliveryDay, kdsNow, batchTimes, mealLibraryState]);
 
   // Tick del reloj del KDS. 20s es suficiente: lo único que cambia el
   // contenido es cruzar una hora en punto, y no vale la pena re-renderizar
@@ -3245,6 +3295,16 @@ export default function App() {
         note:         slot.note     || "",
         sauceIds:     slot.sauceIds || [],
       });
+      flash();
+    } catch(e){ console.error(e); }
+  };
+
+  const updatePendingSlotCookTime = async (clientId, day, slotId, value) => {
+    setPendingMeals(p => ({ ...p, [clientId]: { ...p[clientId],
+      [day]: (p[clientId]?.[day]||[]).map(s => s.id === slotId ? {...s, cookTime: value} : s) } }));
+    try {
+      const {updatePendingCookTime} = await import("./lib/supabase");
+      await updatePendingCookTime(slotId, value);
       flash();
     } catch(e){ console.error(e); }
   };
@@ -4089,6 +4149,11 @@ export default function App() {
                                   <label>Delivery Time</label>
                                   <div className="msel" style={{ display: "flex", alignItems: "center" }}>{slot.time || "—"}</div>
                                 </div>
+                                {/* Único campo editable del próximo ciclo: lo demás lo eligió el cliente */}
+                                <div className="slot-field slot-field-sm">
+                                  <label>Cooking Time</label>
+                                  <input className="msel" type="time" value={slot.cookTime || ""} onChange={e => updatePendingSlotCookTime(c.id, mealDay, slot.id, e.target.value)}/>
+                                </div>
                                 <div className="slot-field" style={{ flex: 2, minWidth: 200 }}>
                                   <label>Meals</label>
                                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -4907,6 +4972,7 @@ export default function App() {
           monitor. Sale del mismo `delivery` que el Delivery Sheet (mismo día
           del tab de arriba), así que no hay una segunda fuente de verdad. */}
       {showKDS&&(()=>{
+        const T = KDS_TXT[kdsLang];
         const clock = String(Math.floor(kdsNow/60)).padStart(2,"0")+":"+String(kdsNow%60).padStart(2,"0");
         // Los atrasados ya marcados listos no son un atraso: se filtran con
         // la misma key que usa la tarjeta, si no el banner rojo nunca se iba.
@@ -4925,52 +4991,53 @@ export default function App() {
             <div className="kds-top">
               <div className="kds-clock">{kds.isToday?clock:"--:--"}</div>
               <div>
-                <div className="kds-date">{fmtDateTab(deliveryDay)}</div>
+                <div className="kds-date">{T.date(deliveryDay)}</div>
                 <div className="kds-date" style={{color:kds.isToday?"var(--green)":"var(--amber)"}}>
-                  {kds.isToday?"● Live · Shanghai":"Preview · not today"}
+                  {kds.isToday?T.live:T.preview}
                 </div>
               </div>
               <div style={{flex:1}}/>
-              {[{l:"Cook now",v:kds.now.portions,c:"var(--red)"},
-                {l:"Next hour",v:kds.next.portions,c:"#60a5fa"},
-                {l:"Later today",v:kds.later.portions,c:"var(--dim)"}].map(k=>(
+              {[{l:T.cookNow,v:kds.now.portions,c:"var(--red)"},
+                {l:T.nextHour,v:kds.next.portions,c:"#60a5fa"},
+                {l:T.laterToday,v:kds.later.portions,c:"var(--dim)"}].map(k=>(
                 <div className="kds-kpi" key={k.l}>
                   <div className="kds-kpi-v" style={{color:k.c}}>{k.v}</div>
                   <div className="kds-kpi-l">{k.l}</div>
                 </div>
               ))}
-              <button className="kds-btn" onClick={toggleFull}>⛶ Fullscreen</button>
-              <button className="kds-btn" onClick={()=>setShowKDS(false)}>✕ Exit</button>
+              <button className="kds-btn" onClick={toggleKdsLang}>🌐 {T.lang}</button>
+              <button className="kds-btn" onClick={toggleFull}>{T.fullscreen}</button>
+              <button className="kds-btn" onClick={()=>setShowKDS(false)}>{T.exit}</button>
             </div>
 
             {latePortions>0&&(
               <div className="kds-late">
-                <span>⚠ Behind · {latePortions} portion{latePortions!==1?"s":""} past cook time</span>
+                <span>{T.behind(latePortions)}</span>
                 {late.map(b=>(
-                  <span key={b.hour} style={{opacity:.9}}>{hourLabel(b.hour)} — {b.tickets.map(t=>`${t.out} ${t.client}`).join(" · ")}</span>
+                  <span key={b.label} style={{opacity:.9}}>{T.batch} {b.label} — {b.tickets.map(t=>`${t.cook} ${t.client}`).join(" · ")}</span>
                 ))}
               </div>
             )}
 
             {kds.now.portions===0&&kds.next.portions===0&&kds.later.portions===0&&latePortions===0?(
               <div className="kds-clear">
-                <div className="big">{kds.isToday?"ALL DONE FOR TODAY":"NOTHING SCHEDULED"}</div>
-                <div className="sub">{fmtDateTab(deliveryDay)}{kds.tbd.stops>0?` · ${kds.tbd.stops} stop${kds.tbd.stops!==1?"s":""} with no time set`:""}</div>
+                <div className="big">{kds.isToday?T.allDone:T.nothing}</div>
+                <div className="sub">{T.date(deliveryDay)}{kds.tbd.stops>0?` · ${T.noTime(kds.tbd.stops)}`:""}</div>
               </div>
             ):(
             <div className="kds-cols">
-              <KdsBucket kind="now"  title={`Cook now · ${hourLabel(kds.now.hour)}`}   bucket={kds.now}
-                         checks={checks} onToggle={toggleCheck} emptyText="NOTHING THIS HOUR"/>
-              <KdsBucket kind="next" title={`Next up · ${hourLabel(kds.next.hour)}`}   bucket={kds.next}
-                         checks={checks} onToggle={toggleCheck} emptyText="NOTHING NEXT HOUR"/>
+              <KdsBucket kind="now"  title={T.colNow(kds.now.label||"—")}   bucket={kds.now}
+                         checks={checks} onToggle={toggleCheck} emptyText={T.emptyNow} lang={kdsLang}/>
+              <KdsBucket kind="next" title={T.colNext(kds.next.label||"—")}   bucket={kds.next}
+                         checks={checks} onToggle={toggleCheck} emptyText={T.emptyNext} lang={kdsLang}/>
             </div>
             )}
 
             <div className="kds-foot">
-              <span>Tap a card when it's plated.</span>
-              <span><b>{kds.later.stops}</b> more stop{kds.later.stops!==1?"s":""} later today</span>
-              {kds.tbd.stops>0&&<span style={{color:"var(--amber)"}}>⚠ <b style={{color:"var(--amber)"}}>{kds.tbd.stops}</b> stop{kds.tbd.stops!==1?"s":""} with no delivery time set — not shown in any hour</span>}
-              <span style={{marginLeft:"auto"}}>Cook time = delivery time − 1h unless set per slot · Esc to exit</span>
+              <span>{T.tap}</span>
+              <span><b>{kds.later.stops}</b> {T.moreLater(kds.later.stops)}</span>
+              {kds.tbd.stops>0&&<span style={{color:"var(--amber)"}}>⚠ <b style={{color:"var(--amber)"}}>{kds.tbd.stops}</b> {T.tbdWarn(kds.tbd.stops)}</span>}
+              <span style={{marginLeft:"auto"}}>{T.footNote}</span>
             </div>
           </div>
         );

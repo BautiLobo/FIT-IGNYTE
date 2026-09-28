@@ -631,6 +631,7 @@ function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en"
                 ))}
                 {t.allergies&&<span className="kds-tag al">⚠ {t.allergies}</span>}
                 {t.note&&<span className="kds-tag nt">✎ {t.note}</span>}
+                {t.profileNote&&<span className="kds-tag nt">👤 {t.profileNote}</span>}
               </div>
             </div>
           );
@@ -3185,7 +3186,12 @@ export default function App() {
           }
         });
         const al = (r.client.allergies || "").trim();
-        const nt = (r.slot.note || r.client.customizations || "").trim();
+        // Las dos notas por separado: la de la entrega (la escribe el cliente
+        // en el MP para ese día) y la fija del perfil. Antes era
+        // `slot.note || customizations`, así que con nota de entrega la del
+        // perfil no llegaba nunca a cocina.
+        const nt = (r.slot.note || "").trim();
+        const pn = (r.client.customizations || "").trim();
         return {
           id: r.slot.id,
           cook: r.cook || "TBD",
@@ -3195,6 +3201,7 @@ export default function App() {
           portions: counts.reduce((n, c) => n + c.qty, 0),
           allergies: al && al !== "—" ? al : "",
           note: nt && nt !== "—" ? nt : "",
+          profileNote: pn && pn !== "—" && pn.toLowerCase() !== nt.toLowerCase() ? pn : "",
           // Para el detalle que se abre al tocar la tarjeta (a dónde va).
           phone: r.client.phone || "",
           district: r.client.district || "",

@@ -60,6 +60,13 @@ function getBatch(time, batchList) {
   }
   return assigned;
 }
+// Tamaño de porción según el tier de la COMIDA (meal_library.tier):
+// Performance (Athlete Build, Serious Gains...) = BIG, Balance = SMALL.
+// Lo usan el PDF del Delivery Sheet y las tarjetas del Kitchen Display.
+const mealSize = tier => {
+  const t = (tier || "").toLowerCase();
+  return t === "performance" ? "BIG" : t === "balance" ? "SMALL" : "";
+};
 // Hora de cocina: 1h antes de la hora de entrega, para que la cocina sepa
 // cuándo tiene que tener listo cada pedido. Si el horario no está definido
 // (slot "TBD"), no hay nada que restarle. Vive en scope de módulo porque es
@@ -424,7 +431,7 @@ tbody tr:hover{background:#1e1e1e}
 .kds-kpi{text-align:center;padding:0 clamp(7px,.95vw,18px);border-left:1px solid #242424;flex-shrink:0}
 .kds-kpi-v{font-family:'Rajdhani',sans-serif;font-size:clamp(22px,2.9vw,54px);font-weight:700;line-height:1.05;font-variant-numeric:tabular-nums}
 .kds-kpi-l{font-size:clamp(8px,.6vw,13px);letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);white-space:nowrap}
-.kds-late{flex-shrink:0;background:var(--red);color:#fff;padding:clamp(5px,.55vw,11px) clamp(14px,1.8vw,30px);font-size:clamp(12px,1.2vw,23px);font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;display:flex;gap:clamp(10px,1.2vw,22px);flex-wrap:wrap}
+.kds-late{flex-shrink:0;background:#5c0f0f;color:#fecaca;border-bottom:2px solid #000;padding:clamp(5px,.55vw,11px) clamp(14px,1.8vw,30px);font-size:clamp(12px,1.2vw,23px);font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;display:flex;gap:clamp(10px,1.2vw,22px);flex-wrap:wrap}
 .kds-cols{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:2px;background:#1c1c1c;overflow:hidden;min-height:0}
 .kds-col{display:flex;flex-direction:column;background:#000;overflow:hidden;min-height:0}
 .kds-col-hd{padding:clamp(6px,.75vw,14px) clamp(12px,1.4vw,26px);font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:2px;text-transform:uppercase;display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-shrink:0}
@@ -445,6 +452,19 @@ tbody tr:hover{background:#1e1e1e}
 .kds-line .q{font-family:'Rajdhani',sans-serif;font-size:clamp(26px,2.8vw,54px);font-weight:700;line-height:1;color:#fff;min-width:1.4em;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0}
 .kds-line .n{font-size:clamp(15px,1.45vw,29px);font-weight:600;color:#fff;line-height:1.2;overflow-wrap:anywhere}
 .kds-card.done .kds-line .q,.kds-card.done .kds-line .n{color:#777}
+.kds-line .sz{font-size:clamp(10px,.85vw,17px);font-weight:900;letter-spacing:.8px;padding:1px clamp(5px,.45vw,9px);border-radius:3px;color:#fff;flex-shrink:0;align-self:center}
+.kds-line .sz-big{background:#dc2626}
+.kds-line .sz-small{background:#16a34a}
+.kds-card.done .kds-line .sz{opacity:.4}
+.kds-pop-ov{position:absolute;inset:0;z-index:10;background:rgba(40,40,40,.72)}
+.kds-pop{position:fixed;background:#161616;border:1px solid #444;border-left:6px solid var(--amber);border-radius:10px;box-shadow:0 16px 40px rgba(0,0,0,.7);padding:clamp(14px,1.1vw,20px) clamp(16px,1.3vw,24px);font-size:clamp(15px,1.15vw,20px);color:#ddd}
+.kds-pop-hd{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #2a2a2a}
+.kds-pop-hd .nm{font-family:'Rajdhani',sans-serif;font-weight:700;color:#fff;font-size:clamp(20px,1.6vw,28px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kds-pop-hd .tm{color:var(--amber);font-weight:700;flex-shrink:0}
+.kds-pop-row{display:flex;gap:10px;padding:4px 0;line-height:1.35}
+.kds-pop-row .v{color:#fff;font-weight:500;overflow-wrap:anywhere}
+.kds-pop-done{width:100%;margin-top:12px;border:none;border-radius:6px;cursor:pointer;padding:12px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;font-size:clamp(16px,1.25vw,22px);background:var(--green);color:#000}
+.kds-pop-done.on{background:#2a2a2a;color:#ccc}
 .kds-tag{display:block;border-radius:4px;padding:clamp(3px,.3vw,7px) clamp(7px,.6vw,13px);margin-top:7px;font-size:clamp(11px,1vw,20px);font-weight:600;line-height:1.35;overflow-wrap:anywhere}
 .kds-tag.al{background:#3b1111;color:#fca5a5}
 .kds-tag.nt{background:#31240a;color:#fcd34d}
@@ -550,8 +570,10 @@ const KDS_TXT = {
     colNow:h=>`Cook now · Batch ${h}`, colNext:h=>`Next up · Batch ${h}`,
     emptyNow:"NOTHING THIS BATCH", emptyNext:"NOTHING NEXT BATCH",
     portions:n=>`${n} portion${n!==1?"s":""}`, stops:n=>`${n} stop${n!==1?"s":""}`,
-    ready:"ready ✓", pc:n=>`${n} pc`, batch:"Batch",
-    tap:"Tap a card when it's plated.",
+    ready:"ready ✓", pc:n=>`${n} pc`, batch:"Batch", size:{BIG:"BIG",SMALL:"SMALL"},
+    tap:"Tap a card for client details and to mark it plated.",
+    yes:"Cutlery", no:"No cutlery",
+    markReady:"✓ Mark ready", unmark:"↺ Not ready",
     moreLater:n=>`more stop${n!==1?"s":""} later today`,
     tbdWarn:n=>`stop${n!==1?"s":""} with no delivery time set — not shown in any hour`,
     footNote:"Grouped by cook time into kitchen batches · Cook time = delivery − 1h unless set per slot · Esc to exit",
@@ -567,8 +589,10 @@ const KDS_TXT = {
     colNow:h=>`现在做 · 批次 ${h}`, colNext:h=>`下一批 · 批次 ${h}`,
     emptyNow:"这一批没有", emptyNext:"下一批没有",
     portions:n=>`${n} 份`, stops:n=>`${n} 单`,
-    ready:"已完成 ✓", pc:n=>`${n} 份`, batch:"批次",
-    tap:"装好后点一下卡片。",
+    ready:"已完成 ✓", pc:n=>`${n} 份`, batch:"批次", size:{BIG:"大份",SMALL:"小份"},
+    tap:"点卡片查看客户信息并标记完成。",
+    yes:"要餐具", no:"不要餐具",
+    markReady:"✓ 标记完成", unmark:"↺ 取消完成",
     moreLater:()=>"单今天稍后",
     tbdWarn:()=>"单未设置送达时间 — 不在任何时段显示",
     footNote:"按烹饪时间分批 · 烹饪时间 = 送达时间 − 1小时（除非单独设置）· Esc 退出",
@@ -576,7 +600,7 @@ const KDS_TXT = {
   },
 };
 
-function KdsBucket({ kind, title, bucket, checks, onToggle, emptyText, lang = "en" }) {
+function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en" }) {
   const T = KDS_TXT[lang];
   return (
     <div className={`kds-col kds-${kind}`}>
@@ -591,7 +615,7 @@ function KdsBucket({ kind, title, bucket, checks, onToggle, emptyText, lang = "e
           const key  = `k_${t.id}`;
           const done = !!checks[key];
           return (
-            <div key={t.id} className={`kds-card${done?" done":""}`} onClick={()=>onToggle(key)}>
+            <div key={t.id} className={`kds-card${done?" done":""}`} onClick={e=>onOpen({ ...t, rect: e.currentTarget.getBoundingClientRect() })}>
               <div className="kds-tk-hd">
                 <span className="kds-tk-time">{t.cook}</span>
                 <span className="kds-tk-who">{t.client} · 🚚 {t.out}</span>
@@ -601,6 +625,7 @@ function KdsBucket({ kind, title, bucket, checks, onToggle, emptyText, lang = "e
                 {t.meals.map(m=>(
                   <div className="kds-line" key={m.id}>
                     <span className="q">{m.qty}</span>
+                    {m.size&&<span className={`sz sz-${m.size.toLowerCase()}`}>{T.size[m.size]}</span>}
                     <span className="n">{lang==="zh"&&m.nameZh?m.nameZh:m.name}</span>
                   </div>
                 ))}
@@ -2478,6 +2503,11 @@ export default function App() {
   // Idioma del Kitchen Display, recordado por navegador (el monitor de la
   // cocina queda en chino aunque el panel se use en inglés).
   const [kdsLang,     setKdsLang]     = useState(() => { try { return localStorage.getItem("kds_lang") === "zh" ? "zh" : "en"; } catch { return "en"; } });
+  // Tarjeta del KDS abierta en detalle (datos del cliente y a dónde va). El
+  // ref es para el handler de Esc, que se registra una sola vez.
+  const [kdsDetail,   setKdsDetail]   = useState(null);
+  const kdsDetailRef = useRef(null);
+  useEffect(() => { kdsDetailRef.current = kdsDetail; }, [kdsDetail]);
   const toggleKdsLang = () => setKdsLang(l => { const n = l === "zh" ? "en" : "zh"; try { localStorage.setItem("kds_lang", n); } catch { /* sin storage */ } return n; });
   const [sbOpen,    setSbOpen]    = useState(false);
   const [saving,    setSaving]    = useState(false);
@@ -3149,7 +3179,10 @@ export default function App() {
         (r.slot.meals || []).filter(id => id && String(id).trim() && id !== "—").forEach(id => {
           const hit = counts.find(c => c.id === id);
           if (hit) hit.qty++;
-          else counts.push({ id, name: mealName(id) || id, nameZh: mealLibraryRef.current.find(m => m.id === id)?.name_zh || "", qty: 1 });
+          else {
+            const lib = mealLibraryRef.current.find(m => m.id === id);
+            counts.push({ id, name: mealName(id) || id, nameZh: lib?.name_zh || "", size: mealSize(lib?.tier), qty: 1 });
+          }
         });
         const al = (r.client.allergies || "").trim();
         const nt = (r.slot.note || r.client.customizations || "").trim();
@@ -3162,6 +3195,12 @@ export default function App() {
           portions: counts.reduce((n, c) => n + c.qty, 0),
           allergies: al && al !== "—" ? al : "",
           note: nt && nt !== "—" ? nt : "",
+          // Para el detalle que se abre al tocar la tarjeta (a dónde va).
+          phone: r.client.phone || "",
+          district: r.client.district || "",
+          address: r.client.address || "",
+          access: r.client.access || "",
+          cutlery: !!r.client.cutlery,
         };
       })
       .filter(t => t.meals.length > 0)
@@ -3207,7 +3246,12 @@ export default function App() {
   // pantalla negra tapando el panel y no se entendía cómo volver.
   useEffect(() => {
     if (!showKDS) return;
-    const onKey = e => { if (e.key === "Escape") setShowKDS(false); };
+    // Esc cierra primero el detalle de una tarjeta, y recién después el KDS.
+    const onKey = e => {
+      if (e.key !== "Escape") return;
+      if (kdsDetailRef.current) setKdsDetail(null);
+      else setShowKDS(false);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [showKDS]);
@@ -3532,13 +3576,10 @@ export default function App() {
         address: c.address || "TBC",
         access: c.access || "—",
         meals: (slot.meals||[]).filter(Boolean).map((id,mi) => {
-          // Tamaño de porción según el tier de la COMIDA (meal_library.tier):
-          // Performance (Athlete Build, Serious Gains...) = BIG, Balance = SMALL.
-          const tier = (mealLibraryRef.current.find(m => m.id === id)?.tier || "").toLowerCase();
           return {
             name:  mealName(id) || id,
             sauce: (slot.sauceIds||[])[mi] ? mealName((slot.sauceIds||[])[mi]) : "",
-            size:  tier === "performance" ? "BIG" : tier === "balance" ? "SMALL" : "",
+            size:  mealSize(mealLibraryRef.current.find(m => m.id === id)?.tier),
           };
         }),
         snack: slot.snackId ? mealName(slot.snackId) : slot.snack || "—",
@@ -4029,9 +4070,6 @@ export default function App() {
 
             {/* ═══ MEALS ══════════════════════════════ */}
             {tab==="meals"&&<>
-              <div className="alert-bar" style={{background:"#0a1020",borderColor:"#1e3a5f",color:"#93c5fd"}}>
-                💡 Each client can have multiple delivery slots per day. Use <strong>+ Add Slot</strong> for clients with 2 deliveries in one day.
-              </div>
               <DateWindowTabs windowIndex={mealWindow} onShift={goMealWindow} selected={mealDay} onSelect={setMealDay} counts={mealClientCountByDate}/>
               {(()=>{
                 // Meal Selections is a planning screen: show Active AND Upcoming clients
@@ -4325,9 +4363,8 @@ export default function App() {
             {tab==="delivery"&&<>
               <DateWindowTabs windowIndex={deliveryWindow} onShift={goDeliveryWindow} selected={deliveryDay} onSelect={setDeliveryDay} counts={deliveryClientCountByDate}/>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
-                <div className="alert-bar" style={{background:"#0d1a0d",borderColor:"#14532d",color:"#86efac",margin:0,flex:1}}>
-                  👨‍🍳 Sorted by cooking time. Each group is a cooking batch; the delivery column shows when each stop goes out.
-                </div>
+                <div style={{flex:1}}/>
+                <button className="btn btn-g" onClick={openBatchEditor} style={{flexShrink:0}}>✎ Edit Batches</button>
                 <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setShowKDS(true);}} style={{flexShrink:0}}>📺 Kitchen Display</button>
                 <button className="btn btn-r" onClick={()=>printDelivery()} style={{flexShrink:0}}>⬇ Download PDF</button>
               </div>
@@ -5045,9 +5082,9 @@ export default function App() {
             ):(
             <div className="kds-cols">
               <KdsBucket kind="now"  title={T.colNow(kds.now.label||"—")}   bucket={kds.now}
-                         checks={checks} onToggle={toggleCheck} emptyText={T.emptyNow} lang={kdsLang}/>
+                         checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNow} lang={kdsLang}/>
               <KdsBucket kind="next" title={T.colNext(kds.next.label||"—")}   bucket={kds.next}
-                         checks={checks} onToggle={toggleCheck} emptyText={T.emptyNext} lang={kdsLang}/>
+                         checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNext} lang={kdsLang}/>
             </div>
             )}
 
@@ -5057,6 +5094,41 @@ export default function App() {
               {kds.tbd.stops>0&&<span style={{color:"var(--amber)"}}>⚠ <b style={{color:"var(--amber)"}}>{kds.tbd.stops}</b> {T.tbdWarn(kds.tbd.stops)}</span>}
               <span style={{marginLeft:"auto"}}>{T.footNote}</span>
             </div>
+
+            {kdsDetail&&(()=>{
+              const t = kdsDetail;
+              const key = `k_${t.id}`;
+              const done = !!checks[key];
+              const rows = [
+                ["📍", [t.address, t.district].filter(Boolean).join(" · ") || "—"],
+                ["🔑", t.access || "—"],
+                ["📞", t.phone || "—"],
+                ["🍴", t.cutlery ? T.yes : T.no],
+              ];
+              // Popup encima de la tarjeta tocada (misma esquina, un poco más
+              // ancho), con el resto de la pantalla en gris. Se corre lo justo
+              // para no salirse de la pantalla.
+              const r = t.rect;
+              const W = Math.max(r.width + 24, 400), H = 280;
+              const left = Math.max(8, Math.min(r.left - 12, window.innerWidth - W - 8));
+              const top  = Math.max(8, Math.min(r.top - 12, window.innerHeight - H - 8));
+              return (
+                <div className="kds-pop-ov" onClick={()=>setKdsDetail(null)}>
+                  <div className="kds-pop" style={{ left, top, width: W }} onClick={e=>e.stopPropagation()}>
+                    <div className="kds-pop-hd">
+                      <span className="nm">{t.client}</span>
+                      <span className="tm">🚚 {t.out}</span>
+                    </div>
+                    {rows.map(([ic,v])=>(
+                      <div className="kds-pop-row" key={ic}><span>{ic}</span><span className="v">{v}</span></div>
+                    ))}
+                    <button className={`kds-pop-done${done?" on":""}`} onClick={()=>{ toggleCheck(key); setKdsDetail(null); }}>
+                      {done ? T.unmark : T.markReady}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         );
       })()}

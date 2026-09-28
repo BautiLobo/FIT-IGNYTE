@@ -231,6 +231,17 @@ function getRealStatus(startDate, expiryDate) {
   return "Active";                         // plan running right now
 }
 
+// Notas de una entrega para la Delivery Sheet: la del slot (la escribe el
+// cliente en el MP para ese día) y la fija del perfil, las dos. Antes era
+// `slot.note || customizations`, así que con nota de entrega la del perfil
+// no se veía nunca. Si dicen lo mismo, va una sola.
+function deliveryNotes(slot, client) {
+  const clean = s => { const v = (s || "").trim(); return v && v !== "—" ? v : ""; };
+  const nt = clean(slot?.note);
+  const pn = clean(client?.customizations);
+  return [nt, pn && pn.toLowerCase() !== nt.toLowerCase() ? pn : ""].filter(Boolean);
+}
+
 // `day` ya es una fecha real ("2026-09-19"), no un nombre de día de semana
 // reusado cada ciclo -- "¿tiene entrega este cliente en esta fecha?" es
 // simplemente "¿hay una fila de meal_selections para esa fecha exacta?".
@@ -631,7 +642,6 @@ function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en"
                 ))}
                 {t.allergies&&<span className="kds-tag al">⚠ {t.allergies}</span>}
                 {t.note&&<span className="kds-tag nt">✎ {t.note}</span>}
-                {t.profileNote&&<span className="kds-tag nt">👤 {t.profileNote}</span>}
               </div>
             </div>
           );
@@ -3186,12 +3196,7 @@ export default function App() {
           }
         });
         const al = (r.client.allergies || "").trim();
-        // Las dos notas por separado: la de la entrega (la escribe el cliente
-        // en el MP para ese día) y la fija del perfil. Antes era
-        // `slot.note || customizations`, así que con nota de entrega la del
-        // perfil no llegaba nunca a cocina.
-        const nt = (r.slot.note || "").trim();
-        const pn = (r.client.customizations || "").trim();
+        const nt = (r.slot.note || r.client.customizations || "").trim();
         return {
           id: r.slot.id,
           cook: r.cook || "TBD",
@@ -3201,7 +3206,6 @@ export default function App() {
           portions: counts.reduce((n, c) => n + c.qty, 0),
           allergies: al && al !== "—" ? al : "",
           note: nt && nt !== "—" ? nt : "",
-          profileNote: pn && pn !== "—" && pn.toLowerCase() !== nt.toLowerCase() ? pn : "",
           // Para el detalle que se abre al tocar la tarjeta (a dónde va).
           phone: r.client.phone || "",
           district: r.client.district || "",
@@ -3590,7 +3594,7 @@ export default function App() {
           };
         }),
         snack: slot.snackId ? mealName(slot.snackId) : slot.snack || "—",
-        note: slot.note || c.customizations || "—",
+        notes: deliveryNotes(slot, c),
         allergies: c.allergies || "",
         cutlery: c.cutlery || false,
       }))
@@ -3689,9 +3693,9 @@ export default function App() {
     <tbody>
       ${rows.map((r,i) => {
         const hasMeals   = r.meals && r.meals.length > 0;
-        const hasNote    = r.note && r.note !== "—";
+        const hasNote    = r.notes.length > 0;
         const hasAllergy = r.allergies && r.allergies.trim();
-        const noteHtml    = hasNote    ? "<div class=\"note-text\">" + r.note + "</div>" : "";
+        const noteHtml    = r.notes.map(n => "<div class=\"note-text\">" + n + "</div>").join("");
         const allergyHtml = hasAllergy ? "<div class=\"allergy-label\">&#9888; Allergies</div><div class=\"allergy-text\">" + r.allergies + "</div>" : "";
         const notesCell   = (hasNote || hasAllergy) ? "<div class=\"note-block\">" + noteHtml + allergyHtml + "</div>" : "<span class=\"dash\">&mdash;</span>";
         const accessHtml  = (r.access && r.access !== "—") ? "<div class=\"ca-acc\">" + r.access + "</div>" : "";
@@ -4408,7 +4412,7 @@ export default function App() {
                           ))}
                         </td>
                         <td style={{fontSize:11,whiteSpace:"nowrap"}}>{c.cutlery ? "Yes" : "No"}</td>
-                        <td style={{color:"#fcd34d",fontSize:10}}>{slot.note||c.customizations||"—"}</td>
+                        <td style={{color:"#fcd34d",fontSize:10}}>{(()=>{ const ns = deliveryNotes(slot, c); return ns.length ? ns.map((n,i)=><div key={i}>{n}</div>) : "—"; })()}</td>
                         <td style={{whiteSpace:"nowrap"}}><button className={`bx bx-clk ${checks["d_"+slot.id]?"bx-g":"bx-gr"}`} onClick={()=>toggleCheck("d_"+slot.id)}>{checks["d_"+slot.id]?"✓ Done":"Pending"}</button></td>
                       </tr>
                     ))}</tbody>

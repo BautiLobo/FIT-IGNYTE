@@ -6,6 +6,16 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY;
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// When SUPABASE_URL is the China proxy (api.fitignyte.com), file URLs stored
+// in the DB still point at *.supabase.co, which the Great Firewall blocks.
+// Rewrite their host so photos/PDFs load through the proxy too.
+const SUPABASE_HOST_RE = /^https:\/\/[a-z0-9]+\.supabase\.co(?=\/)/;
+export function proxyUrl(url) {
+  if (typeof url !== "string" || SUPABASE_HOST_RE.test(SUPABASE_URL)) return url;
+  return url.replace(SUPABASE_HOST_RE, SUPABASE_URL.replace(/\/$/, ""));
+}
+const withProxiedPhoto = rows => (rows || []).map(r => r.photo_url ? { ...r, photo_url: proxyUrl(r.photo_url) } : r);
+
 // ── AUTH ─────────────────────────────────────────────────────
 export async function signIn(email, password) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -119,7 +129,7 @@ export async function getMenu() {
   check(libData, "getMealLibraryForMenu");
 
   const libById = {};
-  for (const m of (libData.data || [])) libById[m.id] = m;
+  for (const m of withProxiedPhoto(libData.data)) libById[m.id] = m;
 
   const out = {1:{},2:{}};
   for (const row of (menuData.data || [])) {
@@ -294,7 +304,7 @@ export async function toggleChecklistItem(key, checked) {
 
 // ── MEAL LIBRARY ─────────────────────────────────────────────
 export async function getMealLibrary() {
-  return check(await supabase.from("meal_library").select("*").order("name"), "getMealLibrary");
+  return withProxiedPhoto(check(await supabase.from("meal_library").select("*").order("name"), "getMealLibrary"));
 }
 export async function upsertMealLibrary(meal) {
   return check(await supabase.from("meal_library").upsert(meal).select().single(), "upsertMealLibrary");
@@ -355,7 +365,7 @@ export async function getMealWeeklyStats() {
         id:       row.meal_id,
         name:     meal.name,
         nameZh:   meal.name_zh || "",
-        photoUrl: meal.photo_url || "",
+        photoUrl: proxyUrl(meal.photo_url || ""),
         tier:     row.tier || meal.tier || "",
         weeks:    [],
         total:    0,
@@ -592,7 +602,7 @@ export async function deleteOneTimeExpense(id) {
 
 // ── INGREDIENTS / COSTOS ──────────────────────────────────────
 export async function getIngredients() {
-  return check(await supabase.from("ingredients").select("*").order("name"), "getIngredients");
+  return withProxiedPhoto(check(await supabase.from("ingredients").select("*").order("name"), "getIngredients"));
 }
 export async function upsertIngredient(ingredient) {
   return check(await supabase.from("ingredients").upsert(ingredient).select().single(), "upsertIngredient");
@@ -668,7 +678,7 @@ export async function removePushSubscription(endpoint) {
 export async function getSettings(keys) {
   const data = check(await supabase.from("settings").select("*").in("key", keys), "getSettings");
   const out = {};
-  for (const row of (data || [])) out[row.key] = row.value;
+  for (const row of (data || [])) out[row.key] = proxyUrl(row.value);
   return out;
 }
 export async function upsertSetting(key, value) {

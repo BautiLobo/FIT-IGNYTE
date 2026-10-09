@@ -454,10 +454,11 @@ tbody tr:hover{background:#1e1e1e}
 .kds-card{background:#141414;border:1px solid #262626;border-left:6px solid var(--red);border-radius:8px;cursor:pointer;user-select:none;overflow:hidden;transition:opacity .15s,background .15s}
 .kds-next .kds-card{border-left-color:#3b82f6}
 .kds-card.done{opacity:.25;background:#0a0a0a}
-.kds-tk-hd{display:flex;align-items:baseline;gap:clamp(6px,.6vw,12px);padding:clamp(7px,.6vw,13px) clamp(10px,.95vw,20px);background:#1d1d1d;border-bottom:1px solid #2a2a2a}
-.kds-tk-time{font-family:'Rajdhani',sans-serif;font-size:clamp(19px,2vw,38px);font-weight:700;color:#fff;line-height:1;letter-spacing:1px;font-variant-numeric:tabular-nums;flex-shrink:0}
-.kds-tk-who{font-size:clamp(12px,1.1vw,22px);font-weight:600;color:#9a9a9a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kds-tk-n{margin-left:auto;font-size:clamp(9px,.72vw,14px);color:var(--dim);letter-spacing:1px;text-transform:uppercase;flex-shrink:0}
+.kds-tk-hd{display:flex;align-items:center;flex-wrap:wrap;gap:clamp(6px,.6vw,12px) clamp(8px,.8vw,16px);padding:clamp(8px,.7vw,14px) clamp(10px,.95vw,20px);background:#1d1d1d;border-bottom:1px solid #2a2a2a}
+.kds-tk-name{flex:1 1 auto;min-width:0;font-size:clamp(19px,1.8vw,36px);font-weight:800;color:#fff;line-height:1.1;overflow-wrap:anywhere}
+.kds-tk-out{flex-shrink:0;background:var(--amber);color:#000;border-radius:6px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);font-family:'Rajdhani',sans-serif;font-size:clamp(20px,1.9vw,38px);font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.kds-tk-meta{flex-basis:100%;font-size:clamp(10px,.8vw,15px);color:var(--dim);letter-spacing:1px;text-transform:uppercase}
+.kds-card.done .kds-tk-name{color:#777}.kds-card.done .kds-tk-out{background:#3a3a3a;color:#999}
 .kds-tk-body{padding:clamp(8px,.8vw,16px) clamp(10px,.95vw,20px)}
 .kds-line{display:flex;align-items:baseline;gap:clamp(8px,.8vw,16px);padding:clamp(3px,.28vw,6px) 0}
 .kds-line .q{font-family:'Rajdhani',sans-serif;font-size:clamp(26px,2.8vw,54px);font-weight:700;line-height:1;color:#fff;min-width:1.4em;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0}
@@ -716,9 +717,9 @@ function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en"
           return (
             <div key={t.id} className={`kds-card${done?" done":""}`} onClick={e=>onOpen({ ...t, rect: e.currentTarget.getBoundingClientRect() })}>
               <div className="kds-tk-hd">
-                <span className="kds-tk-time">{t.cook}</span>
-                <span className="kds-tk-who">{t.client} · 🚚 {t.out}</span>
-                <span className="kds-tk-n">{done?T.ready:T.pc(t.portions)}</span>
+                <span className="kds-tk-name">{t.client}</span>
+                <span className="kds-tk-out">🚚 {t.out}</span>
+                <span className="kds-tk-meta">👨‍🍳 {t.cook} · {done?T.ready:T.pc(t.portions)}</span>
               </div>
               <div className="kds-tk-body">
                 {t.meals.map(m=>(
@@ -3015,7 +3016,10 @@ export default function App() {
           }
         }
         setPendingMeals(convertedPending);
-        setChecks(ch);
+        // getChecklist() trae filas {key, checked}; la app usa un mapa
+        // key -> checked. Sin convertirlo, los "ready" del KDS se guardaban
+        // pero al recargar aparecían todos sin marcar.
+        setChecks(Object.fromEntries((ch || []).map(r => [r.key, !!r.checked])));
         // Load cook times and custom items from localStorage as lightweight storage
         try {
           const ct = JSON.parse(localStorage.getItem("fi_cooktimes") || "{}");

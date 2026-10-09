@@ -488,6 +488,52 @@ tbody tr:hover{background:#1e1e1e}
 .kds-btn{background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:6px;padding:clamp(6px,.55vw,12px) clamp(10px,.95vw,20px);font-size:clamp(11px,.9vw,18px);font-family:'DM Sans',sans-serif;cursor:pointer;white-space:nowrap;flex-shrink:0}
 .kds-btn:hover{background:#262626;color:#fff}
 @media (max-width:820px){.kds-cols{grid-template-columns:1fr}.kds-kpi{padding:0 8px}}
+.chef-main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.75fr) minmax(0,1fr);gap:2px;background:#1c1c1c}
+.chef-hero,.chef-side{background:#000;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.chef-hero-hd{display:flex;align-items:center;gap:clamp(12px,1.2vw,24px);padding:clamp(10px,1vw,20px) clamp(16px,1.6vw,30px);background:var(--red);flex-shrink:0}
+.chef-hero-hd.up{background:#1e3a5f}
+.chef-hero-hd .lbl{font-family:"Rajdhani",sans-serif;font-weight:700;letter-spacing:3px;text-transform:uppercase;font-size:clamp(14px,1.4vw,28px);line-height:1.1}
+.chef-hero-hd .lbl small{display:block;font-size:.62em;letter-spacing:2px;opacity:.85}
+.chef-hero-hd .tm{font-family:"Rajdhani",sans-serif;font-weight:700;font-size:clamp(44px,5.4vw,104px);line-height:.9;font-variant-numeric:tabular-nums}
+.chef-hero-hd .tot{margin-left:auto;text-align:right;font-family:"Rajdhani",sans-serif;line-height:.95}
+.chef-hero-hd .tot b{display:block;font-size:clamp(40px,4.6vw,90px);font-variant-numeric:tabular-nums}
+.chef-hero-hd .tot span{font-size:clamp(10px,.85vw,16px);letter-spacing:2px;text-transform:uppercase;opacity:.85}
+.chef-hero-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(10px,1vw,20px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(260px,24vw,460px),1fr));gap:clamp(8px,.8vw,16px);align-content:start}
+.chef-dish{display:flex;align-items:center;gap:clamp(10px,1vw,20px);padding:clamp(10px,.9vw,18px) clamp(12px,1.1vw,22px);border-radius:10px;background:#1c1c1c;border-left:10px solid #444}
+.chef-dish.big{background:#2a1010;border-left-color:#dc2626}
+.chef-dish.small{background:#0f2416;border-left-color:#16a34a}
+.chef-dish .q{font-family:"Rajdhani",sans-serif;font-size:clamp(48px,5vw,96px);font-weight:700;line-height:.85;color:#fff;min-width:1.1em;text-align:center;font-variant-numeric:tabular-nums;flex-shrink:0}
+.chef-dish .info{display:flex;flex-direction:column;gap:6px;min-width:0}
+.chef-dish .n{font-size:clamp(19px,1.8vw,36px);font-weight:700;color:#fff;line-height:1.15;overflow-wrap:anywhere}
+.chef-dish .sz{align-self:flex-start;font-size:clamp(12px,1vw,20px);font-weight:900;letter-spacing:1.5px;padding:2px clamp(7px,.6vw,12px);border-radius:4px;color:#fff;background:#555}
+.chef-dish.big .sz{background:#dc2626}
+.chef-dish.small .sz{background:#16a34a}
+.chef-side-hd{padding:clamp(8px,.8vw,16px) clamp(14px,1.3vw,26px);font-family:"Rajdhani",sans-serif;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;font-size:clamp(13px,1.2vw,24px);display:flex;align-items:baseline;gap:12px;flex-shrink:0}
+.chef-side-hd .tm{font-size:clamp(28px,2.8vw,54px);font-variant-numeric:tabular-nums;line-height:1}
+.chef-side-hd .r{margin-left:auto;font-size:.8em;opacity:.8;white-space:nowrap}
+.chef-next .chef-side-hd{background:#16263b;color:#cfe3ff}
+.chef-next{flex-shrink:0;max-height:55%;display:flex;flex-direction:column;border-bottom:2px solid #1c1c1c}
+.chef-next-body{overflow-y:auto;padding:clamp(6px,.6vw,12px) clamp(12px,1.1vw,22px)}
+.chef-ln{display:flex;align-items:center;gap:clamp(8px,.7vw,14px);padding:clamp(4px,.35vw,7px) 0}
+.chef-ln .q{font-family:"Rajdhani",sans-serif;font-size:clamp(24px,2.3vw,44px);font-weight:700;line-height:1;min-width:1.3em;text-align:right;font-variant-numeric:tabular-nums}
+.chef-ln .d{width:clamp(8px,.6vw,12px);height:clamp(8px,.6vw,12px);border-radius:50%;background:#555;flex-shrink:0}
+.chef-ln .d.big{background:#dc2626}.chef-ln .d.small{background:#16a34a}
+.chef-ln .n{font-size:clamp(14px,1.25vw,24px);font-weight:600;color:#ddd;line-height:1.2;overflow-wrap:anywhere}
+.chef-day .chef-side-hd{background:#111;color:#999}
+.chef-day{flex:1;min-height:0;display:flex;flex-direction:column}
+.chef-day-list{flex:1;min-height:0;overflow-y:auto}
+.chef-row{display:flex;align-items:center;gap:clamp(10px,1vw,20px);padding:clamp(7px,.65vw,13px) clamp(14px,1.3vw,26px);border-bottom:1px solid #161616;font-family:"Rajdhani",sans-serif;font-weight:700}
+.chef-row .tm{font-size:clamp(20px,1.9vw,36px);color:#fff;min-width:3.2em;font-variant-numeric:tabular-nums}
+.chef-row .tot{font-size:clamp(18px,1.6vw,30px);color:#fff;font-variant-numeric:tabular-nums}
+.chef-row .tot small{font-size:.55em;letter-spacing:1.5px;color:#888;margin-left:4px}
+.chef-row .mix{margin-left:auto;display:flex;gap:6px;font-size:clamp(12px,1vw,19px);letter-spacing:1px}
+.chef-row .mix span{padding:1px 8px;border-radius:4px;color:#fff}
+.chef-row .mix .b{background:#7f1d1d}.chef-row .mix .s{background:#14532d}
+.chef-row.on{background:#2a0d0d}.chef-row.on .tm{color:#f87171}
+.chef-row.nx{background:#0d1a2a}.chef-row.nx .tm{color:#93c5fd}
+.chef-row.past{opacity:.28}
+.chef-row.tbd .tm{color:var(--amber)}
+@media (max-width:820px){.chef-main{grid-template-columns:1fr;overflow-y:auto}.chef-next{max-height:none}}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .saving{position:fixed;bottom:16px;right:16px;background:var(--green);color:#fff;padding:7px 14px;border-radius:6px;font-size:11px;font-weight:600;z-index:600;animation:fadeOut 2s forwards}
 @keyframes fadeOut{0%{opacity:1}70%{opacity:1}100%{opacity:0}}
@@ -588,6 +634,12 @@ const KDS_TXT = {
     moreLater:n=>`more stop${n!==1?"s":""} later today`,
     tbdWarn:n=>`stop${n!==1?"s":""} with no delivery time set — not shown in any hour`,
     footNote:"Grouped by cook time into kitchen batches · Cook time = delivery − 1h unless set per slot · Esc to exit",
+    chefTitle:"Chef · what to cook", plates:"plates", platesTotal:n=>`plate${n!==1?"s":""} today`,
+    cookNowTag:"Cook now", nextTag:"Next", noTimeTag:"No time",
+    upNext:"Up next", firstUp:"First cook", startedAgo:n=>`started ${n} min ago`, inMin:n=>n<=0?"now":`in ${n} min`,
+    fullDay:"Full day", leftLabel:"plates left", nothingNext:"Nothing after this",
+    chefDone:"NOTHING LEFT TO COOK",
+    chefFoot:"All clients added up per cook time · Allergies, notes and packing → Kitchen Display · Esc to exit",
     date:d=>fmtDateTab(d),
   },
   zh: {
@@ -607,6 +659,12 @@ const KDS_TXT = {
     moreLater:()=>"单今天稍后",
     tbdWarn:()=>"单未设置送达时间 — 不在任何时段显示",
     footNote:"按烹饪时间分批 · 烹饪时间 = 送达时间 − 1小时（除非单独设置）· Esc 退出",
+    chefTitle:"厨师 · 要做什么", plates:"份", platesTotal:()=>"今天共计",
+    cookNowTag:"现在做", nextTag:"下一个", noTimeTag:"未定时间",
+    upNext:"接下来", firstUp:"第一批", startedAgo:n=>`已开始 ${n} 分钟`, inMin:n=>n<=0?"现在":`${n} 分钟后`,
+    fullDay:"全天", leftLabel:"剩余份数", nothingNext:"之后没有了",
+    chefDone:"今天没有要做的了",
+    chefFoot:"按烹饪时间合计所有客户 · 过敏、备注和打包 → Kitchen Display · Esc 退出",
     date:d=>{ try { return new Date(d+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"}); } catch { return d||"—"; } },
   },
 };
@@ -2507,6 +2565,10 @@ export default function App() {
   const [deliveryDay, setDeliveryDay] = useState(todayIso());
   const [deliveryWindow, setDeliveryWindow] = useState(0);
   const [showKDS,     setShowKDS]     = useState(false);
+  // Chef Display: versión simple del KDS para el cocinero -- solo cuántos
+  // platos de cada cosa por hora de cocina, BIG/SMALL. Comparte reloj e
+  // idioma con el KDS.
+  const [showChef,    setShowChef]    = useState(false);
   // Reloj vivo del Kitchen Display. TODAY/todayIso son constantes de módulo
   // (se fijan al cargar la página); esta pantalla queda proyectada horas en
   // un monitor y tiene que re-bucketear sola cuando pasa la hora.
@@ -3243,29 +3305,54 @@ export default function App() {
     };
   }, [delivery, deliveryDay, kdsNow, batchTimes, mealLibraryState]);
 
+  // ── Chef Display: por cada hora de cocina (las mismas claves de
+  // `delivery`), cuántos platos de cada comida hay que hacer, sumando todos
+  // los clientes. A diferencia del KDS acá SÍ se agrega entre clientes: al
+  // cocinero le importa "6 teriyaki BIG", no de quién es cada uno.
+  const chef = useMemo(() => {
+    const sizeRank = s => s === "BIG" ? 0 : s === "SMALL" ? 1 : 2;
+    return Object.entries(delivery).map(([cook, entries]) => {
+      const byId = {};
+      entries.forEach(({ slot }) => {
+        (slot.meals || []).filter(id => id && String(id).trim() && id !== "—").forEach(id => {
+          if (!byId[id]) {
+            const lib = mealLibraryRef.current.find(m => m.id === id);
+            byId[id] = { id, name: mealName(id) || id, nameZh: lib?.name_zh || "", size: mealSize(lib?.tier), qty: 0 };
+          }
+          byId[id].qty++;
+        });
+      });
+      const dishes = Object.values(byId)
+        .sort((a, b) => sizeRank(a.size) - sizeRank(b.size) || b.qty - a.qty || a.name.localeCompare(b.name));
+      const sum = size => dishes.filter(d => d.size === size).reduce((n, d) => n + d.qty, 0);
+      return { cook, cookMin: hmToMinutes(cook), dishes,
+               total: dishes.reduce((n, d) => n + d.qty, 0), big: sum("BIG"), small: sum("SMALL") };
+    }).filter(g => g.total > 0);
+  }, [delivery, mealLibraryState]);
+
   // Tick del reloj del KDS. 20s es suficiente: lo único que cambia el
   // contenido es cruzar una hora en punto, y no vale la pena re-renderizar
   // una pantalla de TV cada segundo. Solo corre con el display abierto.
   useEffect(() => {
-    if (!showKDS) return;
+    if (!showKDS && !showChef) return;
     const id = setInterval(() => setKdsNow(chinaNowMinutes()), 20000);
     return () => clearInterval(id);
-  }, [showKDS]);
+  }, [showKDS, showChef]);
 
   // Esc cierra el display. Se escucha aparte del fullscreen del browser
   // porque Esc sale del fullscreen sin desmontar nada: sin esto quedaba la
   // pantalla negra tapando el panel y no se entendía cómo volver.
   useEffect(() => {
-    if (!showKDS) return;
+    if (!showKDS && !showChef) return;
     // Esc cierra primero el detalle de una tarjeta, y recién después el KDS.
     const onKey = e => {
       if (e.key !== "Escape") return;
       if (kdsDetailRef.current) setKdsDetail(null);
-      else setShowKDS(false);
+      else { setShowKDS(false); setShowChef(false); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showKDS]);
+  }, [showKDS, showChef]);
 
   // ── Handlers
   const togglePaid = async id => {
@@ -4377,6 +4464,7 @@ export default function App() {
                 <div style={{flex:1}}/>
                 <button className="btn btn-g" onClick={openBatchEditor} style={{flexShrink:0}}>✎ Edit Batches</button>
                 <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setShowKDS(true);}} style={{flexShrink:0}}>📺 Kitchen Display</button>
+                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setShowChef(true);}} style={{flexShrink:0}}>👨‍🍳 Chef Display</button>
                 <button className="btn btn-r" onClick={()=>printDelivery()} style={{flexShrink:0}}>⬇ Download PDF</button>
               </div>
               {Object.keys(delivery).length===0?(
@@ -5140,6 +5228,156 @@ export default function App() {
                 </div>
               );
             })()}
+          </div>
+        );
+      })()}
+
+      {/* ═══ CHEF DISPLAY ═══════════════════════════
+          Pantalla del COCINERO (el Kitchen Display es del empaquetador). Solo
+          responde "qué cocino y cuándo": cada comida sumada entre todos los
+          clientes, por hora de cocina exacta -- sin batches, sin clientes.
+          Izquierda en grande: lo que hay que cocinar ahora. Derecha: lo que
+          sigue (con cuenta regresiva) y el día completo. Mismo día que el
+          Delivery Sheet. */}
+      {showChef&&(()=>{
+        const T = KDS_TXT[kdsLang];
+        const isToday = deliveryDay === todayIso();
+        const clock = String(Math.floor(kdsNow/60)).padStart(2,"0")+":"+String(kdsNow%60).padStart(2,"0");
+        const dishName = d => kdsLang==="zh"&&d.nameZh?d.nameZh:d.name;
+        // Una hora de cocina sigue "en curso" durante esta ventana desde que
+        // arranca; pasada, el foco salta a la siguiente.
+        const CHEF_NOW_WINDOW_MIN = 60;
+        const timedIdx = chef.map((g,i)=>g.cookMin!=null?i:-1).filter(i=>i>=0);
+        let hero = -1, next = -1, mode = "first";
+        if (isToday) {
+          const cur = timedIdx.filter(i => chef[i].cookMin <= kdsNow && kdsNow - chef[i].cookMin < CHEF_NOW_WINDOW_MIN).pop();
+          const up  = timedIdx.find(i => chef[i].cookMin > kdsNow);
+          if (cur != null) { hero = cur; mode = "now"; next = up ?? -1; }
+          else if (up != null) { hero = up; mode = "up"; next = timedIdx.find(i => i > up) ?? -1; }
+        } else if (timedIdx.length) {
+          hero = timedIdx[0]; next = timedIdx[1] ?? -1;
+        }
+        const isPast = (g, i) => isToday && g.cookMin != null && g.cookMin <= kdsNow && i !== hero;
+        const remaining = chef.filter((g, i) => !isPast(g, i));
+        const left = remaining.reduce((n, g) => n + g.total, 0);
+        const bigLeft = remaining.reduce((n, g) => n + g.big, 0);
+        const smallLeft = remaining.reduce((n, g) => n + g.small, 0);
+        const H = hero >= 0 ? chef[hero] : null;
+        const N = next >= 0 ? chef[next] : null;
+        const heroSub = !H ? "" : mode === "now" ? T.startedAgo(kdsNow - H.cookMin) : mode === "up" ? T.inMin(H.cookMin - kdsNow) : "";
+        const toggleFull = () => {
+          try {
+            if (document.fullscreenElement) document.exitFullscreen?.();
+            else document.documentElement.requestFullscreen?.().catch(()=>{});
+          } catch { /* fullscreen puede estar bloqueado (iframe, permisos) */ }
+        };
+        return (
+          <div className="kds">
+            <div className="kds-top">
+              <div className="kds-clock">{isToday?clock:"--:--"}</div>
+              <div>
+                <div className="kds-date">👨‍🍳 {T.chefTitle} · {T.date(deliveryDay)}</div>
+                <div className="kds-date" style={{color:isToday?"var(--green)":"var(--amber)"}}>
+                  {isToday?T.live:T.preview}
+                </div>
+              </div>
+              <div style={{flex:1}}/>
+              {[{l:isToday?T.leftLabel:T.platesTotal(left),v:left,c:"#fff"},
+                {l:T.size.BIG,v:bigLeft,c:"#f87171"},
+                {l:T.size.SMALL,v:smallLeft,c:"#4ade80"}].map(k=>(
+                <div className="kds-kpi" key={k.l}>
+                  <div className="kds-kpi-v" style={{color:k.c}}>{k.v}</div>
+                  <div className="kds-kpi-l">{k.l}</div>
+                </div>
+              ))}
+              <button className="kds-btn" onClick={toggleKdsLang}>🌐 {T.lang}</button>
+              <button className="kds-btn" onClick={toggleFull}>{T.fullscreen}</button>
+              <button className="kds-btn" onClick={()=>setShowChef(false)}>{T.exit}</button>
+            </div>
+
+            {chef.length===0?(
+              <div className="kds-clear">
+                <div className="big">{T.nothing}</div>
+                <div className="sub">{T.date(deliveryDay)}</div>
+              </div>
+            ):(
+              <div className="chef-main">
+                <div className="chef-hero">
+                  {H?(<>
+                    <div className={`chef-hero-hd${mode==="now"?"":" up"}`}>
+                      <div className="lbl">
+                        {mode==="now"?T.cookNowTag:mode==="up"?T.upNext:T.firstUp}
+                        {heroSub&&<small>{heroSub}</small>}
+                      </div>
+                      <div className="tm">{H.cook}</div>
+                      <div className="tot"><b>{H.total}</b><span>{T.plates}</span></div>
+                    </div>
+                    <div className="chef-hero-body">
+                      {H.dishes.map(d=>(
+                        <div className={`chef-dish ${(d.size||"").toLowerCase()}`} key={d.id}>
+                          <span className="q">{d.qty}</span>
+                          <span className="info">
+                            <span className="n">{dishName(d)}</span>
+                            {d.size&&<span className="sz">{T.size[d.size]}</span>}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>):(
+                    <div className="kds-clear">
+                      <div className="big">{T.chefDone}</div>
+                      <div className="sub">{T.date(deliveryDay)}</div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="chef-side">
+                  <div className="chef-next">
+                    <div className="chef-side-hd">
+                      {N?<>
+                        <span>{T.nextTag}</span>
+                        <span className="tm">{N.cook}</span>
+                        <span className="r">{isToday?`${T.inMin(N.cookMin-kdsNow)} · `:""}{N.total} {T.plates}</span>
+                      </>:<span>{T.nothingNext}</span>}
+                    </div>
+                    {N&&(
+                      <div className="chef-next-body">
+                        {N.dishes.map(d=>(
+                          <div className="chef-ln" key={d.id}>
+                            <span className="q">{d.qty}</span>
+                            <span className={`d ${(d.size||"").toLowerCase()}`}/>
+                            <span className="n">{dishName(d)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="chef-day">
+                    <div className="chef-side-hd"><span>{T.fullDay}</span></div>
+                    <div className="chef-day-list">
+                      {chef.map((g,i)=>{
+                        const cls = g.cookMin==null ? "tbd" : i===hero&&mode==="now" ? "on" : i===next||i===hero ? "nx" : isPast(g,i) ? "past" : "";
+                        return (
+                          <div className={`chef-row ${cls}`} key={g.cook}>
+                            <span className="tm">{g.cookMin==null?T.noTimeTag:g.cook}</span>
+                            <span className="tot">{g.total}<small>{T.plates}</small></span>
+                            <span className="mix">
+                              {g.big>0&&<span className="b">{g.big} {T.size.BIG}</span>}
+                              {g.small>0&&<span className="s">{g.small} {T.size.SMALL}</span>}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="kds-foot">
+              <span style={{marginLeft:"auto"}}>{T.chefFoot}</span>
+            </div>
           </div>
         );
       })()}

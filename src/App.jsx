@@ -450,7 +450,7 @@ tbody tr:hover{background:#1e1e1e}
 .kds-col-hd .s{font-size:clamp(11px,1.05vw,21px);opacity:.88;white-space:nowrap}
 .kds-now  .kds-col-hd{background:var(--red);color:#fff}
 .kds-next .kds-col-hd{background:#16263b;color:#9ecbff}
-.kds-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(8px,.95vw,18px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(200px,18vw,340px),1fr));gap:clamp(8px,.85vw,16px);align-content:start;grid-auto-rows:max-content}
+.kds-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(8px,.95vw,18px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(250px,21vw,380px),1fr));gap:clamp(8px,.85vw,16px);align-content:start;grid-auto-rows:max-content}
 .kds-card{background:#141414;border:1px solid #262626;border-left:6px solid var(--red);border-radius:8px;cursor:pointer;user-select:none;overflow:hidden;transition:opacity .15s,background .15s}
 .kds-next .kds-card{border-left-color:#3b82f6}
 .kds-card.done{opacity:.25;background:#0a0a0a}
@@ -459,11 +459,12 @@ tbody tr:hover{background:#1e1e1e}
 .kds-tk-out{flex-shrink:0;background:var(--amber);color:#000;border-radius:6px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);font-family:'Rajdhani',sans-serif;font-size:clamp(20px,1.9vw,38px);font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
 .kds-card.done .kds-tk-name{color:#777}.kds-card.done .kds-tk-out{background:#3a3a3a;color:#999}
 .kds-tk-body{padding:clamp(8px,.8vw,16px) clamp(10px,.95vw,20px)}
-.kds-line{display:flex;align-items:baseline;gap:clamp(8px,.8vw,16px);padding:clamp(3px,.28vw,6px) 0}
-.kds-line .q{font-family:'Rajdhani',sans-serif;font-size:clamp(26px,2.8vw,54px);font-weight:700;line-height:1;color:#fff;min-width:1.4em;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0}
-.kds-line .n{font-size:clamp(15px,1.45vw,29px);font-weight:600;color:#fff;line-height:1.2;overflow-wrap:anywhere}
+.kds-line{display:flex;align-items:baseline;gap:clamp(6px,.5vw,10px);padding:clamp(5px,.4vw,8px) 0;border-bottom:1px solid #222}
+.kds-line:last-of-type{border-bottom:none}
+.kds-line .q{font-family:'Rajdhani',sans-serif;font-size:clamp(24px,2vw,38px);font-weight:700;line-height:1;color:#fff;flex-shrink:0;min-width:1.7em;font-variant-numeric:tabular-nums}
+.kds-line .n{flex:1;min-width:0;font-size:clamp(21px,1.7vw,32px);font-weight:600;color:#fff;line-height:1.25}
 .kds-card.done .kds-line .q,.kds-card.done .kds-line .n{color:#777}
-.kds-line .sz{font-size:clamp(10px,.85vw,17px);font-weight:900;letter-spacing:.8px;padding:1px clamp(5px,.45vw,9px);border-radius:3px;color:#fff;flex-shrink:0;align-self:center}
+.kds-line .sz{display:inline-block;margin-left:6px;vertical-align:2px;font-size:clamp(14px,1.1vw,20px);font-weight:900;letter-spacing:.8px;padding:2px 9px;border-radius:4px;color:#fff;white-space:nowrap}
 .kds-line .sz-big{background:#dc2626}
 .kds-line .sz-small{background:#16a34a}
 .kds-card.done .kds-line .sz{opacity:.4}
@@ -737,9 +738,8 @@ function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en"
               <div className="kds-tk-body">
                 {t.meals.map(m=>(
                   <div className="kds-line" key={m.id}>
-                    <span className="q">{m.qty}</span>
-                    {m.size&&<span className={`sz sz-${m.size.toLowerCase()}`}>{T.size[m.size]}</span>}
-                    <span className="n">{lang==="zh"&&m.nameZh?m.nameZh:m.name}</span>
+                    <span className="q">{m.qty}×</span>
+                    <span className="n">{lang==="zh"&&m.nameZh?m.nameZh:m.name}{m.size&&<span className={`sz sz-${m.size.toLowerCase()}`}>{T.size[m.size]}</span>}</span>
                   </div>
                 ))}
                 {t.allergies&&<span className="kds-tag al">⚠ {t.allergies}</span>}

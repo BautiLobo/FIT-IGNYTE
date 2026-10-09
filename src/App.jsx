@@ -515,6 +515,13 @@ tbody tr:hover{background:#1e1e1e}
 .chef-ln{cursor:pointer;user-select:none}
 .chef-ln.done{opacity:.3}
 .chef-ln.done .n{text-decoration:line-through}
+.chef-flags{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin-top:4px;font-size:clamp(13px,1.05vw,20px);font-weight:600;line-height:1.3;color:#ddd}
+.chef-flags b{color:#fff}
+.chef-flags .al{background:#3b1111;color:#fca5a5;border-radius:4px;padding:1px 7px;overflow-wrap:anywhere}
+.chef-flags .nt{background:#31240a;color:#fcd34d;border-radius:4px;padding:1px 7px;overflow-wrap:anywhere}
+.chef-flags.sm{font-size:clamp(11px,.85vw,16px);margin-top:3px}
+.chef-dish.done .chef-flags{text-decoration:none}
+.chef-row .fl{color:#fca5a5;font-size:clamp(13px,1.05vw,20px);letter-spacing:1px}
 .chef-row .ok{color:var(--green);font-size:clamp(14px,1.2vw,22px);letter-spacing:1px}
 .chef-dish.big{background:#2a1010;border-left-color:#dc2626}
 .chef-dish.small{background:#0f2416;border-left-color:#16a34a}
@@ -656,7 +663,7 @@ const KDS_TXT = {
     autoChip:"● Live", cookTimeLbl:"Cook time", colCook:h=>`Cook time ${h}`, colNextCook:h=>`Next · ${h}`, emptyCook:"NOTHING AFTER THIS",
     fullDay:"Full day", leftLabel:"plates left", nothingNext:"Nothing after this",
     chefDone:"NOTHING LEFT TO COOK", tapChef:"Tap a dish when it is cooked.",
-    chefFoot:"All clients added up per cook time · Allergies, notes and packing → Kitchen Display · Esc to exit",
+    chefFoot:"All clients added up per cook time · ⚠ allergy · ✎ note, with the client's name · Packing → Kitchen Display · Esc to exit",
     date:d=>fmtDateTab(d),
   },
   zh: {
@@ -682,7 +689,7 @@ const KDS_TXT = {
     autoChip:"● 实时", cookTimeLbl:"烹饪时间", colCook:h=>`烹饪时间 ${h}`, colNextCook:h=>`下一个 · ${h}`, emptyCook:"之后没有了",
     fullDay:"全天", leftLabel:"剩余份数", nothingNext:"之后没有了",
     chefDone:"今天没有要做的了", tapChef:"做好后点一下菜品。",
-    chefFoot:"按烹饪时间合计所有客户 · 过敏、备注和打包 → Kitchen Display · Esc 退出",
+    chefFoot:"按烹饪时间合计所有客户 · ⚠ 过敏 · ✎ 备注（附客户名）· 打包 → Kitchen Display · Esc 退出",
     date:d=>{ try { return new Date(d+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"}); } catch { return d||"—"; } },
   },
 };
@@ -3336,7 +3343,7 @@ export default function App() {
       ? batchList.map((b, i) => i).filter(i => i < baseIdx && kdsNow - hmToMinutes(batchList[i]) <= KDS_LATE_WINDOW_H * 60)
       : [];
 
-    const laterBatches = new Set(batchList.slice(baseIdx + 2));
+    const laterBatches = new Set(batchList.slice(baseIdx + 1));
     const laterTickets = ticketsOf(timed.filter(r => laterBatches.has(r.batch)));
 
     // Selector de cooking time: con un horario elegido, la columna grande
@@ -3369,13 +3376,25 @@ export default function App() {
     const sizeRank = s => s === "BIG" ? 0 : s === "SMALL" ? 1 : 2;
     return Object.entries(delivery).map(([cook, entries]) => {
       const byId = {};
-      entries.forEach(({ slot }) => {
+      entries.forEach(({ client: c, slot }) => {
+        // Alergias y notas son del pedido (mismo criterio que el KDS): se
+        // cuelgan de cada plato que pidió ese cliente, con su nombre, para
+        // que el cocinero sepa qué porción va distinta.
+        const al = (c.allergies || "").trim();
+        const nt = (slot.note || c.customizations || "").trim();
+        const flag = (al && al !== "—") || (nt && nt !== "—")
+          ? { client: c.name || "?", allergies: al && al !== "—" ? al : "", note: nt && nt !== "—" ? nt : "" }
+          : null;
         (slot.meals || []).filter(id => id && String(id).trim() && id !== "—").forEach(id => {
           if (!byId[id]) {
             const lib = mealLibraryRef.current.find(m => m.id === id);
-            byId[id] = { id, name: mealName(id) || id, nameZh: lib?.name_zh || "", size: mealSize(lib?.tier), qty: 0 };
+            byId[id] = { id, name: mealName(id) || id, nameZh: lib?.name_zh || "", size: mealSize(lib?.tier), qty: 0, flags: [] };
           }
           byId[id].qty++;
+          if (flag) {
+            const hit = byId[id].flags.find(x => x.client === flag.client && x.allergies === flag.allergies && x.note === flag.note);
+            if (hit) hit.qty++; else byId[id].flags.push({ ...flag, qty: 1 });
+          }
         });
       });
       const dishes = Object.values(byId)
@@ -5215,7 +5234,6 @@ export default function App() {
               </div>
               <div style={{flex:1}}/>
               {[{l:T.cookNow,v:kds.now.portions,c:"var(--red)"},
-                {l:T.nextHour,v:kds.next.portions,c:"#60a5fa"},
                 {l:T.laterToday,v:kds.later.portions,c:"var(--dim)"}].map(k=>(
                 <div className="kds-kpi" key={k.l}>
                   <div className="kds-kpi-v" style={{color:k.c}}>{k.v}</div>
@@ -5230,11 +5248,9 @@ export default function App() {
             <CookTimeBar times={cookChips} sel={kds.sel?cookSel:null} onSel={setCookSel} nowMin={kdsNow} isToday={kds.isToday} T={T}/>
 
             {kds.sel?(
-            <div className="kds-cols">
+            <div className="kds-cols" style={{gridTemplateColumns:"1fr"}}>
               <KdsBucket kind="now"  title={T.colCook(kds.sel.now.label)} bucket={kds.sel.now}
                          checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNow} lang={kdsLang}/>
-              <KdsBucket kind="next" title={kds.sel.next.label?T.colNextCook(kds.sel.next.label):T.nextTag} bucket={kds.sel.next}
-                         checks={checks} onOpen={setKdsDetail} emptyText={T.emptyCook} lang={kdsLang}/>
             </div>
             ):<>
             {latePortions>0&&(
@@ -5246,17 +5262,15 @@ export default function App() {
               </div>
             )}
 
-            {kds.now.portions===0&&kds.next.portions===0&&kds.later.portions===0&&latePortions===0?(
+            {kds.now.portions===0&&kds.later.portions===0&&latePortions===0?(
               <div className="kds-clear">
                 <div className="big">{kds.isToday?T.allDone:T.nothing}</div>
                 <div className="sub">{T.date(deliveryDay)}{kds.tbd.stops>0?` · ${T.noTime(kds.tbd.stops)}`:""}</div>
               </div>
             ):(
-            <div className="kds-cols">
+            <div className="kds-cols" style={{gridTemplateColumns:"1fr"}}>
               <KdsBucket kind="now"  title={T.colNow(kds.now.label||"—")}   bucket={kds.now}
                          checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNow} lang={kdsLang}/>
-              <KdsBucket kind="next" title={T.colNext(kds.next.label||"—")}   bucket={kds.next}
-                         checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNext} lang={kdsLang}/>
             </div>
             )}
             </>}
@@ -5405,6 +5419,13 @@ export default function App() {
                           <span className="info">
                             <span className="n">{dishName(d)}</span>
                             {d.size&&<span className="sz">{T.size[d.size]}</span>}
+                            {d.flags.map((x,k)=>(
+                              <span className="chef-flags" key={k}>
+                                {x.qty>1&&<b>{x.qty}× </b>}<b>{x.client}</b>
+                                {x.allergies&&<span className="al">⚠ {x.allergies}</span>}
+                                {x.note&&<span className="nt">✎ {x.note}</span>}
+                              </span>
+                            ))}
                           </span>
                           {isDone(H,d)&&<span className="ck">✓</span>}
                         </div>
@@ -5433,7 +5454,15 @@ export default function App() {
                           <div className={`chef-ln${isDone(N,d)?" done":""}`} key={d.id} onClick={()=>toggleCheck(ckKey(N,d))}>
                             <span className="q">{d.qty}</span>
                             <span className={`d ${(d.size||"").toLowerCase()}`}/>
-                            <span className="n">{dishName(d)}</span>
+                            <span className="n">{dishName(d)}
+                              {d.flags.map((x,k)=>(
+                                <span className="chef-flags sm" key={k}>
+                                  <b>{x.client}</b>
+                                  {x.allergies&&<span className="al">⚠ {x.allergies}</span>}
+                                  {x.note&&<span className="nt">✎ {x.note}</span>}
+                                </span>
+                              ))}
+                            </span>
                           </div>
                         ))}
                       </div>
@@ -5449,6 +5478,7 @@ export default function App() {
                           <div className={`chef-row ${cls}`} key={g.cook} style={{cursor:g.cookMin==null?"default":"pointer"}} onClick={()=>g.cookMin!=null&&setCookSel(g.cook)}>
                             <span className="tm">{g.cookMin==null?T.noTimeTag:g.cook}</span>
                             <span className="tot">{g.total}<small>{T.plates}</small></span>
+                            {g.dishes.some(d=>d.flags.length)&&<span className="fl">⚠ {g.dishes.reduce((n,d)=>n+d.flags.length,0)}</span>}
                             {g.dishes.every(d=>isDone(g,d))&&<span className="ok">✓</span>}
                             <span className="mix">
                               {g.big>0&&<span className="b">{g.big} {T.size.BIG}</span>}

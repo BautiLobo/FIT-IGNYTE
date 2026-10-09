@@ -435,7 +435,7 @@ tbody tr:hover{background:#1e1e1e}
    porque se mira desde 2-3 metros: el layout tiene que crecer con la
    pantalla, no quedarse en los 11px del resto del panel (que se mira de
    cerca en un laptop). Fondo negro puro para que rinda en un TV barato. */
-.kds{position:fixed;inset:0;z-index:600;background:#000;color:#fff;display:flex;flex-direction:column;overflow:hidden;font-family:'DM Sans',sans-serif}
+.kds{position:fixed;inset:0;z-index:600;text-align:left;background:#000;color:#fff;display:flex;flex-direction:column;overflow:hidden;font-family:'DM Sans',sans-serif}
 .kds-top{display:flex;align-items:center;gap:clamp(10px,1.4vw,26px);padding:clamp(7px,.9vw,16px) clamp(14px,1.8vw,30px);background:#0d0d0d;border-bottom:2px solid var(--red);flex-shrink:0}
 .kds-clock{font-family:'Rajdhani',sans-serif;font-size:clamp(32px,4.4vw,82px);font-weight:700;line-height:1;letter-spacing:2px;color:#fff;font-variant-numeric:tabular-nums}
 .kds-date{font-family:'Rajdhani',sans-serif;font-size:clamp(12px,1.25vw,23px);font-weight:600;letter-spacing:2px;color:var(--muted);text-transform:uppercase;line-height:1.3}
@@ -450,7 +450,7 @@ tbody tr:hover{background:#1e1e1e}
 .kds-col-hd .s{font-size:clamp(11px,1.05vw,21px);opacity:.88;white-space:nowrap}
 .kds-now  .kds-col-hd{background:var(--red);color:#fff}
 .kds-next .kds-col-hd{background:#16263b;color:#9ecbff}
-.kds-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(8px,.95vw,18px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(200px,18vw,340px),1fr));gap:clamp(8px,.85vw,16px);align-content:start}
+.kds-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(8px,.95vw,18px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(200px,18vw,340px),1fr));gap:clamp(8px,.85vw,16px);align-content:start;grid-auto-rows:max-content}
 .kds-card{background:#141414;border:1px solid #262626;border-left:6px solid var(--red);border-radius:8px;cursor:pointer;user-select:none;overflow:hidden;transition:opacity .15s,background .15s}
 .kds-next .kds-card{border-left-color:#3b82f6}
 .kds-card.done{opacity:.25;background:#0a0a0a}
@@ -498,7 +498,7 @@ tbody tr:hover{background:#1e1e1e}
 .chef-hero-hd .tot{margin-left:auto;text-align:right;font-family:"Rajdhani",sans-serif;line-height:.95}
 .chef-hero-hd .tot b{display:block;font-size:clamp(40px,4.6vw,90px);font-variant-numeric:tabular-nums}
 .chef-hero-hd .tot span{font-size:clamp(10px,.85vw,16px);letter-spacing:2px;text-transform:uppercase;opacity:.85}
-.chef-hero-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(10px,1vw,20px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(260px,24vw,460px),1fr));gap:clamp(8px,.8vw,16px);align-content:start}
+.chef-hero-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(10px,1vw,20px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(260px,24vw,460px),1fr));gap:clamp(8px,.8vw,16px);align-content:start;grid-auto-rows:max-content}
 .chef-dish{display:flex;align-items:center;gap:clamp(10px,1vw,20px);padding:clamp(10px,.9vw,18px) clamp(12px,1.1vw,22px);border-radius:10px;background:#1c1c1c;border-left:10px solid #444}
 .chef-dish.big{background:#2a1010;border-left-color:#dc2626}
 .chef-dish.small{background:#0f2416;border-left-color:#16a34a}

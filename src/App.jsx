@@ -488,6 +488,14 @@ tbody tr:hover{background:#1e1e1e}
 .kds-btn{background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:6px;padding:clamp(6px,.55vw,12px) clamp(10px,.95vw,20px);font-size:clamp(11px,.9vw,18px);font-family:'DM Sans',sans-serif;cursor:pointer;white-space:nowrap;flex-shrink:0}
 .kds-btn:hover{background:#262626;color:#fff}
 @media (max-width:820px){.kds-cols{grid-template-columns:1fr}.kds-kpi{padding:0 8px}}
+.kds-tbar{flex-shrink:0;display:flex;gap:clamp(6px,.5vw,10px);overflow-x:auto;padding:clamp(6px,.55vw,11px) clamp(14px,1.8vw,30px);background:#080808;border-bottom:1px solid #1f1f1f}
+.kds-chip{flex-shrink:0;background:#161616;border:1px solid #2e2e2e;color:#bbb;border-radius:999px;padding:clamp(4px,.4vw,8px) clamp(12px,1vw,20px);font-family:'Rajdhani',sans-serif;font-weight:700;font-size:clamp(14px,1.15vw,22px);letter-spacing:1px;cursor:pointer;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kds-chip:hover{background:#222;color:#fff}
+.kds-chip.on{background:#fff;border-color:#fff;color:#000}
+.kds-chip.live{color:var(--green)}
+.kds-chip.live.on{background:var(--green);border-color:var(--green);color:#000}
+.kds-chip.past{opacity:.45}
+.kds-chip small{font-size:.7em;opacity:.7;margin-left:6px}
 .chef-main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.75fr) minmax(0,1fr);gap:2px;background:#1c1c1c}
 .chef-hero,.chef-side{background:#000;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .chef-hero-hd{display:flex;align-items:center;gap:clamp(12px,1.2vw,24px);padding:clamp(10px,1vw,20px) clamp(16px,1.6vw,30px);background:var(--red);flex-shrink:0}
@@ -637,6 +645,7 @@ const KDS_TXT = {
     chefTitle:"Chef · what to cook", plates:"plates", platesTotal:n=>`plate${n!==1?"s":""} today`,
     cookNowTag:"Cook now", nextTag:"Next", noTimeTag:"No time",
     upNext:"Up next", firstUp:"First cook", startedAgo:n=>`started ${n} min ago`, inMin:n=>n<=0?"now":`in ${n} min`,
+    autoChip:"● Live", cookTimeLbl:"Cook time", colCook:h=>`Cook time ${h}`, colNextCook:h=>`Next · ${h}`, emptyCook:"NOTHING AFTER THIS",
     fullDay:"Full day", leftLabel:"plates left", nothingNext:"Nothing after this",
     chefDone:"NOTHING LEFT TO COOK",
     chefFoot:"All clients added up per cook time · Allergies, notes and packing → Kitchen Display · Esc to exit",
@@ -662,12 +671,33 @@ const KDS_TXT = {
     chefTitle:"厨师 · 要做什么", plates:"份", platesTotal:()=>"今天共计",
     cookNowTag:"现在做", nextTag:"下一个", noTimeTag:"未定时间",
     upNext:"接下来", firstUp:"第一批", startedAgo:n=>`已开始 ${n} 分钟`, inMin:n=>n<=0?"现在":`${n} 分钟后`,
+    autoChip:"● 实时", cookTimeLbl:"烹饪时间", colCook:h=>`烹饪时间 ${h}`, colNextCook:h=>`下一个 · ${h}`, emptyCook:"之后没有了",
     fullDay:"全天", leftLabel:"剩余份数", nothingNext:"之后没有了",
     chefDone:"今天没有要做的了",
     chefFoot:"按烹饪时间合计所有客户 · 过敏、备注和打包 → Kitchen Display · Esc 退出",
     date:d=>{ try { return new Date(d+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"}); } catch { return d||"—"; } },
   },
 };
+
+// Barra de cooking times de los dos displays: "en vivo" + un chip por hora
+// de cocina del día (con la cantidad de platos). Tocar el chip elegido
+// otra vez vuelve a en vivo.
+function CookTimeBar({ times, sel, onSel, nowMin, isToday, T }) {
+  return (
+    <div className="kds-tbar">
+      <button className={`kds-chip live${sel==null?" on":""}`} onClick={()=>onSel(null)}>{T.autoChip}</button>
+      {times.map(t => {
+        const past = isToday && hmToMinutes(t.cook) != null && hmToMinutes(t.cook) + 60 <= nowMin;
+        return (
+          <button key={t.cook} className={`kds-chip${sel===t.cook?" on":""}${past&&sel!==t.cook?" past":""}`}
+                  onClick={()=>onSel(sel===t.cook?null:t.cook)}>
+            {t.cook}<small>{t.n}</small>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en" }) {
   const T = KDS_TXT[lang];
@@ -2569,6 +2599,10 @@ export default function App() {
   // platos de cada cosa por hora de cocina, BIG/SMALL. Comparte reloj e
   // idioma con el KDS.
   const [showChef,    setShowChef]    = useState(false);
+  // Cooking time elegido a mano en el KDS / Chef Display (null = en vivo).
+  // Se resetea al abrir un display y al cambiar de día.
+  const [cookSel,     setCookSel]     = useState(null);
+  useEffect(() => { setCookSel(null); }, [deliveryDay]);
   // Reloj vivo del Kitchen Display. TODAY/todayIso son constantes de módulo
   // (se fijan al cargar la página); esta pantalla queda proyectada horas en
   // un monitor y tiene que re-bucketear sola cuando pasa la hora.
@@ -3295,7 +3329,19 @@ export default function App() {
     const laterBatches = new Set(batchList.slice(baseIdx + 2));
     const laterTickets = ticketsOf(timed.filter(r => laterBatches.has(r.batch)));
 
+    // Selector de cooking time: con un horario elegido, la columna grande
+    // muestra los pedidos de ESE cooking time exacto y la otra el siguiente,
+    // en vez de los batches en vivo.
+    const cookList = Array.from(new Set(timed.map(r => r.cook))).sort();
+    const cookBucket = cook => {
+      const tickets = cook ? ticketsOf(timed.filter(r => r.cook === cook)) : [];
+      return { label: cook || null, stops: tickets.length, tickets, portions: tickets.reduce((n, t) => n + t.portions, 0) };
+    };
+    const selIdx = cookSel ? cookList.indexOf(cookSel) : -1;
+
     return {
+      cookList,
+      sel: selIdx >= 0 ? { now: cookBucket(cookList[selIdx]), next: cookBucket(cookList[selIdx + 1]) } : null,
       isToday,
       now:  bucket(baseIdx),
       next: bucket(baseIdx + 1),
@@ -3303,7 +3349,7 @@ export default function App() {
       later: { stops: laterTickets.length, portions: laterTickets.reduce((n, t) => n + t.portions, 0) },
       tbd:  { stops: ticketsOf(tbd).length },
     };
-  }, [delivery, deliveryDay, kdsNow, batchTimes, mealLibraryState]);
+  }, [delivery, deliveryDay, kdsNow, batchTimes, mealLibraryState, cookSel]);
 
   // ── Chef Display: por cada hora de cocina (las mismas claves de
   // `delivery`), cuántos platos de cada comida hay que hacer, sumando todos
@@ -3329,6 +3375,13 @@ export default function App() {
                total: dishes.reduce((n, d) => n + d.qty, 0), big: sum("BIG"), small: sum("SMALL") };
     }).filter(g => g.total > 0);
   }, [delivery, mealLibraryState]);
+
+  // Chips del selector de cooking time (los dos displays): horarios con
+  // hora definida y cuántos platos tiene cada uno.
+  const cookChips = useMemo(
+    () => chef.filter(g => g.cookMin != null).map(g => ({ cook: g.cook, n: g.total })),
+    [chef]
+  );
 
   // Tick del reloj del KDS. 20s es suficiente: lo único que cambia el
   // contenido es cruzar una hora en punto, y no vale la pena re-renderizar
@@ -4463,8 +4516,8 @@ export default function App() {
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
                 <div style={{flex:1}}/>
                 <button className="btn btn-g" onClick={openBatchEditor} style={{flexShrink:0}}>✎ Edit Batches</button>
-                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setShowKDS(true);}} style={{flexShrink:0}}>📺 Kitchen Display</button>
-                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setShowChef(true);}} style={{flexShrink:0}}>👨‍🍳 Chef Display</button>
+                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setShowKDS(true);}} style={{flexShrink:0}}>📺 Kitchen Display</button>
+                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setShowChef(true);}} style={{flexShrink:0}}>👨‍🍳 Chef Display</button>
                 <button className="btn btn-r" onClick={()=>printDelivery()} style={{flexShrink:0}}>⬇ Download PDF</button>
               </div>
               {Object.keys(delivery).length===0?(
@@ -5164,6 +5217,16 @@ export default function App() {
               <button className="kds-btn" onClick={()=>setShowKDS(false)}>{T.exit}</button>
             </div>
 
+            <CookTimeBar times={cookChips} sel={kds.sel?cookSel:null} onSel={setCookSel} nowMin={kdsNow} isToday={kds.isToday} T={T}/>
+
+            {kds.sel?(
+            <div className="kds-cols">
+              <KdsBucket kind="now"  title={T.colCook(kds.sel.now.label)} bucket={kds.sel.now}
+                         checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNow} lang={kdsLang}/>
+              <KdsBucket kind="next" title={kds.sel.next.label?T.colNextCook(kds.sel.next.label):T.nextTag} bucket={kds.sel.next}
+                         checks={checks} onOpen={setKdsDetail} emptyText={T.emptyCook} lang={kdsLang}/>
+            </div>
+            ):<>
             {latePortions>0&&(
               <div className="kds-late">
                 <span>{T.behind(latePortions)}</span>
@@ -5186,6 +5249,7 @@ export default function App() {
                          checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNext} lang={kdsLang}/>
             </div>
             )}
+            </>}
 
             <div className="kds-foot">
               <span>{T.tap}</span>
@@ -5257,6 +5321,9 @@ export default function App() {
         } else if (timedIdx.length) {
           hero = timedIdx[0]; next = timedIdx[1] ?? -1;
         }
+        // Cooking time elegido en la barra: manda sobre el modo en vivo.
+        const selI = cookSel ? chef.findIndex(g => g.cook === cookSel && g.cookMin != null) : -1;
+        if (selI >= 0) { hero = selI; mode = "sel"; next = timedIdx.find(i => i > selI) ?? -1; }
         const isPast = (g, i) => isToday && g.cookMin != null && g.cookMin <= kdsNow && i !== hero;
         const remaining = chef.filter((g, i) => !isPast(g, i));
         const left = remaining.reduce((n, g) => n + g.total, 0);
@@ -5264,7 +5331,8 @@ export default function App() {
         const smallLeft = remaining.reduce((n, g) => n + g.small, 0);
         const H = hero >= 0 ? chef[hero] : null;
         const N = next >= 0 ? chef[next] : null;
-        const heroSub = !H ? "" : mode === "now" ? T.startedAgo(kdsNow - H.cookMin) : mode === "up" ? T.inMin(H.cookMin - kdsNow) : "";
+        const heroSub = !H ? "" : mode === "now" ? T.startedAgo(kdsNow - H.cookMin) : mode === "up" ? T.inMin(H.cookMin - kdsNow)
+          : mode === "sel" && isToday ? (H.cookMin <= kdsNow ? T.startedAgo(kdsNow - H.cookMin) : T.inMin(H.cookMin - kdsNow)) : "";
         const toggleFull = () => {
           try {
             if (document.fullscreenElement) document.exitFullscreen?.();
@@ -5295,6 +5363,8 @@ export default function App() {
               <button className="kds-btn" onClick={()=>setShowChef(false)}>{T.exit}</button>
             </div>
 
+            <CookTimeBar times={cookChips} sel={mode==="sel"?cookSel:null} onSel={setCookSel} nowMin={kdsNow} isToday={isToday} T={T}/>
+
             {chef.length===0?(
               <div className="kds-clear">
                 <div className="big">{T.nothing}</div>
@@ -5306,7 +5376,7 @@ export default function App() {
                   {H?(<>
                     <div className={`chef-hero-hd${mode==="now"?"":" up"}`}>
                       <div className="lbl">
-                        {mode==="now"?T.cookNowTag:mode==="up"?T.upNext:T.firstUp}
+                        {mode==="now"?T.cookNowTag:mode==="up"?T.upNext:mode==="sel"?T.cookTimeLbl:T.firstUp}
                         {heroSub&&<small>{heroSub}</small>}
                       </div>
                       <div className="tm">{H.cook}</div>
@@ -5357,9 +5427,9 @@ export default function App() {
                     <div className="chef-side-hd"><span>{T.fullDay}</span></div>
                     <div className="chef-day-list">
                       {chef.map((g,i)=>{
-                        const cls = g.cookMin==null ? "tbd" : i===hero&&mode==="now" ? "on" : i===next||i===hero ? "nx" : isPast(g,i) ? "past" : "";
+                        const cls = g.cookMin==null ? "tbd" : i===hero&&(mode==="now"||mode==="sel") ? "on" : i===next||i===hero ? "nx" : isPast(g,i) ? "past" : "";
                         return (
-                          <div className={`chef-row ${cls}`} key={g.cook}>
+                          <div className={`chef-row ${cls}`} key={g.cook} style={{cursor:g.cookMin==null?"default":"pointer"}} onClick={()=>g.cookMin!=null&&setCookSel(g.cook)}>
                             <span className="tm">{g.cookMin==null?T.noTimeTag:g.cook}</span>
                             <span className="tot">{g.total}<small>{T.plates}</small></span>
                             <span className="mix">

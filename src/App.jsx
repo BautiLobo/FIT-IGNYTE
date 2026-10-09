@@ -457,7 +457,6 @@ tbody tr:hover{background:#1e1e1e}
 .kds-tk-hd{display:flex;align-items:center;flex-wrap:wrap;gap:clamp(6px,.6vw,12px) clamp(8px,.8vw,16px);padding:clamp(8px,.7vw,14px) clamp(10px,.95vw,20px);background:#1d1d1d;border-bottom:1px solid #2a2a2a}
 .kds-tk-name{flex:1 1 auto;min-width:0;font-size:clamp(19px,1.8vw,36px);font-weight:800;color:#fff;line-height:1.1;overflow-wrap:anywhere}
 .kds-tk-out{flex-shrink:0;background:var(--amber);color:#000;border-radius:6px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);font-family:'Rajdhani',sans-serif;font-size:clamp(20px,1.9vw,38px);font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
-.kds-tk-meta{flex-basis:100%;font-size:clamp(10px,.8vw,15px);color:var(--dim);letter-spacing:1px;text-transform:uppercase}
 .kds-card.done .kds-tk-name{color:#777}.kds-card.done .kds-tk-out{background:#3a3a3a;color:#999}
 .kds-tk-body{padding:clamp(8px,.8vw,16px) clamp(10px,.95vw,20px)}
 .kds-line{display:flex;align-items:baseline;gap:clamp(8px,.8vw,16px);padding:clamp(3px,.28vw,6px) 0}
@@ -509,6 +508,14 @@ tbody tr:hover{background:#1e1e1e}
 .chef-hero-hd .tot span{font-size:clamp(10px,.85vw,16px);letter-spacing:2px;text-transform:uppercase;opacity:.85}
 .chef-hero-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(10px,1vw,20px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(260px,24vw,460px),1fr));gap:clamp(8px,.8vw,16px);align-content:start;grid-auto-rows:max-content}
 .chef-dish{display:flex;align-items:center;gap:clamp(10px,1vw,20px);padding:clamp(10px,.9vw,18px) clamp(12px,1.1vw,22px);border-radius:10px;background:#1c1c1c;border-left:10px solid #444}
+.chef-dish{cursor:pointer;user-select:none;position:relative;transition:opacity .15s}
+.chef-dish.done{opacity:.28}
+.chef-dish.done .n{text-decoration:line-through}
+.chef-dish .ck{margin-left:auto;flex-shrink:0;font-size:clamp(22px,2vw,40px);color:var(--green);font-weight:900}
+.chef-ln{cursor:pointer;user-select:none}
+.chef-ln.done{opacity:.3}
+.chef-ln.done .n{text-decoration:line-through}
+.chef-row .ok{color:var(--green);font-size:clamp(14px,1.2vw,22px);letter-spacing:1px}
 .chef-dish.big{background:#2a1010;border-left-color:#dc2626}
 .chef-dish.small{background:#0f2416;border-left-color:#16a34a}
 .chef-dish .q{font-family:"Rajdhani",sans-serif;font-size:clamp(48px,5vw,96px);font-weight:700;line-height:.85;color:#fff;min-width:1.1em;text-align:center;font-variant-numeric:tabular-nums;flex-shrink:0}
@@ -648,7 +655,7 @@ const KDS_TXT = {
     upNext:"Up next", firstUp:"First cook", startedAgo:n=>`started ${n} min ago`, inMin:n=>n<=0?"now":`in ${n} min`,
     autoChip:"● Live", cookTimeLbl:"Cook time", colCook:h=>`Cook time ${h}`, colNextCook:h=>`Next · ${h}`, emptyCook:"NOTHING AFTER THIS",
     fullDay:"Full day", leftLabel:"plates left", nothingNext:"Nothing after this",
-    chefDone:"NOTHING LEFT TO COOK",
+    chefDone:"NOTHING LEFT TO COOK", tapChef:"Tap a dish when it is cooked.",
     chefFoot:"All clients added up per cook time · Allergies, notes and packing → Kitchen Display · Esc to exit",
     date:d=>fmtDateTab(d),
   },
@@ -674,7 +681,7 @@ const KDS_TXT = {
     upNext:"接下来", firstUp:"第一批", startedAgo:n=>`已开始 ${n} 分钟`, inMin:n=>n<=0?"现在":`${n} 分钟后`,
     autoChip:"● 实时", cookTimeLbl:"烹饪时间", colCook:h=>`烹饪时间 ${h}`, colNextCook:h=>`下一个 · ${h}`, emptyCook:"之后没有了",
     fullDay:"全天", leftLabel:"剩余份数", nothingNext:"之后没有了",
-    chefDone:"今天没有要做的了",
+    chefDone:"今天没有要做的了", tapChef:"做好后点一下菜品。",
     chefFoot:"按烹饪时间合计所有客户 · 过敏、备注和打包 → Kitchen Display · Esc 退出",
     date:d=>{ try { return new Date(d+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"}); } catch { return d||"—"; } },
   },
@@ -719,7 +726,6 @@ function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en"
               <div className="kds-tk-hd">
                 <span className="kds-tk-name">{t.client}</span>
                 <span className="kds-tk-out">🚚 {t.out}</span>
-                <span className="kds-tk-meta">👨‍🍳 {t.cook} · {done?T.ready:T.pc(t.portions)}</span>
               </div>
               <div className="kds-tk-body">
                 {t.meals.map(m=>(
@@ -5329,10 +5335,16 @@ export default function App() {
         const selI = cookSel ? chef.findIndex(g => g.cook === cookSel && g.cookMin != null) : -1;
         if (selI >= 0) { hero = selI; mode = "sel"; next = timedIdx.find(i => i > selI) ?? -1; }
         const isPast = (g, i) => isToday && g.cookMin != null && g.cookMin <= kdsNow && i !== hero;
+        // Plato cocinado: se marca tocándolo y se guarda en la misma tabla
+        // checklist que los "ready" del KDS. La key lleva día + cooking time +
+        // comida, porque la misma comida se cocina en varias horas.
+        const ckKey = (g, d) => `c_${deliveryDay}_${g.cook}_${d.id}`;
+        const isDone = (g, d) => !!checks[ckKey(g, d)];
         const remaining = chef.filter((g, i) => !isPast(g, i));
-        const left = remaining.reduce((n, g) => n + g.total, 0);
-        const bigLeft = remaining.reduce((n, g) => n + g.big, 0);
-        const smallLeft = remaining.reduce((n, g) => n + g.small, 0);
+        const leftBy = size => remaining.reduce((n, g) => n + g.dishes.filter(d => !isDone(g, d) && (!size || d.size === size)).reduce((m, d) => m + d.qty, 0), 0);
+        const left = leftBy(null);
+        const bigLeft = leftBy("BIG");
+        const smallLeft = leftBy("SMALL");
         const H = hero >= 0 ? chef[hero] : null;
         const N = next >= 0 ? chef[next] : null;
         const heroSub = !H ? "" : mode === "now" ? T.startedAgo(kdsNow - H.cookMin) : mode === "up" ? T.inMin(H.cookMin - kdsNow)
@@ -5388,12 +5400,13 @@ export default function App() {
                     </div>
                     <div className="chef-hero-body">
                       {H.dishes.map(d=>(
-                        <div className={`chef-dish ${(d.size||"").toLowerCase()}`} key={d.id}>
+                        <div className={`chef-dish ${(d.size||"").toLowerCase()}${isDone(H,d)?" done":""}`} key={d.id} onClick={()=>toggleCheck(ckKey(H,d))}>
                           <span className="q">{d.qty}</span>
                           <span className="info">
                             <span className="n">{dishName(d)}</span>
                             {d.size&&<span className="sz">{T.size[d.size]}</span>}
                           </span>
+                          {isDone(H,d)&&<span className="ck">✓</span>}
                         </div>
                       ))}
                     </div>
@@ -5417,7 +5430,7 @@ export default function App() {
                     {N&&(
                       <div className="chef-next-body">
                         {N.dishes.map(d=>(
-                          <div className="chef-ln" key={d.id}>
+                          <div className={`chef-ln${isDone(N,d)?" done":""}`} key={d.id} onClick={()=>toggleCheck(ckKey(N,d))}>
                             <span className="q">{d.qty}</span>
                             <span className={`d ${(d.size||"").toLowerCase()}`}/>
                             <span className="n">{dishName(d)}</span>
@@ -5436,6 +5449,7 @@ export default function App() {
                           <div className={`chef-row ${cls}`} key={g.cook} style={{cursor:g.cookMin==null?"default":"pointer"}} onClick={()=>g.cookMin!=null&&setCookSel(g.cook)}>
                             <span className="tm">{g.cookMin==null?T.noTimeTag:g.cook}</span>
                             <span className="tot">{g.total}<small>{T.plates}</small></span>
+                            {g.dishes.every(d=>isDone(g,d))&&<span className="ok">✓</span>}
                             <span className="mix">
                               {g.big>0&&<span className="b">{g.big} {T.size.BIG}</span>}
                               {g.small>0&&<span className="s">{g.small} {T.size.SMALL}</span>}
@@ -5450,6 +5464,7 @@ export default function App() {
             )}
 
             <div className="kds-foot">
+              <span>{T.tapChef}</span>
               <span style={{marginLeft:"auto"}}>{T.chefFoot}</span>
             </div>
           </div>

@@ -458,6 +458,10 @@ tbody tr:hover{background:#1e1e1e}
 .kds-tk-name{flex:1 1 auto;min-width:0;font-size:clamp(19px,1.8vw,36px);font-weight:800;color:#fff;line-height:1.1;overflow-wrap:anywhere}
 .kds-tk-out{flex-shrink:0;background:var(--amber);color:#000;border-radius:6px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);font-family:'Rajdhani',sans-serif;font-size:clamp(20px,1.9vw,38px);font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
 .kds-card.done .kds-tk-name{color:#777}.kds-card.done .kds-tk-out{background:#3a3a3a;color:#999}
+.kds-tk-cut{flex-shrink:0;border-radius:6px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);font-size:clamp(15px,1.2vw,24px);font-weight:800;line-height:1.1;white-space:nowrap}
+.kds-tk-cut.yes{background:#16a34a;color:#fff}
+.kds-tk-cut.no{background:#2a2a2a;color:#aaa;border:1px solid #444}
+.kds-card.done .kds-tk-cut{opacity:.4}
 .kds-tk-body{padding:clamp(8px,.8vw,16px) clamp(10px,.95vw,20px)}
 .kds-line{display:flex;align-items:baseline;gap:clamp(6px,.5vw,10px);padding:clamp(5px,.4vw,8px) 0;border-bottom:1px solid #222}
 .kds-line:last-of-type{border-bottom:none}
@@ -734,6 +738,7 @@ function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en"
               <div className="kds-tk-hd">
                 <span className="kds-tk-name">{t.client}</span>
                 <span className="kds-tk-out">🚚 {t.out}</span>
+                <span className={`kds-tk-cut ${t.cutlery?"yes":"no"}`}>🍴 {t.cutlery?T.yes:T.no}</span>
               </div>
               <div className="kds-tk-body">
                 {t.meals.map(m=>(

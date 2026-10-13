@@ -396,6 +396,11 @@ tbody tr:hover{background:#1e1e1e}
 .mo-title{font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:700}
 .mo-body{padding:20px;flex:1;overflow-y:auto}
 .mo-ft{padding:12px 20px;border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0}
+.mo-close{background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 8px;line-height:1}
+.mo-close:hover{color:#fff}
+.form-label{font-size:10px;color:var(--muted);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;text-align:left}
+.form-inp{background:var(--s1);border:1px solid var(--bdr2);border-radius:5px;color:var(--txt);font-family:'DM Sans',sans-serif;font-size:12px;padding:8px 10px;outline:none;width:100%;min-width:0}
+.form-inp:focus{border-color:var(--red)}
 .fg{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .fg-full{grid-column:1/-1}
 .fl{display:flex;flex-direction:column;gap:4px}
@@ -605,15 +610,36 @@ tbody tr:hover{background:#1e1e1e}
 .planner-table{border-collapse:collapse;min-width:640px}
 .planner-selected-bar{display:none;align-items:center;justify-content:space-between;gap:8px;background:var(--s2);border:1px solid var(--red);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px;color:#fff}
 .planner-selected-bar.show{display:flex}
+.grid2>*{min-width:0}
+.del-tbl{min-width:1100px}
+.kit-days-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:0}
+.tabs.kit-days{margin:0;border:none;padding-bottom:0;flex-wrap:wrap}
+.meal-form-grid{display:grid;grid-template-columns:220px 1fr;gap:20px}
+.macro-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.notif-form{max-width:920px;margin:0 auto 40px;background:var(--s2);border:1px solid var(--bdr);border-radius:14px;padding:44px;display:flex;flex-direction:column;gap:28px;font-size:16px}
 
+@media(max-width:1100px){
+  .sb{width:230px;min-width:230px}
+  .kpis{grid-template-columns:repeat(3,1fr)}
+  .grid2{grid-template-columns:1fr}
+}
 @media(max-width:768px){
   .hamburger{display:flex;align-items:center;justify-content:center}
   .sb{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%);z-index:300}
   .sb.open{transform:translateX(0);box-shadow:4px 0 20px rgba(0,0,0,.6)}
   .sb-overlay.open{display:block}
   .main{width:100%}
-  .topbar{padding:0 12px 0 52px}
-  .tb-title{font-size:16px}
+  .topbar{height:auto;min-height:54px;flex-wrap:wrap;row-gap:8px;padding:9px 12px 9px 56px}
+  .tb-title{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .tb-right{min-width:0;max-width:100%}
+  .kit-days-bar{flex-wrap:nowrap;max-width:100%}
+  .tabs.kit-days{flex-wrap:nowrap;overflow-x:auto;min-width:0}
+  .tbl-wrap table:not(.del-tbl){min-width:600px}
+  .meal-form-grid{grid-template-columns:1fr}
+  .macro-grid{grid-template-columns:1fr 1fr}
+  .notif-form{padding:18px;gap:18px;margin-bottom:24px}
+  .mo-ft{flex-wrap:wrap}
+  .kds-top{flex-wrap:wrap}
   .content{padding:12px}
   .kpis{grid-template-columns:repeat(2,1fr)}
   .grid2{grid-template-columns:1fr}
@@ -1204,7 +1230,7 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
   const catColor = { protein: "#f87171", carb: "#fbbf24", veg: "#4ade80", sauce: "#38bdf8" };
 
   return <>
-    <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+    <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
       {[["ingredients", "Ingredients"], ["assign", "Assign to Meals"], ["shopping", "Shopping List"]].map(([k, lbl]) => (
         <button key={k} className={`btn ${view === k ? "" : "btn-g"}`} style={{ padding: "9px 16px", fontSize: 13 }} onClick={() => setView(k)}>{lbl}</button>
       ))}
@@ -1220,8 +1246,8 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
             {savingCosts ? "Saving…" : `💾 Save changes (${Object.keys(dirtyCosts).length})`}
           </button>
         )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", background: "var(--s3,#161b22)", padding: 8, borderRadius: 8, border: "1px solid var(--bdr)" }}>
-          <input placeholder="New ingredient name" value={newIng.name} onChange={e => setNewIng(p => ({ ...p, name: e.target.value }))} style={{ width: 180 }} />
+        <div style={{ marginLeft: "auto", display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", maxWidth: "100%", background: "var(--s3,#161b22)", padding: 8, borderRadius: 8, border: "1px solid var(--bdr)" }}>
+          <input placeholder="New ingredient name" value={newIng.name} onChange={e => setNewIng(p => ({ ...p, name: e.target.value }))} style={{ width: 180, minWidth: 0, flex: "1 1 140px" }} />
           <select value={newIng.category} onChange={e => setNewIng(p => ({ ...p, category: e.target.value }))}>
             <option value="protein">protein</option>
             <option value="carb">carb</option>
@@ -2472,7 +2498,7 @@ function MenuTab({ menu, plans, currentWeekIndex, rotationOrder, saveRotationOrd
       <div className="mo" onClick={()=>{setShowAddMeal(false);setEditingMealId(null);}}>
         <div className="mo-box" style={{maxWidth:820,maxHeight:"95vh"}} onClick={e=>e.stopPropagation()}>
           <div className="mo-hd"><div className="mo-title">{editingMealId?"Edit Meal":"Add New Meal"}</div><button className="mo-close" onClick={()=>{setShowAddMeal(false);setEditingMealId(null);}}>✕</button></div>
-          <div className="mo-body" style={{display:"grid",gridTemplateColumns:"220px 1fr",gap:20}}>
+          <div className="mo-body meal-form-grid">
             <div onDragOver={e=>e.preventDefault()} onDrop={handlePhotoDrop}
               style={{border:"2px dashed var(--bdr)",borderRadius:10,height:130,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"var(--s2)",cursor:"pointer",overflow:"hidden"}}
               onClick={()=>document.getElementById("meal-photo-inp").click()}>
@@ -2495,7 +2521,7 @@ function MenuTab({ menu, plans, currentWeekIndex, rotationOrder, saveRotationOrd
                 ))}
               </div>
             </div>
-            <div style={{gridColumn:"1 / -1",display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10}}>
+            <div className="macro-grid">
               {[["kcal","Kcal"],["protein","Protein g"],["carbs","Carbs g"],["fat","Fat g"]].map(([k,lbl])=>(
                 <div key={k}><div className="form-label">{lbl}</div><input className="form-inp" type="number" style={{fontSize:13,padding:"8px 9px"}} value={mealForm[k]||""} onChange={e=>setMealForm(p=>({...p,[k]:e.target.value}))} placeholder="0"/></div>
               ))}
@@ -2536,7 +2562,7 @@ function LoginScreen({ onLogin }) {
     <>
       <style>{G}</style>
       <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0a0a0a"}}>
-        <form onSubmit={submit} style={{width:320,background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:10,padding:28}}>
+        <form onSubmit={submit} style={{width:320,maxWidth:"100%",background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:10,padding:28}}>
           <div style={{textAlign:"center",marginBottom:20}}>
             <div className="sb-brand" style={{fontSize:26}}><span>FIT</span> IGNYTE</div>
             <div className="sb-sub">Operations System</div>
@@ -4069,8 +4095,8 @@ export default function App() {
               {tab==="plans"&&!selectedTierId&&<button className="btn btn-r" onClick={openAddTier}>+ New Tier</button>}
               {tab==="plans"&&selectedTierId&&<button className="btn btn-r" onClick={openAddPlan}>+ New Plan</button>}
               {tab==="kitchen"&&(
-                <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                  <div className="tabs" style={{margin:0,border:"none",paddingBottom:0,flexWrap:"wrap"}}>
+                <div className="kit-days-bar">
+                  <div className="tabs kit-days">
                     {upcomingDates.map(d=><button key={d} className={`tab${kitDay===d?" on":""}`} onClick={()=>setKitDay(d)}>{fmtDateTab(d)}</button>)}
                   </div>
                   <button className="btn btn-g btn-sm" onClick={openBatchEditor}>✎ Edit Batches</button>
@@ -4161,7 +4187,7 @@ export default function App() {
 
               {/* PDF Brochures */}
               <div className="sec-title" style={{marginTop:20}}>📄 Brochures</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:8}}>
+              <div className="grid2" style={{gap:12,marginBottom:8}}>
                 {[["en","FIT IGNYTE — English","🇬🇧"],["cn","FIT IGNYTE — 中文","🇨🇳"]].map(([lang,label,flag])=>(
                   <div key={lang} style={{background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:10,padding:16}}>
                     <div style={{fontSize:12,fontWeight:700,color:"#fff",marginBottom:4}}>{flag} {label}</div>
@@ -4755,11 +4781,11 @@ export default function App() {
             {/* ═══ NOTIFICATIONS ═══════════════════════ */}
             {tab==="notifications"&&<>
               <div className="sec-title" style={{marginTop:0,textAlign:"center",fontSize:18}}>Send Notification</div>
-              <form onSubmit={handleSendNotification} style={{maxWidth:920,margin:"0 auto 40px",background:"var(--s2)",border:"1px solid var(--bdr)",borderRadius:14,padding:44,display:"flex",flexDirection:"column",gap:28,fontSize:16}}>
+              <form onSubmit={handleSendNotification} className="notif-form">
 
                 <div className="fl">
                   <label style={{fontSize:15}}>Send To</label>
-                  <div style={{display:"flex",gap:14}}>
+                  <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
                     {[{id:"select",lbl:"Specific clients"},{id:"status",lbl:"By status"},{id:"all",lbl:"All clients"}].map(m=>(
                       <button key={m.id} type="button" className={`btn ${notifForm.recipientMode===m.id?"btn-r":"btn-g"}`} style={{padding:"14px 24px",fontSize:16}}
                         onClick={()=>setNotifForm(f=>({...f,recipientMode:m.id}))}>{m.lbl}</button>
@@ -4812,7 +4838,7 @@ export default function App() {
                   <input className="inp" style={{fontSize:16,padding:"16px 18px"}} value={notifForm.message} onChange={e=>setNotifForm(f=>({...f,message:e.target.value}))} placeholder="Message shown to the client"/>
                 </div>
 
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
                   <span style={{fontSize:15,color:"var(--dim)"}}>{notifRecipients.length} recipient{notifRecipients.length===1?"":"s"}</span>
                   <button className="btn btn-r" style={{padding:"16px 32px",fontSize:17}} type="submit" disabled={notifBusy||notifRecipients.length===0}>{notifBusy?"Sending…":"Send Notification"}</button>
                 </div>

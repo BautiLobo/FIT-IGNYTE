@@ -620,6 +620,19 @@ export async function deleteMealIngredient(id) {
   check(await supabase.from("meal_ingredients").delete().eq("id", id), "deleteMealIngredient");
 }
 
+// ── TEAM ACCESS (cuentas del panel) ──────────────────────────
+// Edge Function manage-staff: crear/borrar usuarios de Auth necesita la
+// service key, así que va server-side. invoke() manda el token del admin.
+export async function manageStaff(action, payload = {}) {
+  const { data, error } = await supabase.functions.invoke("manage-staff", { body: { action, ...payload } });
+  if (error) {
+    let msg = error.message;
+    try { msg = (await error.context.json()).error || msg; } catch { /* sin body JSON */ }
+    throw new Error(msg);
+  }
+  return data;
+}
+
 // ── NOTIFICATIONS (in-app) ───────────────────────────────────
 export async function createNotification(clientId, title, message) {
   check(await supabase.from("notifications").insert({ client_id: clientId, title, message, is_read: false }), "createNotification");

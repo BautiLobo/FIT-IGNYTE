@@ -7,7 +7,7 @@ import {
   getMenu, updateMenuDay, getCurrentWeekIndex, getMenuRotationOrder, setMenuRotationOrder,
   getMealSelections, upsertMealSelection, getPendingMealSelections,
   getChecklist, toggleChecklistItem,
-  signIn, signOut, getSession, onAuthChange,
+  signIn, signOut, getSession, onAuthChange, manageStaff,
   getPendingOrders, getRejectedOrders, getApprovedOrders, approveOrder, rejectOrder, reApproveOrder, deleteNewOrder,
   getCoaches, createCoach, deleteCoach,
   getPendingAddressChanges, approveAddressChange, rejectAddressChange,
@@ -2585,8 +2585,125 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+// ── TEAM ACCESS ──────────────────────────────────────────────────────────
+// Cuentas que entran al panel. Admin = todo; Delivery = solo Delivery Sheet
+// + Kitchen/Chef Display. Todo pasa por la Edge Function manage-staff
+// (crear/borrar usuarios de Auth necesita la service key).
+const TEAM_ROLES = [
+  {id:"admin",    lbl:"Admin",    desc:"Full access"},
+  {id:"delivery", lbl:"Delivery", desc:"Delivery Sheet + Kitchen/Chef Display only"},
+];
+function TeamAccess({ currentUserId }) {
+  const [users, setUsers] = useState(null);
+  const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const [form, setForm] = useState({email:"", password:"", role:"delivery"});
+  const [creating, setCreating] = useState(false);
+
+  const fetchUsers = () => manageStaff("list")
+    .then(({ users }) => users.sort((a,b)=>(a.email||"").localeCompare(b.email||"")));
+  const load = async () => {
+    try { setUsers(await fetchUsers()); setError(""); }
+    catch (e) { setError(e.message); setUsers([]); }
+  };
+  useEffect(() => {
+    let cancelled = false;
+    fetchUsers()
+      .then(u => { if (!cancelled) setUsers(u); })
+      .catch(e => { if (!cancelled) { setError(e.message); setUsers([]); } });
+    return () => { cancelled = true; };
+  }, []);
+
+  const create = async e => {
+    e.preventDefault();
+    setCreating(true);
+    try {
+      await manageStaff("create", form);
+      setForm({email:"", password:"", role:"delivery"});
+      await load();
+    } catch (e) { setError(e.message); }
+    finally { setCreating(false); }
+  };
+  const setRole = async (u, role) => {
+    setBusyId(u.id);
+    try { await manageStaff("set_role", {userId:u.id, role}); await load(); }
+    catch (e) { setError(e.message); }
+    finally { setBusyId(null); }
+  };
+  const remove = async u => {
+    if (!window.confirm(`Remove access for ${u.email}? The account will be deleted.`)) return;
+    setBusyId(u.id);
+    try { await manageStaff("delete", {userId:u.id}); await load(); }
+    catch (e) { setError(e.message); }
+    finally { setBusyId(null); }
+  };
+
+  const lblStyle = {fontSize:10,color:"var(--muted)",textTransform:"uppercase",letterSpacing:.5};
+  return <>
+    <div className="sec-title" style={{marginTop:0}}>Add Account</div>
+    <form onSubmit={create} style={{display:"flex",gap:10,marginBottom:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <label style={lblStyle}>Email</label>
+        <input className="inp" type="email" style={{width:240}} placeholder="name@example.com" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))}/>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <label style={lblStyle}>Password</label>
+        <input className="inp" type="text" autoComplete="new-password" style={{width:180}} placeholder="min. 8 characters" value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))}/>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <label style={lblStyle}>Role</label>
+        <select className="fltr" value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))}>
+          {TEAM_ROLES.map(r=><option key={r.id} value={r.id}>{r.lbl}</option>)}
+        </select>
+      </div>
+      <button className="btn btn-r" type="submit" disabled={creating||!form.email.trim()||form.password.length<8}>
+        {creating?"Creating…":"+ Add Account"}
+      </button>
+    </form>
+    <div style={{fontSize:11,color:"var(--dim)",marginBottom:24}}>
+      {TEAM_ROLES.map(r=><div key={r.id}><strong style={{color:"var(--muted)"}}>{r.lbl}:</strong> {r.desc}</div>)}
+      Share the email and password with the person. Role changes apply on their next login.
+    </div>
+    {error&&<div className="alert-bar" style={{marginBottom:16}}>⚠️ {error}</div>}
+    <div className="sec-title">Accounts</div>
+    {users===null?(
+      <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">Loading…</div></div>
+    ):users.length===0?(
+      <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No accounts</div></div>
+    ):(
+      <div className="tbl-wrap"><table>
+        <thead><tr><th>Email</th><th>Role</th><th>Last Login</th><th>Created</th><th></th></tr></thead>
+        <tbody>
+          {users.map(u=>{
+            const me = u.id===currentUserId;
+            return (
+              <tr key={u.id}>
+                <td style={{color:"#fff",fontWeight:500}}>{u.email}{me&&<span style={{color:"var(--dim)",fontWeight:400}}> (you)</span>}</td>
+                <td>
+                  <select className="fltr" value={u.role} disabled={me||busyId===u.id} onChange={e=>setRole(u, e.target.value)}>
+                    {u.role==="none"&&<option value="none">No access</option>}
+                    {TEAM_ROLES.map(r=><option key={r.id} value={r.id}>{r.lbl}</option>)}
+                  </select>
+                </td>
+                <td style={{color:"var(--dim)",fontSize:10}}>{u.last_sign_in_at?new Date(u.last_sign_in_at).toLocaleString():"Never"}</td>
+                <td style={{color:"var(--dim)",fontSize:10}}>{u.created_at?new Date(u.created_at).toLocaleDateString():"—"}</td>
+                <td>{!me&&<button className="btn btn-xs" style={{background:"#450a0a",color:"#f87171",border:"none"}} disabled={busyId===u.id} onClick={()=>remove(u)}>{busyId===u.id?"Working…":"Remove"}</button>}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table></div>
+    )}
+  </>;
+}
+
 export default function App() {
   const [session,    setSession]    = useState(undefined); // undefined = checking, null = signed out
+  // Empleados de delivery: app_metadata.role = "delivery" (lo setea la Edge
+  // Function manage-staff desde Team Access; el usuario no puede cambiarlo).
+  // Solo ven la Delivery Sheet + Kitchen/Chef Display, y en la base las
+  // policies is_delivery() les dan solo eso (leer clients + checks k_/c_).
+  const isStaff = session?.user?.app_metadata?.role === "delivery";
 
   const [clients,    setClients]    = useState([]);
   // meals: { [clientId]: { [day]: [ {id, time, meals:[], snack, note} ] } }
@@ -2620,7 +2737,8 @@ export default function App() {
   // customMealItems: extra meals added manually
   const [customItems, setCustomItems] = useState([]);
 
-  const [tab,         setTab]         = useState("dashboard");
+  const [tabState,    setTab]         = useState("dashboard");
+  const tab = isStaff ? "delivery" : tabState;
   const [kitDay,      setKitDay]      = useState(todayIso());
   const [showBatchEditor, setShowBatchEditor] = useState(false);
   const [batchDraft,      setBatchDraft]      = useState([]);
@@ -2979,13 +3097,14 @@ export default function App() {
           getCurrentWeekIndex(),
           getMenuRotationOrder(),
           getTiers().catch(() => []),
-          getIngredients().catch(() => []),
-          getMealIngredients().catch(() => []),
-          getPaidPayments().catch(() => []),
-          getEmployees().catch(() => []),
-          getOtherExpenses().catch(() => []),
-          getAccountingSnapshots().catch(() => []),
-          getOneTimeExpenses().catch(() => []),
+          // Staff no ve costos, pagos ni contabilidad: ni se descargan.
+          isStaff ? [] : getIngredients().catch(() => []),
+          isStaff ? [] : getMealIngredients().catch(() => []),
+          isStaff ? [] : getPaidPayments().catch(() => []),
+          isStaff ? [] : getEmployees().catch(() => []),
+          isStaff ? [] : getOtherExpenses().catch(() => []),
+          isStaff ? [] : getAccountingSnapshots().catch(() => []),
+          isStaff ? [] : getOneTimeExpenses().catch(() => []),
           getPendingMealSelections().catch(() => ({})),
         ]);
         setIngredients(ingr || []);
@@ -2995,9 +3114,11 @@ export default function App() {
         setOtherExpenses(otherExp || []);
         setAcctSnapshots(snaps || []);
         setOneTimeExpenses(oneTimeExp || []);
-        refreshOrders().catch(e => console.error(e));
-        refreshNotifications().catch(e => console.error(e));
-        refreshCoaches().catch(e => console.error(e));
+        if (!isStaff) {
+          refreshOrders().catch(e => console.error(e));
+          refreshNotifications().catch(e => console.error(e));
+          refreshCoaches().catch(e => console.error(e));
+        }
         // Populate ref immediately so mealName() works in useMemos
         mealLibraryRef.current = lib || [];
         setMealLibraryState(lib || []);
@@ -3086,7 +3207,7 @@ export default function App() {
   // que eso pasaba (confirmado: 4 veces seguidas en una sola carga de
   // pagina).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.id]);
+  }, [session?.user?.id, isStaff]);
 
   const flash = () => { setSaving(true); setTimeout(() => setSaving(false), 1800); };
 
@@ -3504,7 +3625,7 @@ export default function App() {
     }
   };
 
-  const navTo = t => { setTab(t); setSbOpen(false); };
+  const navTo = t => { if (isStaff && t !== "delivery") return; setTab(t); setSbOpen(false); };
 
   // ── Meal slot handlers
   const addSlot = async (clientId, day) => {
@@ -4058,7 +4179,8 @@ export default function App() {
               {id:"mealstats",ic:"📊",lbl:"Meal Stats"},
               {id:"ingredients",ic:"🥕",lbl:"Ingredients"},
               {id:"accounting",ic:"💰",lbl:"Accounting"},
-            ].map(n=>(
+              {id:"team",     ic:"🔑",lbl:"Team Access"},
+            ].filter(n=>!isStaff||n.id==="delivery").map(n=>(
               <button key={n.id} className={`ni${tab===n.id?" on":""}`} onClick={()=>navTo(n.id)}>
                 <span className="ni-ic">{n.ic}</span>{n.lbl}
                 {n.badge?<span className="ni-badge">{n.badge}</span>:null}
@@ -4067,7 +4189,7 @@ export default function App() {
           </nav>
           <div className="sb-footer">
             <div className="sb-stat">Active clients: <strong>{active.length}</strong></div>
-            <button className="btn btn-g" style={{width:"100%",marginTop:14,padding:"11px 0",fontSize:13}} onClick={async()=>{await signOut(); setSession(null);}}>Log Out</button>
+            <button className="btn btn-g" style={{width:"100%",marginTop:14,padding:"11px 0",fontSize:13}} onClick={async()=>{await signOut(); window.location.reload();}}>Log Out</button>
           </div>
         </div>
 
@@ -4075,7 +4197,7 @@ export default function App() {
         <div className="main">
           <div className="topbar">
             <div className="tb-title">
-              {{dashboard:"Operations Dashboard",clients:"Client Master List",meals:"Weekly Meal Selections",kitchen:"Kitchen Prep Summary",delivery:"Delivery Sheet",orders:"Orders",notifications:"Notifications",plans:"Plans",menu:"Menu Reference",mealstats:"Meal Stats",ingredients:"Ingredients & Costs",accounting:"Accounting"}[tab]}
+              {{dashboard:"Operations Dashboard",clients:"Client Master List",meals:"Weekly Meal Selections",kitchen:"Kitchen Prep Summary",delivery:"Delivery Sheet",orders:"Orders",notifications:"Notifications",plans:"Plans",menu:"Menu Reference",mealstats:"Meal Stats",ingredients:"Ingredients & Costs",accounting:"Accounting",team:"Team Access"}[tab]}
             </div>
             <div className="tb-right">
               {tab==="clients"&&<>
@@ -4575,10 +4697,10 @@ export default function App() {
               <DateWindowTabs windowIndex={deliveryWindow} onShift={goDeliveryWindow} selected={deliveryDay} onSelect={setDeliveryDay} counts={deliveryClientCountByDate}/>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
                 <div style={{flex:1}}/>
-                <button className="btn btn-g" onClick={openBatchEditor} style={{flexShrink:0}}>✎ Edit Batches</button>
+                {!isStaff&&<button className="btn btn-g" onClick={openBatchEditor} style={{flexShrink:0}}>✎ Edit Batches</button>}
                 <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setShowKDS(true);}} style={{flexShrink:0}}>📺 Kitchen Display</button>
                 <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setShowChef(true);}} style={{flexShrink:0}}>👨‍🍳 Chef Display</button>
-                <button className="btn btn-r" onClick={()=>printDelivery()} style={{flexShrink:0}}>⬇ Download PDF</button>
+                {!isStaff&&<button className="btn btn-r" onClick={()=>printDelivery()} style={{flexShrink:0}}>⬇ Download PDF</button>}
               </div>
               {Object.keys(delivery).length===0?(
                 <div className="empty-state"><div className="empty-state-icon">🛵</div><div className="empty-state-title">No deliveries scheduled</div><div className="empty-state-sub">Add delivery slots in Meal Selections</div></div>
@@ -4614,7 +4736,9 @@ export default function App() {
                         </td>
                         <td style={{fontSize:11,whiteSpace:"nowrap"}}>{c.cutlery ? "Yes" : "No"}</td>
                         <td style={{color:"#fcd34d",fontSize:10}}>{(()=>{ const ns = deliveryNotes(slot, c); return ns.length ? ns.map((n,i)=><div key={i}>{n}</div>) : "—"; })()}</td>
-                        <td style={{whiteSpace:"nowrap"}}><button className={`bx bx-clk ${checks["d_"+slot.id]?"bx-g":"bx-gr"}`} onClick={()=>toggleCheck("d_"+slot.id)}>{checks["d_"+slot.id]?"✓ Done":"Pending"}</button></td>
+                        <td style={{whiteSpace:"nowrap"}}>{isStaff
+                          ? <span className={`bx ${checks["d_"+slot.id]?"bx-g":"bx-gr"}`}>{checks["d_"+slot.id]?"✓ Done":"Pending"}</span>
+                          : <button className={`bx bx-clk ${checks["d_"+slot.id]?"bx-g":"bx-gr"}`} onClick={()=>toggleCheck("d_"+slot.id)}>{checks["d_"+slot.id]?"✓ Done":"Pending"}</button>}</td>
                       </tr>
                     ))}</tbody>
                   </table></div>
@@ -4741,6 +4865,9 @@ export default function App() {
                 </table></div>
               )}
             </>}
+
+            {/* ═══ TEAM ACCESS ═════════════════════════ */}
+            {tab==="team"&&<TeamAccess currentUserId={session.user.id}/>}
 
             {/* ═══ REFERRALS ═══════════════════════════ */}
             {tab==="referrals"&&<>

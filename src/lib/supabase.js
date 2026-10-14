@@ -620,6 +620,13 @@ export async function deleteMealIngredient(id) {
   check(await supabase.from("meal_ingredients").delete().eq("id", id), "deleteMealIngredient");
 }
 
+// ── CLIENTES EN SU PRIMER CICLO ──────────────────────────────
+// Ids de clientes que nunca renovaron (RPC first_cycle_client_ids: lee
+// payments server-side, así también le sirve al rol delivery).
+export async function getFirstCycleClientIds() {
+  return check(await supabase.rpc("first_cycle_client_ids"), "getFirstCycleClientIds");
+}
+
 // ── TEAM ACCESS (cuentas del panel) ──────────────────────────
 // Edge Function manage-staff: crear/borrar usuarios de Auth necesita la
 // service key, así que va server-side. invoke() manda el token del admin.

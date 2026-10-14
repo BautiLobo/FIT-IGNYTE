@@ -7,7 +7,7 @@ import {
   getMenu, updateMenuDay, getCurrentWeekIndex, getMenuRotationOrder, setMenuRotationOrder,
   getMealSelections, upsertMealSelection, getPendingMealSelections,
   getChecklist, toggleChecklistItem,
-  signIn, signOut, getSession, onAuthChange, manageStaff,
+  signIn, signOut, getSession, onAuthChange, manageStaff, getFirstCycleClientIds,
   getPendingOrders, getRejectedOrders, getApprovedOrders, approveOrder, rejectOrder, reApproveOrder, deleteNewOrder,
   getCoaches, createCoach, deleteCoach,
   getPendingAddressChanges, approveAddressChange, rejectAddressChange,
@@ -121,6 +121,13 @@ function chinaNowMinutes() {
   }).format(new Date());
   const [h, m] = hm.split(":").map(Number);
   return Number.isNaN(h) || Number.isNaN(m) ? 0 : h * 60 + m;
+}
+// Fecha (YYYY-MM-DD) de un timestamp en hora de Shanghái. paid_at viene en
+// UTC: cortarlo con slice(0,10) mandaba al día anterior los pagos hechos
+// entre las 00:00 y las 08:00 de China.
+function shanghaiDateIso(ts) {
+  if (!ts) return "";
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date(ts));
 }
 const hmToMinutes = hm => {
   if (!hm || hm === "TBD") return null;
@@ -441,12 +448,16 @@ tbody tr:hover{background:#1e1e1e}
    pantalla, no quedarse en los 11px del resto del panel (que se mira de
    cerca en un laptop). Fondo negro puro para que rinda en un TV barato. */
 .kds{position:fixed;inset:0;z-index:600;text-align:left;background:#000;color:#fff;display:flex;flex-direction:column;overflow:hidden;font-family:'DM Sans',sans-serif}
-.kds-top{display:flex;align-items:center;gap:clamp(10px,1.4vw,26px);padding:clamp(7px,.9vw,16px) clamp(14px,1.8vw,30px);background:#0d0d0d;border-bottom:2px solid var(--red);flex-shrink:0}
-.kds-clock{font-family:'Rajdhani',sans-serif;font-size:clamp(32px,4.4vw,82px);font-weight:700;line-height:1;letter-spacing:2px;color:#fff;font-variant-numeric:tabular-nums}
-.kds-date{font-family:'Rajdhani',sans-serif;font-size:clamp(12px,1.25vw,23px);font-weight:600;letter-spacing:2px;color:var(--muted);text-transform:uppercase;line-height:1.3}
-.kds-kpi{text-align:center;padding:0 clamp(7px,.95vw,18px);border-left:1px solid #242424;flex-shrink:0}
-.kds-kpi-v{font-family:'Rajdhani',sans-serif;font-size:clamp(22px,2.9vw,54px);font-weight:700;line-height:1.05;font-variant-numeric:tabular-nums}
-.kds-kpi-l{font-size:clamp(8px,.6vw,13px);letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);white-space:nowrap}
+/* Encabezado de KDS/Chef: compacto, y se pliega al scrollear hacia abajo
+   (vuelve al scrollear hacia arriba) para dejarle la pantalla a los tickets. */
+.kds-head{flex-shrink:0;overflow:hidden;max-height:160px;transition:max-height .25s ease}
+.kds-head.hide{max-height:0}
+.kds-top{display:flex;align-items:center;flex-wrap:wrap;gap:clamp(8px,1vw,18px);padding:clamp(4px,.45vw,8px) clamp(12px,1.4vw,24px);background:#0d0d0d;border-bottom:2px solid var(--red)}
+.kds-clock{font-family:'Rajdhani',sans-serif;font-size:clamp(22px,2.3vw,42px);font-weight:700;line-height:1;letter-spacing:1px;color:#fff;font-variant-numeric:tabular-nums}
+.kds-date{font-family:'Rajdhani',sans-serif;font-size:clamp(11px,.95vw,17px);font-weight:600;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;line-height:1.2}
+.kds-kpi{display:flex;align-items:baseline;gap:6px;padding:0 clamp(6px,.7vw,14px);border-left:1px solid #242424;flex-shrink:0}
+.kds-kpi-v{font-family:'Rajdhani',sans-serif;font-size:clamp(18px,1.7vw,32px);font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.kds-kpi-l{font-size:clamp(8px,.6vw,12px);letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);white-space:nowrap}
 .kds-late{flex-shrink:0;background:#5c0f0f;color:#fecaca;border-bottom:2px solid #000;padding:clamp(5px,.55vw,11px) clamp(14px,1.8vw,30px);font-size:clamp(12px,1.2vw,23px);font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;display:flex;gap:clamp(10px,1.2vw,22px);flex-wrap:wrap}
 .kds-cols{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:2px;background:#1c1c1c;overflow:hidden;min-height:0}
 .kds-col{display:flex;flex-direction:column;background:#000;overflow:hidden;min-height:0}
@@ -459,6 +470,9 @@ tbody tr:hover{background:#1e1e1e}
 .kds-card{background:#141414;border:1px solid #262626;border-left:6px solid var(--red);border-radius:8px;cursor:pointer;user-select:none;overflow:hidden;transition:opacity .15s,background .15s}
 .kds-next .kds-card{border-left-color:#3b82f6}
 .kds-card.done{opacity:.25;background:#0a0a0a}
+.kds-card.new{border-left-color:var(--amber);box-shadow:0 0 0 2px var(--amber)}
+.kds-tk-new{flex-basis:100%;align-self:flex-start;width:fit-content;background:var(--amber);color:#000;border-radius:5px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);font-size:clamp(13px,1.1vw,22px);font-weight:900;letter-spacing:.8px;white-space:nowrap}
+.kds-pop-new{display:inline-block;margin-bottom:8px}
 .kds-tk-hd{display:flex;align-items:center;flex-wrap:wrap;gap:clamp(6px,.6vw,12px) clamp(8px,.8vw,16px);padding:clamp(8px,.7vw,14px) clamp(10px,.95vw,20px);background:#1d1d1d;border-bottom:1px solid #2a2a2a}
 .kds-tk-name{flex:1 1 auto;min-width:0;font-size:clamp(19px,1.8vw,36px);font-weight:800;color:#fff;line-height:1.1;overflow-wrap:anywhere}
 .kds-tk-out{flex-shrink:0;background:var(--amber);color:#000;border-radius:6px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);font-family:'Rajdhani',sans-serif;font-size:clamp(20px,1.9vw,38px);font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
@@ -495,11 +509,11 @@ tbody tr:hover{background:#1e1e1e}
 .kds-empty{grid-column:1/-1;text-align:center;color:#333;font-family:'Rajdhani',sans-serif;font-size:clamp(19px,2.2vw,44px);font-weight:700;letter-spacing:3px;padding-top:5vh}
 .kds-foot{flex-shrink:0;background:#0d0d0d;border-top:1px solid #242424;padding:clamp(6px,.65vw,13px) clamp(14px,1.8vw,30px);display:flex;gap:clamp(12px,1.4vw,26px);flex-wrap:wrap;align-items:center;font-size:clamp(10px,.88vw,17px);color:var(--dim)}
 .kds-foot b{color:#ccc;font-weight:600}
-.kds-btn{background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:6px;padding:clamp(6px,.55vw,12px) clamp(10px,.95vw,20px);font-size:clamp(11px,.9vw,18px);font-family:'DM Sans',sans-serif;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.kds-btn{background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:6px;padding:clamp(4px,.35vw,8px) clamp(8px,.7vw,14px);font-size:clamp(11px,.8vw,15px);font-family:'DM Sans',sans-serif;cursor:pointer;white-space:nowrap;flex-shrink:0}
 .kds-btn:hover{background:#262626;color:#fff}
 @media (max-width:820px){.kds-cols{grid-template-columns:1fr}.kds-kpi{padding:0 8px}}
-.kds-tbar{flex-shrink:0;display:flex;gap:clamp(6px,.5vw,10px);overflow-x:auto;padding:clamp(6px,.55vw,11px) clamp(14px,1.8vw,30px);background:#080808;border-bottom:1px solid #1f1f1f}
-.kds-chip{flex-shrink:0;background:#161616;border:1px solid #2e2e2e;color:#bbb;border-radius:999px;padding:clamp(4px,.4vw,8px) clamp(12px,1vw,20px);font-family:'Rajdhani',sans-serif;font-weight:700;font-size:clamp(14px,1.15vw,22px);letter-spacing:1px;cursor:pointer;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kds-tbar{flex-shrink:0;display:flex;gap:clamp(5px,.4vw,8px);overflow-x:auto;padding:clamp(4px,.35vw,7px) clamp(12px,1.4vw,24px);background:#080808;border-bottom:1px solid #1f1f1f}
+.kds-chip{flex-shrink:0;background:#161616;border:1px solid #2e2e2e;color:#bbb;border-radius:999px;padding:clamp(2px,.25vw,5px) clamp(10px,.8vw,16px);font-family:'Rajdhani',sans-serif;font-weight:700;font-size:clamp(13px,.95vw,18px);letter-spacing:1px;cursor:pointer;font-variant-numeric:tabular-nums;white-space:nowrap}
 .kds-chip:hover{background:#222;color:#fff}
 .kds-chip.on{background:#fff;border-color:#fff;color:#000}
 .kds-chip.live{color:var(--green)}
@@ -529,6 +543,7 @@ tbody tr:hover{background:#1e1e1e}
 .chef-flags b{color:#fff}
 .chef-flags .al{background:#3b1111;color:#fca5a5;border-radius:4px;padding:1px 7px;overflow-wrap:anywhere}
 .chef-flags .nt{background:#31240a;color:#fcd34d;border-radius:4px;padding:1px 7px;overflow-wrap:anywhere}
+.chef-flags .nw{background:var(--amber);color:#000;border-radius:4px;padding:1px 7px;font-weight:900;white-space:nowrap}
 .chef-flags.sm{font-size:clamp(11px,.85vw,16px);margin-top:3px}
 .chef-dish.done .chef-flags{text-decoration:none}
 .chef-row .fl{color:#fca5a5;font-size:clamp(13px,1.05vw,20px);letter-spacing:1px}
@@ -682,8 +697,7 @@ const KDS_TXT = {
     emptyNow:"NOTHING THIS BATCH", emptyNext:"NOTHING NEXT BATCH",
     portions:n=>`${n} portion${n!==1?"s":""}`, stops:n=>`${n} stop${n!==1?"s":""}`,
     ready:"ready ✓", pc:n=>`${n} pc`, batch:"Batch", size:{BIG:"BIG",SMALL:"SMALL"},
-    tap:"Tap a card for client details and to mark it plated.",
-    yes:"Cutlery", no:"No cutlery",
+    yes:"Cutlery", no:"No cutlery", newClient:"⭐ NEW CLIENT · 1ST MEAL",
     markReady:"✓ Mark ready", unmark:"↺ Not ready",
     moreLater:n=>`more stop${n!==1?"s":""} later today`,
     tbdWarn:n=>`stop${n!==1?"s":""} with no delivery time set — not shown in any hour`,
@@ -708,8 +722,7 @@ const KDS_TXT = {
     emptyNow:"这一批没有", emptyNext:"下一批没有",
     portions:n=>`${n} 份`, stops:n=>`${n} 单`,
     ready:"已完成 ✓", pc:n=>`${n} 份`, batch:"批次", size:{BIG:"大份",SMALL:"小份"},
-    tap:"点卡片查看客户信息并标记完成。",
-    yes:"要餐具", no:"不要餐具",
+    yes:"要餐具", no:"不要餐具", newClient:"⭐ 新客户 · 第一餐",
     markReady:"✓ 标记完成", unmark:"↺ 取消完成",
     moreLater:()=>"单今天稍后",
     tbdWarn:()=>"单未设置送达时间 — 不在任何时段显示",
@@ -760,11 +773,12 @@ function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en"
           const key  = `k_${t.id}`;
           const done = !!checks[key];
           return (
-            <div key={t.id} className={`kds-card${done?" done":""}`} onClick={e=>onOpen({ ...t, rect: e.currentTarget.getBoundingClientRect() })}>
+            <div key={t.id} className={`kds-card${done?" done":""}${t.isNew?" new":""}`} onClick={e=>onOpen({ ...t, rect: e.currentTarget.getBoundingClientRect() })}>
               <div className="kds-tk-hd">
                 <span className="kds-tk-name">{t.client}</span>
                 <span className="kds-tk-out">🚚 {t.out}</span>
                 <span className={`kds-tk-cut ${t.cutlery?"yes":"no"}`}>🍴 {t.cutlery?T.yes:T.no}</span>
+                {t.isNew&&<span className="kds-tk-new">{T.newClient}</span>}
               </div>
               <div className="kds-tk-body">
                 {t.meals.map(m=>(
@@ -1443,7 +1457,7 @@ function IngredientsTab({ ingredients, setIngredients, mealIngredients, setMealI
   </>;
 }
 
-function AccountingTab({ active, paidPayments, ingredients, mealIngredients, mealLibrary, deliveryClients, meals, pendingMeals, employees, setEmployees, otherExpenses, setOtherExpenses, acctSnapshots, setAcctSnapshots, oneTimeExpenses, setOneTimeExpenses, coaches, setCoaches }) {
+function AccountingTab({ active, clients, plans, paidPayments, ingredients, mealIngredients, mealLibrary, deliveryClients, meals, pendingMeals, employees, setEmployees, otherExpenses, setOtherExpenses, acctSnapshots, setAcctSnapshots, oneTimeExpenses, setOneTimeExpenses, coaches, setCoaches }) {
   const todayIso = dateToLocalIso(TODAY);
   const [view, setView] = useState("current"); // current | history
 
@@ -1481,48 +1495,48 @@ function AccountingTab({ active, paidPayments, ingredients, mealIngredients, mea
     return (Number(grams) || 0) / 1000 * Number(ing.cost_per_kg);
   };
 
-  // ── REVENUE: para cada cliente activo, la plata real que está pagando por
-  // semana en su ciclo actual (el pago que cubre hoy), no el precio de lista
-  // -- así se ven los descuentos (alta nueva 25%, referido 10%) reflejados.
-  // Se separa en plan vs delivery: el pago real (amount_fen) es un combinado
-  // de los dos, así que la parte de delivery se estima con el delivery_fee
-  // ACTUAL del cliente (no queda guardado por separado en `payments`) -- si
-  // el fee cambió desde ese pago, esta parte queda como aproximación.
-  const revenueRows = useMemo(() => {
-    return active.map(c => {
-      const listPrice = c.planObj?.price || 0;
-      const deliveryFee = c.deliveryFee || 0;
-      const payment = paidPayments
-        .filter(p => p.client_id === c.id && p.start_date <= todayIso && p.expiry_date >= todayIso)
-        .sort((a, b) => (b.paid_at || "").localeCompare(a.paid_at || ""))[0];
-      let weeklyRevenue, deliveryRevenue, planRevenue, hasPayment;
-      if (payment) {
-        // Cada `payment` cubre un ciclo = 5 días de entrega, no necesariamente
-        // 7 días de calendario (el cliente puede elegir sus 5 días repartidos
-        // en la ventana de 14 días hábiles) -- ya no tiene sentido estimar
-        // "semanas cubiertas" a partir de la distancia entre start/expiry.
-        // `c.weeks` sigue siendo un override manual explícito para el caso
-        // excepcional de un pago que de verdad cubre varios ciclos.
-        const weeksCovered = c.weeks || 1;
-        weeklyRevenue = (payment.amount_fen / 100) / weeksCovered;
-        deliveryRevenue = deliveryFee / weeksCovered;
-        planRevenue = weeklyRevenue - deliveryRevenue;
-        hasPayment = true;
-      } else {
-        planRevenue = listPrice;
-        deliveryRevenue = deliveryFee;
-        weeklyRevenue = planRevenue + deliveryRevenue;
-        hasPayment = false;
-      }
-      const discounted = hasPayment && listPrice > 0 && planRevenue < listPrice * 0.99;
-      return { client: c, listPrice, planRevenue, deliveryRevenue, weeklyRevenue, hasPayment, discounted };
-    }).sort((a, b) => b.weeklyRevenue - a.weeklyRevenue);
-  }, [active, paidPayments, todayIso]);
+  // ── REVENUE: lo que efectivamente se cobró en la semana = los pagos cuyo
+  // paid_at (hora de Shanghái) cae entre lunes y domingo. Antes se sumaba,
+  // por cada cliente activo, el pago completo de su ciclo vigente; como un
+  // ciclo de 5 entregas puede repartirse en 2-3 semanas de calendario, el
+  // mismo pago se contaba en cada una (ej. semana del 12/10: ¥4.196
+  // cobrados, ¥25.937 en el historial).
+  // Plan vs delivery: el pago (amount_fen) es un combinado de los dos y el
+  // fee no queda guardado por separado en `payments`, así que la parte de
+  // delivery se estima con el delivery_fee ACTUAL del cliente.
+  const clientById = useMemo(() => {
+    const m = {}; (clients || []).forEach(c => { m[c.id] = c; }); return m;
+  }, [clients]);
+  const planById = useMemo(() => {
+    const m = {}; (plans || []).forEach(p => { m[p.id] = p; }); return m;
+  }, [plans]);
+  // Pagos cobrados, con su fecha de Shanghái y el split plan/delivery.
+  const paymentRevenue = useMemo(() => paidPayments
+    .filter(p => p.status === "paid" && p.paid_at)
+    .map(p => {
+      const amount = (Number(p.amount_fen) || 0) / 100;
+      const c = clientById[p.client_id];
+      const fee = Number(c?.deliveryFee) || 0;
+      const delivery = Math.min(fee, amount);
+      return { payment: p, day: shanghaiDateIso(p.paid_at), amount, delivery, plan: amount - delivery,
+               listPrice: Number(planById[p.plan_id]?.price) || 0 };
+    }), [paidPayments, clientById, planById]);
+  const revenueForRange = (from, to) => {
+    const rows = paymentRevenue.filter(r => r.day >= from && r.day <= to);
+    return {
+      rows,
+      plan: rows.reduce((s, r) => s + r.plan, 0),
+      delivery: rows.reduce((s, r) => s + r.delivery, 0),
+      list: rows.reduce((s, r) => s + r.listPrice, 0),
+    };
+  };
+  const weekRevenue = revenueForRange(weekStartIso, weekEndIso);
+  const revenueRows = weekRevenue.rows;
 
-  const totalPlanRevenue = revenueRows.reduce((s, r) => s + r.planRevenue, 0);
-  const totalDeliveryRevenue = revenueRows.reduce((s, r) => s + r.deliveryRevenue, 0);
+  const totalPlanRevenue = weekRevenue.plan;
+  const totalDeliveryRevenue = weekRevenue.delivery;
   const totalRevenue = totalPlanRevenue + totalDeliveryRevenue;
-  const totalListRevenue = revenueRows.reduce((s, r) => s + r.listPrice, 0);
+  const totalListRevenue = weekRevenue.list;
 
   // ── COSTS: mismo cálculo que la Shopping List de Ingredients, sumado para
   // los 7 días calendario de la semana actual -- el costo real de
@@ -1664,7 +1678,7 @@ function AccountingTab({ active, paidPayments, ingredients, mealIngredients, mea
 
   const referralRows = useMemo(() => {
     const counts = {};
-    paidPayments.filter(p => p.type === "new" && p.referral_code && p.paid_at && p.paid_at.slice(0, 10) >= weekStartIso && p.paid_at.slice(0, 10) <= weekEndIso)
+    paidPayments.filter(p => p.type === "new" && p.referral_code && p.paid_at && shanghaiDateIso(p.paid_at) >= weekStartIso && shanghaiDateIso(p.paid_at) <= weekEndIso)
       .forEach(p => { const code = p.referral_code.toLowerCase().trim(); counts[code] = (counts[code] || 0) + 1; });
     return coaches.map(c => ({
       coach: c,
@@ -1706,7 +1720,16 @@ function AccountingTab({ active, paidPayments, ingredients, mealIngredients, mea
   // ── HISTORY: agrupado por semana o por mes
   const [historyMode, setHistoryMode] = useState("week"); // week | month
   const historyRows = useMemo(() => {
-    const sorted = [...acctSnapshots].sort((a, b) => b.week_start.localeCompare(a.week_start));
+    // El revenue guardado en los snapshots viejos está inflado (ver REVENUE
+    // arriba), así que se recalcula desde `payments` para cada semana y el
+    // margen se rehace con los costos guardados, que sí estaban bien.
+    const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return dateToLocalIso(d); };
+    const sorted = [...acctSnapshots].map(s => {
+      const rev = revenueForRange(s.week_start, addDays(s.week_start, 6));
+      const costs = Number(s.ingredient_cost) + Number(s.payroll) + Number(s.other_expenses)
+        + Number(s.one_time_expenses || 0) + Number(s.referral_commission || 0);
+      return { ...s, plan_revenue: rev.plan, delivery_revenue: rev.delivery, margin: rev.plan + rev.delivery - costs };
+    }).sort((a, b) => b.week_start.localeCompare(a.week_start));
     if (historyMode === "week") return sorted;
     const byMonth = {};
     sorted.forEach(s => {
@@ -1720,7 +1743,8 @@ function AccountingTab({ active, paidPayments, ingredients, mealIngredients, mea
       m.active_clients = Math.max(m.active_clients, s.active_clients); m.weeks += 1;
     });
     return Object.values(byMonth).sort((a, b) => b.week_start.localeCompare(a.week_start));
-  }, [acctSnapshots, historyMode]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [acctSnapshots, historyMode, paymentRevenue]);
 
   const printAccounting = async () => {
     const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm");
@@ -1812,12 +1836,13 @@ function AccountingTab({ active, paidPayments, ingredients, mealIngredients, mea
       <div style={{ padding: 16, borderRadius: 10, background: "var(--s2,#1a1a1a)", border: "1px solid var(--bdr)" }}>
         <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>PLAN REVENUE</div>
         <div style={{ fontSize: 24, fontWeight: 700, color: "var(--green)" }}>¥{totalPlanRevenue.toFixed(0)}</div>
+        <div style={{ fontSize: 11, color: "var(--dim)" }}>{revenueRows.length} payment{revenueRows.length !== 1 ? "s" : ""} this week</div>
         {totalListRevenue > totalPlanRevenue && <div style={{ fontSize: 11, color: "var(--dim)" }}>List price would be ¥{totalListRevenue.toFixed(0)}</div>}
       </div>
       <div style={{ padding: 16, borderRadius: 10, background: "var(--s2,#1a1a1a)", border: "1px solid var(--bdr)" }}>
         <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>DELIVERY REVENUE</div>
         <div style={{ fontSize: 24, fontWeight: 700, color: "var(--green)" }}>¥{totalDeliveryRevenue.toFixed(0)}</div>
-        <div style={{ fontSize: 11, color: "var(--dim)" }}>from {revenueRows.filter(r => r.deliveryRevenue > 0).length} client{revenueRows.filter(r => r.deliveryRevenue > 0).length !== 1 ? "s" : ""}</div>
+        <div style={{ fontSize: 11, color: "var(--dim)" }}>from {revenueRows.filter(r => r.delivery > 0).length} payment{revenueRows.filter(r => r.delivery > 0).length !== 1 ? "s" : ""}</div>
       </div>
     </div>
 
@@ -2710,6 +2735,8 @@ export default function App() {
   // Each day can have MULTIPLE delivery slots per client
   const [meals,      setMeals]      = useState({});
   const [pendingMeals, setPendingMeals] = useState({});
+  // Clientes que nunca renovaron (ver firstMealSlotIds).
+  const [firstCycleIds, setFirstCycleIds] = useState(() => new Set());
   const [menu,       setMenu]       = useState({1:{},2:{}});
   const [currentWeekIndex, setCurrentWeekIndex] = useState(1);
   const [rotationOrder, setRotationOrder] = useState([1,2]);
@@ -2772,6 +2799,19 @@ export default function App() {
   const [kdsNow,      setKdsNow]      = useState(chinaNowMinutes);
   // Idioma del Kitchen Display, recordado por navegador (el monitor de la
   // cocina queda en chino aunque el panel se use en inglés).
+  // Encabezado de KDS/Chef plegado (se esconde al scrollear hacia abajo).
+  const [kdsHdrHidden, setKdsHdrHidden] = useState(false);
+  const kdsScrollTops = useRef(new WeakMap());
+  const onKdsScroll = e => {
+    const el = e.target;
+    if (!(el instanceof Element)) return;
+    const prev = kdsScrollTops.current.get(el) ?? 0;
+    const top = el.scrollTop;
+    kdsScrollTops.current.set(el, top);
+    if (top <= 4) setKdsHdrHidden(false);
+    else if (top - prev > 6) setKdsHdrHidden(true);
+    else if (prev - top > 6) setKdsHdrHidden(false);
+  };
   const [kdsLang,     setKdsLang]     = useState(() => { try { return localStorage.getItem("kds_lang") === "zh" ? "zh" : "en"; } catch { return "en"; } });
   // Tarjeta del KDS abierta en detalle (datos del cliente y a dónde va). El
   // ref es para el handler de Esc, que se registra una sola vez.
@@ -3090,7 +3130,7 @@ export default function App() {
     (async () => {
       try {
         const {getSettings, getMealLibrary} = await import("./lib/supabase");
-        const [pl, cl, mn, ms, ch, st, lib, curWeek, rotOrder, tiersData, ingr, mealIngr, pmts, emps, otherExp, snaps, oneTimeExp, pendingMs] = await Promise.all([
+        const [pl, cl, mn, ms, ch, st, lib, curWeek, rotOrder, tiersData, ingr, mealIngr, pmts, emps, otherExp, snaps, oneTimeExp, pendingMs, firstCycle] = await Promise.all([
           getPlans(), getClients(), getMenu(), getMealSelections(), getChecklist(),
           getSettings(["brochure_en","brochure_cn","kitchen_batches"]),
           getMealLibrary(),
@@ -3106,7 +3146,9 @@ export default function App() {
           isStaff ? [] : getAccountingSnapshots().catch(() => []),
           isStaff ? [] : getOneTimeExpenses().catch(() => []),
           getPendingMealSelections().catch(() => ({})),
+          getFirstCycleClientIds().catch(() => []),
         ]);
+        setFirstCycleIds(new Set((firstCycle || []).map(String)));
         setIngredients(ingr || []);
         setMealIngredients(mealIngr || []);
         setPaidPayments(pmts || []);
@@ -3390,6 +3432,29 @@ export default function App() {
     return g;
   }, [deliveryClients, meals, pendingMeals, deliveryDay, mealLibraryState]);
 
+  // Primera comida de cada cliente nuevo (nunca renovó): su fecha más
+  // temprana con entrega -- calculada con mealSlotsForDate, igual que la
+  // hoja -- y dentro de ese día la entrega más temprana. Set de slot ids.
+  const firstMealSlotIds = useMemo(() => {
+    const ids = new Set();
+    deliveryClients.forEach(c => {
+      if (!firstCycleIds.has(String(c.id))) return;
+      const dates = [...new Set([
+        ...Object.keys(meals[c.id] || {}),
+        ...Object.keys(pendingMeals[c.id] || {}),
+      ])].sort();
+      for (const d of dates) {
+        const slots = mealSlotsForDate(c, d, meals, pendingMeals);
+        if (!slots.length) continue;
+        const first = [...slots].sort((a,b) =>
+          (a.time||"99").localeCompare(b.time||"99") || (a.slot||0) - (b.slot||0))[0];
+        ids.add(first.id);
+        break;
+      }
+    });
+    return ids;
+  }, [deliveryClients, firstCycleIds, meals, pendingMeals]);
+
   // Clientes con parada en la hoja de reparto, por fecha de la ventana
   // visible -- mismo filtro que `delivery`, para que el número del tab
   // coincida con lo que se ve al abrirlo.
@@ -3477,6 +3542,7 @@ export default function App() {
           address: r.client.address || "",
           access: r.client.access || "",
           cutlery: !!r.client.cutlery,
+          isNew: firstMealSlotIds.has(r.slot.id),
         };
       })
       .filter(t => t.meals.length > 0)
@@ -3518,7 +3584,7 @@ export default function App() {
       later: { stops: laterTickets.length, portions: laterTickets.reduce((n, t) => n + t.portions, 0) },
       tbd:  { stops: ticketsOf(tbd).length },
     };
-  }, [delivery, deliveryDay, kdsNow, batchTimes, mealLibraryState, cookSel]);
+  }, [delivery, deliveryDay, kdsNow, batchTimes, mealLibraryState, cookSel, firstMealSlotIds]);
 
   // ── Chef Display: por cada hora de cocina (las mismas claves de
   // `delivery`), cuántos platos de cada comida hay que hacer, sumando todos
@@ -3534,8 +3600,11 @@ export default function App() {
         // que el cocinero sepa qué porción va distinta.
         const al = (c.allergies || "").trim();
         const nt = (slot.note || c.customizations || "").trim();
-        const flag = (al && al !== "—") || (nt && nt !== "—")
-          ? { client: c.name || "?", allergies: al && al !== "—" ? al : "", note: nt && nt !== "—" ? nt : "" }
+        // Cliente nuevo (primera comida) también se cuelga como flag: es la
+        // primera impresión, el cocinero tiene que saberlo.
+        const isNew = firstMealSlotIds.has(slot.id);
+        const flag = (al && al !== "—") || (nt && nt !== "—") || isNew
+          ? { client: c.name || "?", allergies: al && al !== "—" ? al : "", note: nt && nt !== "—" ? nt : "", isNew }
           : null;
         (slot.meals || []).filter(id => id && String(id).trim() && id !== "—").forEach(id => {
           if (!byId[id]) {
@@ -3544,7 +3613,7 @@ export default function App() {
           }
           byId[id].qty++;
           if (flag) {
-            const hit = byId[id].flags.find(x => x.client === flag.client && x.allergies === flag.allergies && x.note === flag.note);
+            const hit = byId[id].flags.find(x => x.client === flag.client && x.allergies === flag.allergies && x.note === flag.note && x.isNew === flag.isNew);
             if (hit) hit.qty++; else byId[id].flags.push({ ...flag, qty: 1 });
           }
         });
@@ -3555,7 +3624,7 @@ export default function App() {
       return { cook, cookMin: hmToMinutes(cook), dishes,
                total: dishes.reduce((n, d) => n + d.qty, 0), big: sum("BIG"), small: sum("SMALL") };
     }).filter(g => g.total > 0);
-  }, [delivery, mealLibraryState]);
+  }, [delivery, mealLibraryState, firstMealSlotIds]);
 
   // Chips del selector de cooking time (los dos displays): horarios con
   // hora definida y cuántos platos tiene cada uno.
@@ -3918,6 +3987,7 @@ export default function App() {
         notes: deliveryNotes(slot, c),
         allergies: c.allergies || "",
         cutlery: c.cutlery || false,
+        isNew: firstMealSlotIds.has(slot.id),
       }))
     );
 
@@ -3985,6 +4055,9 @@ export default function App() {
     .allergy-label { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #b91c1c; opacity: .8; }
     .dash { color: #ccc; }
     .check-box { width: 16px; height: 16px; border: 2px solid #bbb; display: block; margin: auto; border-radius: 3px; }
+    tbody tr.new-client td { background: #fef3c7; }
+    tbody tr.new-client td:first-child { box-shadow: inset 4px 0 0 #f59e0b; }
+    .new-tag { display: inline-block; margin-top: 4px; background: #f59e0b; color: #000; font-weight: 900; font-size: 9px; letter-spacing: .5px; padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -4038,11 +4111,11 @@ export default function App() {
                 : "";
             })()
           : "<span class=\"dash\">&mdash;</span>";
-        return "<tr>" +
+        return (r.isNew ? "<tr class=\"new-client\">" : "<tr>") +
           "<td class=\"cn-num\">" + (i+1) + "</td>" +
           "<td class=\"ct-time\">" + r.time + "</td>" +
           "<td class=\"cct-time\">" + r.cookTime + "</td>" +
-          "<td><div class=\"cc-name\">" + r.name + "</div>" + (r.phone ? "<div class=\"cc-phone\">" + r.phone + "</div>" : "") + "<div class=\"cc-plan\">" + r.plan + "</div></td>" +
+          "<td><div class=\"cc-name\">" + r.name + "</div>" + (r.isNew ? "<div class=\"new-tag\">&#9733; NEW CLIENT &middot; 1ST MEAL</div>" : "") + (r.phone ? "<div class=\"cc-phone\">" + r.phone + "</div>" : "") + "<div class=\"cc-plan\">" + r.plan + "</div></td>" +
           "<td><div class=\"ca-addr\">" + r.address + "</div>" + accessHtml + "</td>" +
           "<td>" + mealsHtml + "</td>" +
           "<td>" + notesCell + "</td>" +
@@ -4698,8 +4771,8 @@ export default function App() {
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
                 <div style={{flex:1}}/>
                 {!isStaff&&<button className="btn btn-g" onClick={openBatchEditor} style={{flexShrink:0}}>✎ Edit Batches</button>}
-                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setShowKDS(true);}} style={{flexShrink:0}}>📺 Kitchen Display</button>
-                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setShowChef(true);}} style={{flexShrink:0}}>👨‍🍳 Chef Display</button>
+                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setKdsHdrHidden(false);setShowKDS(true);}} style={{flexShrink:0}}>📺 Kitchen Display</button>
+                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setKdsHdrHidden(false);setShowChef(true);}} style={{flexShrink:0}}>👨‍🍳 Chef Display</button>
                 {!isStaff&&<button className="btn btn-r" onClick={()=>printDelivery()} style={{flexShrink:0}}>⬇ Download PDF</button>}
               </div>
               {Object.keys(delivery).length===0?(
@@ -4722,9 +4795,12 @@ export default function App() {
                     </colgroup>
                     <thead><tr><th>#</th><th>Client</th><th>Plan</th><th>Delivery</th><th>Address</th><th>Access</th><th>Meals</th><th>Cutlery</th><th>Note</th><th>Done</th></tr></thead>
                     <tbody>{entries.map(({client:c, slot},i)=>(
-                      <tr key={slot.id}>
+                      <tr key={slot.id} style={firstMealSlotIds.has(slot.id)?{background:"rgba(245,158,11,.10)",boxShadow:"inset 4px 0 0 var(--amber)"}:undefined}>
                         <td style={{color:"var(--dim)",whiteSpace:"nowrap"}}>{i+1}</td>
-                        <td style={{color:"#fff",fontWeight:500,wordBreak:"break-word"}}>{c.name}</td>
+                        <td style={{color:"#fff",fontWeight:500,wordBreak:"break-word"}}>
+                          {c.name}
+                          {firstMealSlotIds.has(slot.id)&&<div style={{width:"fit-content",marginTop:4,background:"var(--amber)",color:"#000",borderRadius:4,padding:"2px 7px",fontSize:10,fontWeight:800,letterSpacing:.5,whiteSpace:"nowrap"}}>⭐ NEW CLIENT · 1ST MEAL</div>}
+                        </td>
                         <td style={{whiteSpace:"nowrap"}}><PlanBadge planName={clientPlanName(c)} plans={plans}/></td>
                         <td style={{whiteSpace:"nowrap",fontWeight:600,color:"var(--amber)"}}>🛵 {slot.time||"TBD"}</td>
                         <td style={{color:"var(--muted)",wordBreak:"break-word"}}>{c.address||"TBC"}</td>
@@ -5092,7 +5168,7 @@ export default function App() {
 
             {/* ═══ ACCOUNTING ═════════════════════════════════ */}
             {tab==="accounting"&&<AccountingTab
-              active={active} plans={plans} paidPayments={paidPayments}
+              active={active} clients={clients} plans={plans} paidPayments={paidPayments}
               ingredients={ingredients} mealIngredients={mealIngredients}
               mealLibrary={mealLibraryState}
               deliveryClients={deliveryClients} meals={meals}
@@ -5381,7 +5457,8 @@ export default function App() {
           } catch { /* fullscreen puede estar bloqueado (iframe, permisos) */ }
         };
         return (
-          <div className="kds">
+          <div className="kds" onScrollCapture={onKdsScroll}>
+            <div className={`kds-head${kdsHdrHidden?" hide":""}`}>
             <div className="kds-top">
               <div className="kds-clock">{kds.isToday?clock:"--:--"}</div>
               <div>
@@ -5404,6 +5481,7 @@ export default function App() {
             </div>
 
             <CookTimeBar times={cookChips} sel={kds.sel?cookSel:null} onSel={setCookSel} nowMin={kdsNow} isToday={kds.isToday} T={T}/>
+            </div>
 
             {kds.sel?(
             <div className="kds-cols" style={{gridTemplateColumns:"1fr"}}>
@@ -5434,7 +5512,6 @@ export default function App() {
             </>}
 
             <div className="kds-foot">
-              <span>{T.tap}</span>
               <span><b>{kds.later.stops}</b> {T.moreLater(kds.later.stops)}</span>
               {kds.tbd.stops>0&&<span style={{color:"var(--amber)"}}>⚠ <b style={{color:"var(--amber)"}}>{kds.tbd.stops}</b> {T.tbdWarn(kds.tbd.stops)}</span>}
               <span style={{marginLeft:"auto"}}>{T.footNote}</span>
@@ -5464,6 +5541,7 @@ export default function App() {
                       <span className="nm">{t.client}</span>
                       <span className="tm">🚚 {t.out}</span>
                     </div>
+                    {t.isNew&&<span className="kds-tk-new kds-pop-new">{T.newClient}</span>}
                     {rows.map(([ic,v])=>(
                       <div className="kds-pop-row" key={ic}><span>{ic}</span><span className="v">{v}</span></div>
                     ))}
@@ -5528,7 +5606,8 @@ export default function App() {
           } catch { /* fullscreen puede estar bloqueado (iframe, permisos) */ }
         };
         return (
-          <div className="kds">
+          <div className="kds" onScrollCapture={onKdsScroll}>
+            <div className={`kds-head${kdsHdrHidden?" hide":""}`}>
             <div className="kds-top">
               <div className="kds-clock">{isToday?clock:"--:--"}</div>
               <div>
@@ -5552,6 +5631,7 @@ export default function App() {
             </div>
 
             <CookTimeBar times={cookChips} sel={mode==="sel"?cookSel:null} onSel={setCookSel} nowMin={kdsNow} isToday={isToday} T={T}/>
+            </div>
 
             {chef.length===0?(
               <div className="kds-clear">
@@ -5580,6 +5660,7 @@ export default function App() {
                             {d.flags.map((x,k)=>(
                               <span className="chef-flags" key={k}>
                                 {x.qty>1&&<b>{x.qty}× </b>}<b>{x.client}</b>
+                                {x.isNew&&<span className="nw">{T.newClient}</span>}
                                 {x.allergies&&<span className="al">⚠ {x.allergies}</span>}
                                 {x.note&&<span className="nt">✎ {x.note}</span>}
                               </span>
@@ -5616,6 +5697,7 @@ export default function App() {
                               {d.flags.map((x,k)=>(
                                 <span className="chef-flags sm" key={k}>
                                   <b>{x.client}</b>
+                                  {x.isNew&&<span className="nw">{T.newClient}</span>}
                                   {x.allergies&&<span className="al">⚠ {x.allergies}</span>}
                                   {x.note&&<span className="nt">✎ {x.note}</span>}
                                 </span>
@@ -5636,7 +5718,16 @@ export default function App() {
                           <div className={`chef-row ${cls}`} key={g.cook} style={{cursor:g.cookMin==null?"default":"pointer"}} onClick={()=>g.cookMin!=null&&setCookSel(g.cook)}>
                             <span className="tm">{g.cookMin==null?T.noTimeTag:g.cook}</span>
                             <span className="tot">{g.total}<small>{T.plates}</small></span>
-                            {g.dishes.some(d=>d.flags.length)&&<span className="fl">⚠ {g.dishes.reduce((n,d)=>n+d.flags.length,0)}</span>}
+                            {(()=>{
+                              // ⚠ = alergias/notas; ⭐ = clientes nuevos (primera comida), aparte.
+                              const flags = g.dishes.flatMap(d=>d.flags);
+                              const warn = flags.filter(x=>x.allergies||x.note).length;
+                              const nw = new Set(flags.filter(x=>x.isNew).map(x=>x.client)).size;
+                              return <>
+                                {warn>0&&<span className="fl">⚠ {warn}</span>}
+                                {nw>0&&<span className="fl" style={{color:"var(--amber)"}}>⭐ {nw}</span>}
+                              </>;
+                            })()}
                             {g.dishes.every(d=>isDone(g,d))&&<span className="ok">✓</span>}
                             <span className="mix">
                               {g.big>0&&<span className="b">{g.big} {T.size.BIG}</span>}

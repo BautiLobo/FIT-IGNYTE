@@ -452,6 +452,7 @@ tbody tr:hover{background:#1e1e1e}
    (vuelve al scrollear hacia arriba) para dejarle la pantalla a los tickets. */
 .kds-head{flex-shrink:0;overflow:hidden;max-height:160px;transition:max-height .25s ease}
 .kds-head.hide{max-height:0}
+.kds-body,.chef-hero-body,.chef-next-body,.chef-day-list,.chef-main{overscroll-behavior:contain}
 .kds-top{display:flex;align-items:center;flex-wrap:wrap;gap:clamp(8px,1vw,18px);padding:clamp(4px,.45vw,8px) clamp(12px,1.4vw,24px);background:#0d0d0d;border-bottom:2px solid var(--red)}
 .kds-clock{font-family:'Rajdhani',sans-serif;font-size:clamp(22px,2.3vw,42px);font-weight:700;line-height:1;letter-spacing:1px;color:#fff;font-variant-numeric:tabular-nums}
 .kds-date{font-family:'Rajdhani',sans-serif;font-size:clamp(11px,.95vw,17px);font-weight:600;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;line-height:1.2}
@@ -2825,16 +2826,48 @@ export default function App() {
   const [kdsFsHint, setKdsFsHint] = useState(false);
   // Encabezado de KDS/Chef plegado (se esconde al scrollear hacia abajo).
   const [kdsHdrHidden, setKdsHdrHidden] = useState(false);
-  const kdsScrollTops = useRef(new WeakMap());
+  // Plegar/desplegar el encabezado cambia el alto del área que scrollea, y
+  // eso mueve el scroll solo (cerca del final el navegador lo recorta) --
+  // sin freno se realimentaba: se escondía, el scroll "subía", volvía a
+  // aparecer ("rebote"), peor con el rubber band de iOS. Por eso: si cambió
+  // el alto visible desde el evento anterior, ese movimiento lo causó el
+  // encabezado y se ignora; además umbral acumulado en una misma dirección,
+  // pausa durante la animación, se ignoran los valores fuera de rango, y si
+  // el contenido apenas desborda no se esconde.
+  const kdsScroll = useRef({ tops: new WeakMap(), acc: 0, lockUntil: 0, hidden: false });
+  const setKdsHeader = hidden => {
+    const st = kdsScroll.current;
+    if (st.hidden === hidden) return;
+    st.hidden = hidden; st.acc = 0; st.lockUntil = Date.now() + 400;
+    setKdsHdrHidden(hidden);
+  };
+  // Al terminar la animación del encabezado, re-registrar alto y posición de
+  // cada área: si no, el primer scroll después se tomaba como "cambio de
+  // layout" y se ignoraba.
+  const onKdsHeadTransitionEnd = () => {
+    const st = kdsScroll.current;
+    document.querySelectorAll(".kds-body,.chef-hero-body,.chef-next-body,.chef-day-list,.chef-main")
+      .forEach(el => st.tops.set(el, { top: el.scrollTop, ch: el.clientHeight }));
+  };
   const onKdsScroll = e => {
     const el = e.target;
     if (!(el instanceof Element)) return;
-    const prev = kdsScrollTops.current.get(el) ?? 0;
+    const st = kdsScroll.current;
     const top = el.scrollTop;
-    kdsScrollTops.current.set(el, top);
-    if (top <= 4) setKdsHdrHidden(false);
-    else if (top - prev > 6) setKdsHdrHidden(true);
-    else if (prev - top > 6) setKdsHdrHidden(false);
+    const ch = el.clientHeight;
+    const max = el.scrollHeight - ch;
+    const prevRec = st.tops.get(el) ?? { top: 0, ch };          // primer evento: arranca del tope
+    st.tops.set(el, { top, ch });
+    if (prevRec.ch !== ch) { st.acc = 0; return; }              // cambio de layout, no del usuario
+    const prev = prevRec.top;
+    if (Date.now() < st.lockUntil) return;
+    if (top < 0 || top > max) return;           // rubber band de iOS
+    if (top <= 4) { setKdsHeader(false); return; }
+    const delta = top - prev;
+    if (delta === 0) return;
+    st.acc = Math.sign(delta) === Math.sign(st.acc) ? st.acc + delta : delta;
+    if (st.acc > 40 && max > 160) setKdsHeader(true);
+    else if (st.acc < -40) setKdsHeader(false);
   };
   const [kdsLang,     setKdsLang]     = useState(() => { try { return localStorage.getItem("kds_lang") === "zh" ? "zh" : "en"; } catch { return "en"; } });
   // Tarjeta del KDS abierta en detalle (datos del cliente y a dónde va). El
@@ -4795,8 +4828,8 @@ export default function App() {
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
                 <div style={{flex:1}}/>
                 {!isStaff&&<button className="btn btn-g" onClick={openBatchEditor} style={{flexShrink:0}}>✎ Edit Batches</button>}
-                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setKdsHdrHidden(false);setShowKDS(true);}} style={{flexShrink:0}}>📺 Kitchen Display</button>
-                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setKdsHdrHidden(false);setShowChef(true);}} style={{flexShrink:0}}>👨‍🍳 Chef Display</button>
+                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setKdsHeader(false);setShowKDS(true);}} style={{flexShrink:0}}>📺 Kitchen Display</button>
+                <button className="btn btn-g" onClick={()=>{setKdsNow(chinaNowMinutes());setCookSel(null);setKdsHeader(false);setShowChef(true);}} style={{flexShrink:0}}>👨‍🍳 Chef Display</button>
                 {!isStaff&&<button className="btn btn-r" onClick={()=>printDelivery()} style={{flexShrink:0}}>⬇ Download PDF</button>}
               </div>
               {Object.keys(delivery).length===0?(
@@ -5475,7 +5508,7 @@ export default function App() {
           .reduce((n,t)=>n+t.portions,0);
         return (
           <div className="kds" onScrollCapture={onKdsScroll}>
-            <div className={`kds-head${kdsHdrHidden?" hide":""}`}>
+            <div className={`kds-head${kdsHdrHidden?" hide":""}`} onTransitionEnd={onKdsHeadTransitionEnd}>
             <div className="kds-top">
               <div className="kds-clock">{kds.isToday?clock:"--:--"}</div>
               <div>
@@ -5611,7 +5644,7 @@ export default function App() {
           : mode === "sel" && isToday ? (H.cookMin <= kdsNow ? T.startedAgo(kdsNow - H.cookMin) : T.inMin(H.cookMin - kdsNow)) : "";
         return (
           <div className="kds" onScrollCapture={onKdsScroll}>
-            <div className={`kds-head${kdsHdrHidden?" hide":""}`}>
+            <div className={`kds-head${kdsHdrHidden?" hide":""}`} onTransitionEnd={onKdsHeadTransitionEnd}>
             <div className="kds-top">
               <div className="kds-clock">{isToday?clock:"--:--"}</div>
               <div>

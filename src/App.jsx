@@ -689,6 +689,9 @@ const KDS_TXT = {
     live:"● Live · Shanghai", preview:"Preview · not today",
     cookNow:"Cook now", nextHour:"Next batch", laterToday:"Later today",
     fullscreen:"⛶ Fullscreen", exit:"✕ Exit", lang:"中文",
+    fsHintTitle:"Full screen on iPhone",
+    fsHint:"Safari can't make a web page full screen. Tap Share (□↑) → \"Add to Home Screen\", then open FIT IGNYTE from that icon: it opens without Safari's bars.",
+    ok:"OK",
     allDone:"ALL DONE FOR TODAY", nothing:"NOTHING SCHEDULED",
     noTime:n=>`${n} stop${n!==1?"s":""} with no time set`,
     colNow:h=>`Cook now · Batch ${h}`, colNext:h=>`Next up · Batch ${h}`,
@@ -710,6 +713,9 @@ const KDS_TXT = {
     live:"● 实时 · 上海", preview:"预览 · 非今天",
     cookNow:"现在做", nextHour:"下一批", laterToday:"今天稍后",
     fullscreen:"⛶ 全屏", exit:"✕ 退出", lang:"EN",
+    fsHintTitle:"iPhone 全屏",
+    fsHint:"Safari 不能让网页全屏。点分享（□↑）→「添加到主屏幕」，然后从那个图标打开 FIT IGNYTE，就没有 Safari 的地址栏了。",
+    ok:"好的",
     allDone:"今天全部完成", nothing:"没有安排",
     noTime:n=>`${n} 单未设置时间`,
     colNow:h=>`现在做 · 批次 ${h}`, colNext:h=>`下一批 · 批次 ${h}`,
@@ -728,6 +734,31 @@ const KDS_TXT = {
     date:d=>{ try { return new Date(d+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"}); } catch { return d||"—"; } },
   },
 };
+
+// Pantalla completa de KDS/Chef. Safari usa el API con prefijo webkit (iPad,
+// versiones viejas) y en iPhone directamente no existe para páginas: ahí la
+// única forma es abrir el panel desde el ícono de la pantalla de inicio (el
+// manifest ya lo deja en modo standalone, sin barras de Safari).
+const isStandaloneApp = () => {
+  try { return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true; }
+  catch { return false; }
+};
+const canFullscreen = () => {
+  const el = document.documentElement;
+  return !!(el.requestFullscreen || el.webkitRequestFullscreen);
+};
+function toggleFullscreen() {
+  try {
+    const el = document.documentElement;
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    } else if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => {});
+    } else {
+      el.webkitRequestFullscreen?.();
+    }
+  } catch { /* fullscreen puede estar bloqueado (iframe, permisos) */ }
+}
 
 // Barra de cooking times de los dos displays: "en vivo" + un chip por hora
 // de cocina del día (con la cantidad de platos). Tocar el chip elegido
@@ -2790,6 +2821,8 @@ export default function App() {
   const [kdsNow,      setKdsNow]      = useState(chinaNowMinutes);
   // Idioma del Kitchen Display, recordado por navegador (el monitor de la
   // cocina queda en chino aunque el panel se use en inglés).
+  // Aviso de "agregá a la pantalla de inicio" donde no hay API de fullscreen (iPhone).
+  const [kdsFsHint, setKdsFsHint] = useState(false);
   // Encabezado de KDS/Chef plegado (se esconde al scrollear hacia abajo).
   const [kdsHdrHidden, setKdsHdrHidden] = useState(false);
   const kdsScrollTops = useRef(new WeakMap());
@@ -5440,12 +5473,6 @@ export default function App() {
         const latePortions = kds.late
           .flatMap(b=>b.tickets.filter(t=>!checks[`k_${t.id}`]))
           .reduce((n,t)=>n+t.portions,0);
-        const toggleFull = () => {
-          try {
-            if (document.fullscreenElement) document.exitFullscreen?.();
-            else document.documentElement.requestFullscreen?.().catch(()=>{});
-          } catch { /* fullscreen puede estar bloqueado (iframe, permisos) */ }
-        };
         return (
           <div className="kds" onScrollCapture={onKdsScroll}>
             <div className={`kds-head${kdsHdrHidden?" hide":""}`}>
@@ -5466,7 +5493,7 @@ export default function App() {
                 </div>
               ))}
               <button className="kds-btn" onClick={toggleKdsLang}>🌐 {T.lang}</button>
-              <button className="kds-btn" onClick={toggleFull}>{T.fullscreen}</button>
+              {!isStandaloneApp()&&<button className="kds-btn" onClick={()=>canFullscreen()?toggleFullscreen():setKdsFsHint(true)}>{T.fullscreen}</button>}
               <button className="kds-btn" onClick={()=>setShowKDS(false)}>{T.exit}</button>
             </div>
 
@@ -5582,12 +5609,6 @@ export default function App() {
         const N = next >= 0 ? chef[next] : null;
         const heroSub = !H ? "" : mode === "now" ? T.startedAgo(kdsNow - H.cookMin) : mode === "up" ? T.inMin(H.cookMin - kdsNow)
           : mode === "sel" && isToday ? (H.cookMin <= kdsNow ? T.startedAgo(kdsNow - H.cookMin) : T.inMin(H.cookMin - kdsNow)) : "";
-        const toggleFull = () => {
-          try {
-            if (document.fullscreenElement) document.exitFullscreen?.();
-            else document.documentElement.requestFullscreen?.().catch(()=>{});
-          } catch { /* fullscreen puede estar bloqueado (iframe, permisos) */ }
-        };
         return (
           <div className="kds" onScrollCapture={onKdsScroll}>
             <div className={`kds-head${kdsHdrHidden?" hide":""}`}>
@@ -5609,7 +5630,7 @@ export default function App() {
                 </div>
               ))}
               <button className="kds-btn" onClick={toggleKdsLang}>🌐 {T.lang}</button>
-              <button className="kds-btn" onClick={toggleFull}>{T.fullscreen}</button>
+              {!isStandaloneApp()&&<button className="kds-btn" onClick={()=>canFullscreen()?toggleFullscreen():setKdsFsHint(true)}>{T.fullscreen}</button>}
               <button className="kds-btn" onClick={()=>setShowChef(false)}>{T.exit}</button>
             </div>
 
@@ -5724,6 +5745,19 @@ export default function App() {
                 </div>
               </div>
             )}
+          </div>
+        );
+      })()}
+
+      {kdsFsHint&&(showKDS||showChef)&&(()=>{
+        const T = KDS_TXT[kdsLang];
+        return (
+          <div onClick={()=>setKdsFsHint(false)} style={{position:"fixed",inset:0,zIndex:700,background:"rgba(0,0,0,.7)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:"#161616",border:"1px solid #444",borderLeft:"6px solid var(--amber)",borderRadius:10,padding:"18px 20px",maxWidth:380,color:"#ddd",fontSize:15,lineHeight:1.45}}>
+              <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:20,color:"#fff",marginBottom:8}}>{T.fsHintTitle}</div>
+              <div>{T.fsHint}</div>
+              <button className="kds-pop-done" onClick={()=>setKdsFsHint(false)}>{T.ok}</button>
+            </div>
           </div>
         );
       })()}

@@ -458,7 +458,6 @@ tbody tr:hover{background:#1e1e1e}
 .kds-kpi{display:flex;align-items:baseline;gap:6px;padding:0 clamp(6px,.7vw,14px);border-left:1px solid #242424;flex-shrink:0}
 .kds-kpi-v{font-family:'Rajdhani',sans-serif;font-size:clamp(18px,1.7vw,32px);font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
 .kds-kpi-l{font-size:clamp(8px,.6vw,12px);letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);white-space:nowrap}
-.kds-late{flex-shrink:0;background:#5c0f0f;color:#fecaca;border-bottom:2px solid #000;padding:clamp(5px,.55vw,11px) clamp(14px,1.8vw,30px);font-size:clamp(12px,1.2vw,23px);font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;display:flex;gap:clamp(10px,1.2vw,22px);flex-wrap:wrap}
 .kds-cols{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:2px;background:#1c1c1c;overflow:hidden;min-height:0}
 .kds-col{display:flex;flex-direction:column;background:#000;overflow:hidden;min-height:0}
 .kds-col-hd{padding:clamp(6px,.75vw,14px) clamp(12px,1.4vw,26px);font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:2px;text-transform:uppercase;display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-shrink:0}
@@ -690,7 +689,6 @@ const KDS_TXT = {
     live:"● Live · Shanghai", preview:"Preview · not today",
     cookNow:"Cook now", nextHour:"Next batch", laterToday:"Later today",
     fullscreen:"⛶ Fullscreen", exit:"✕ Exit", lang:"中文",
-    behind:n=>`⚠ Behind · ${n} portion${n!==1?"s":""} past cook time`,
     allDone:"ALL DONE FOR TODAY", nothing:"NOTHING SCHEDULED",
     noTime:n=>`${n} stop${n!==1?"s":""} with no time set`,
     colNow:h=>`Cook now · Batch ${h}`, colNext:h=>`Next up · Batch ${h}`,
@@ -699,23 +697,19 @@ const KDS_TXT = {
     ready:"ready ✓", pc:n=>`${n} pc`, batch:"Batch", size:{BIG:"BIG",SMALL:"SMALL"},
     yes:"Cutlery", no:"No cutlery", newClient:"⭐ NEW CLIENT · 1ST MEAL",
     markReady:"✓ Mark ready", unmark:"↺ Not ready",
-    moreLater:n=>`more stop${n!==1?"s":""} later today`,
     tbdWarn:n=>`stop${n!==1?"s":""} with no delivery time set — not shown in any hour`,
-    footNote:"Grouped by cook time into kitchen batches · Cook time = delivery − 1h unless set per slot · Esc to exit",
     chefTitle:"Chef · what to cook", plates:"plates", platesTotal:n=>`plate${n!==1?"s":""} today`,
     cookNowTag:"Cook now", nextTag:"Next", noTimeTag:"No time",
     upNext:"Up next", firstUp:"First cook", startedAgo:n=>`started ${n} min ago`, inMin:n=>n<=0?"now":`in ${n} min`,
     autoChip:"● Live", cookTimeLbl:"Cook time", colCook:h=>`Cook time ${h}`, colNextCook:h=>`Next · ${h}`, emptyCook:"NOTHING AFTER THIS",
     fullDay:"Full day", leftLabel:"plates left", nothingNext:"Nothing after this",
-    chefDone:"NOTHING LEFT TO COOK", tapChef:"Tap a dish when it is cooked.",
-    chefFoot:"All clients added up per cook time · ⚠ allergy · ✎ note, with the client's name · Packing → Kitchen Display · Esc to exit",
+    chefDone:"NOTHING LEFT TO COOK",
     date:d=>fmtDateTab(d),
   },
   zh: {
     live:"● 实时 · 上海", preview:"预览 · 非今天",
     cookNow:"现在做", nextHour:"下一批", laterToday:"今天稍后",
     fullscreen:"⛶ 全屏", exit:"✕ 退出", lang:"EN",
-    behind:n=>`⚠ 落后 · ${n} 份已过烹饪时间`,
     allDone:"今天全部完成", nothing:"没有安排",
     noTime:n=>`${n} 单未设置时间`,
     colNow:h=>`现在做 · 批次 ${h}`, colNext:h=>`下一批 · 批次 ${h}`,
@@ -724,16 +718,13 @@ const KDS_TXT = {
     ready:"已完成 ✓", pc:n=>`${n} 份`, batch:"批次", size:{BIG:"大份",SMALL:"小份"},
     yes:"要餐具", no:"不要餐具", newClient:"⭐ 新客户 · 第一餐",
     markReady:"✓ 标记完成", unmark:"↺ 取消完成",
-    moreLater:()=>"单今天稍后",
     tbdWarn:()=>"单未设置送达时间 — 不在任何时段显示",
-    footNote:"按烹饪时间分批 · 烹饪时间 = 送达时间 − 1小时（除非单独设置）· Esc 退出",
     chefTitle:"厨师 · 要做什么", plates:"份", platesTotal:()=>"今天共计",
     cookNowTag:"现在做", nextTag:"下一个", noTimeTag:"未定时间",
     upNext:"接下来", firstUp:"第一批", startedAgo:n=>`已开始 ${n} 分钟`, inMin:n=>n<=0?"现在":`${n} 分钟后`,
     autoChip:"● 实时", cookTimeLbl:"烹饪时间", colCook:h=>`烹饪时间 ${h}`, colNextCook:h=>`下一个 · ${h}`, emptyCook:"之后没有了",
     fullDay:"全天", leftLabel:"剩余份数", nothingNext:"之后没有了",
-    chefDone:"今天没有要做的了", tapChef:"做好后点一下菜品。",
-    chefFoot:"按烹饪时间合计所有客户 · ⚠ 过敏 · ✎ 备注（附客户名）· 打包 → Kitchen Display · Esc 退出",
+    chefDone:"今天没有要做的了",
     date:d=>{ try { return new Date(d+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"}); } catch { return d||"—"; } },
   },
 };
@@ -5444,12 +5435,11 @@ export default function App() {
       {showKDS&&(()=>{
         const T = KDS_TXT[kdsLang];
         const clock = String(Math.floor(kdsNow/60)).padStart(2,"0")+":"+String(kdsNow%60).padStart(2,"0");
-        // Los atrasados ya marcados listos no son un atraso: se filtran con
-        // la misma key que usa la tarjeta, si no el banner rojo nunca se iba.
-        const late = kds.late
-          .map(b=>({...b, tickets:b.tickets.filter(t=>!checks[`k_${t.id}`])}))
-          .filter(b=>b.tickets.length>0);
-        const latePortions = late.reduce((n,b)=>n+b.tickets.reduce((m,t)=>m+t.portions,0),0);
+        // Atrasados sin marcar listos. Ya no tienen banner propio (se sacó a
+        // pedido), pero cuentan para no mostrar "todo listo" mientras queden.
+        const latePortions = kds.late
+          .flatMap(b=>b.tickets.filter(t=>!checks[`k_${t.id}`]))
+          .reduce((n,t)=>n+t.portions,0);
         const toggleFull = () => {
           try {
             if (document.fullscreenElement) document.exitFullscreen?.();
@@ -5489,15 +5479,6 @@ export default function App() {
                          checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNow} lang={kdsLang}/>
             </div>
             ):<>
-            {latePortions>0&&(
-              <div className="kds-late">
-                <span>{T.behind(latePortions)}</span>
-                {late.map(b=>(
-                  <span key={b.label} style={{opacity:.9}}>{T.batch} {b.label} — {b.tickets.map(t=>`${t.cook} ${t.client}`).join(" · ")}</span>
-                ))}
-              </div>
-            )}
-
             {kds.now.portions===0&&kds.later.portions===0&&latePortions===0?(
               <div className="kds-clear">
                 <div className="big">{kds.isToday?T.allDone:T.nothing}</div>
@@ -5511,11 +5492,13 @@ export default function App() {
             )}
             </>}
 
-            <div className="kds-foot">
-              <span><b>{kds.later.stops}</b> {T.moreLater(kds.later.stops)}</span>
-              {kds.tbd.stops>0&&<span style={{color:"var(--amber)"}}>⚠ <b style={{color:"var(--amber)"}}>{kds.tbd.stops}</b> {T.tbdWarn(kds.tbd.stops)}</span>}
-              <span style={{marginLeft:"auto"}}>{T.footNote}</span>
-            </div>
+            {/* Sin pie fijo: solo aparece si hay paradas sin horario, que no
+                salen en ningún batch y si no nadie se entera. */}
+            {kds.tbd.stops>0&&(
+              <div className="kds-foot">
+                <span style={{color:"var(--amber)"}}>⚠ <b style={{color:"var(--amber)"}}>{kds.tbd.stops}</b> {T.tbdWarn(kds.tbd.stops)}</span>
+              </div>
+            )}
 
             {kdsDetail&&(()=>{
               const t = kdsDetail;
@@ -5741,11 +5724,6 @@ export default function App() {
                 </div>
               </div>
             )}
-
-            <div className="kds-foot">
-              <span>{T.tapChef}</span>
-              <span style={{marginLeft:"auto"}}>{T.chefFoot}</span>
-            </div>
           </div>
         );
       })()}

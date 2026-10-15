@@ -521,6 +521,7 @@ tbody tr:hover{background:#1e1e1e}
 .kds-chip.past{opacity:.45}
 .kds-chip small{font-size:.7em;opacity:.7;margin-left:6px}
 .chef-main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.75fr) minmax(0,1fr);gap:2px;background:#1c1c1c}
+.chef-main.solo{grid-template-columns:1fr}
 .chef-hero,.chef-side{background:#000;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .chef-hero-hd{display:flex;align-items:center;gap:clamp(12px,1.2vw,24px);padding:clamp(10px,1vw,20px) clamp(16px,1.6vw,30px);background:var(--red);flex-shrink:0}
 .chef-hero-hd.up{background:#1e3a5f}
@@ -712,6 +713,7 @@ const KDS_TXT = {
     autoChip:"● Live", cookTimeLbl:"Cook time", colCook:h=>`Cook time ${h}`, colNextCook:h=>`Next · ${h}`, emptyCook:"NOTHING AFTER THIS",
     fullDay:"Full day", leftLabel:"plates left", nothingNext:"Nothing after this",
     chefDone:"NOTHING LEFT TO COOK",
+    hideSide:"◧ Hide side", showSide:"◧ Show side",
     date:d=>fmtDateTab(d),
   },
   zh: {
@@ -736,6 +738,7 @@ const KDS_TXT = {
     autoChip:"● 实时", cookTimeLbl:"烹饪时间", colCook:h=>`烹饪时间 ${h}`, colNextCook:h=>`下一个 · ${h}`, emptyCook:"之后没有了",
     fullDay:"全天", leftLabel:"剩余份数", nothingNext:"之后没有了",
     chefDone:"今天没有要做的了",
+    hideSide:"◧ 隐藏侧栏", showSide:"◧ 显示侧栏",
     date:d=>{ try { return new Date(d+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"}); } catch { return d||"—"; } },
   },
 };
@@ -2885,6 +2888,10 @@ export default function App() {
   // manda el default: abiertos en el monitor, cerrados en el celular (en
   // pantalla chica tapaban los platos).
   const [chefFlagsOpen, setChefFlagsOpen] = useState({});
+  // Panel lateral del Chef Display (Next + día completo): se puede ocultar
+  // para dejarle toda la pantalla a los platos. Se recuerda por dispositivo.
+  const [chefSide, setChefSide] = useState(() => { try { return localStorage.getItem("chef_side") !== "0"; } catch { return true; } });
+  const toggleChefSide = () => setChefSide(v => { try { localStorage.setItem("chef_side", v ? "0" : "1"); } catch { /* sin storage */ } return !v; });
   const [sbOpen,    setSbOpen]    = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [loaded,    setLoaded]    = useState(false);
@@ -5675,8 +5682,6 @@ export default function App() {
             ))}
           </>;
         };
-        const heroSub = !H ? "" : mode === "now" ? T.startedAgo(kdsNow - H.cookMin) : mode === "up" ? T.inMin(H.cookMin - kdsNow)
-          : mode === "sel" && isToday ? (H.cookMin <= kdsNow ? T.startedAgo(kdsNow - H.cookMin) : T.inMin(H.cookMin - kdsNow)) : "";
         return (
           <div className="kds" onScrollCapture={onKdsScroll}>
             <div className={`kds-head${kdsHdrHidden?" hide":""}`} onTransitionEnd={onKdsHeadTransitionEnd}>
@@ -5699,6 +5704,7 @@ export default function App() {
               ))}
               <button className="kds-btn" onClick={toggleKdsLang}>🌐 {T.lang}</button>
               {!isStandaloneApp()&&<button className="kds-btn" onClick={()=>canFullscreen()?toggleFullscreen():setKdsFsHint(true)}>{T.fullscreen}</button>}
+              <button className="kds-btn" onClick={toggleChefSide}>{chefSide?T.hideSide:T.showSide}</button>
               <button className="kds-btn" onClick={()=>setShowChef(false)}>{T.exit}</button>
             </div>
 
@@ -5711,17 +5717,9 @@ export default function App() {
                 <div className="sub">{T.date(deliveryDay)}</div>
               </div>
             ):(
-              <div className="chef-main">
+              <div className={`chef-main${chefSide?"":" solo"}`}>
                 <div className="chef-hero">
                   {H?(<>
-                    <div className={`chef-hero-hd${mode==="now"?"":" up"}`}>
-                      <div className="lbl">
-                        {mode==="now"?T.cookNowTag:mode==="up"?T.upNext:mode==="sel"?T.cookTimeLbl:T.firstUp}
-                        {heroSub&&<small>{heroSub}</small>}
-                      </div>
-                      <div className="tm">{H.cook}</div>
-                      <div className="tot"><b>{H.total}</b><span>{T.plates}</span></div>
-                    </div>
                     <div className="chef-hero-body">
                       {H.dishes.map(d=>(
                         <div className={`chef-dish ${(d.size||"").toLowerCase()}${isDone(H,d)?" done":""}`} key={d.id} onClick={()=>toggleCheck(ckKey(H,d))}>
@@ -5743,7 +5741,7 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="chef-side">
+                {chefSide&&<div className="chef-side">
                   <div className="chef-next">
                     <div className="chef-side-hd">
                       {N?<>
@@ -5796,7 +5794,7 @@ export default function App() {
                       })}
                     </div>
                   </div>
-                </div>
+                </div>}
               </div>
             )}
           </div>

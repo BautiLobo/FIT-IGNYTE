@@ -4130,7 +4130,7 @@ export default function App() {
     .check-box { width: 16px; height: 16px; border: 2px solid #bbb; display: block; margin: auto; border-radius: 3px; }
     tbody tr.new-client td { background: #fef3c7; }
     tbody tr.new-client td:first-child { box-shadow: inset 4px 0 0 #f59e0b; }
-    .new-tag { display: inline-block; margin-top: 4px; background: #f59e0b; color: #000; font-weight: 900; font-size: 9px; letter-spacing: .5px; padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
+    .new-tag { display: inline-block; margin-top: 3px; background: #f59e0b; color: #000; font-weight: 900; font-size: 7px; letter-spacing: .5px; padding: 1px 4px; border-radius: 3px; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -4188,7 +4188,7 @@ export default function App() {
           "<td class=\"cn-num\">" + (i+1) + "</td>" +
           "<td class=\"ct-time\">" + r.time + "</td>" +
           "<td class=\"cct-time\">" + r.cookTime + "</td>" +
-          "<td><div class=\"cc-name\">" + r.name + "</div>" + (r.isNew ? "<div class=\"new-tag\">&#9733; NEW CLIENT &middot; 1ST MEAL</div>" : "") + (r.phone ? "<div class=\"cc-phone\">" + r.phone + "</div>" : "") + "<div class=\"cc-plan\">" + r.plan + "</div></td>" +
+          "<td><div class=\"cc-name\">" + r.name + "</div>" + (r.isNew ? "<div class=\"new-tag\">NEW</div>" : "") + (r.phone ? "<div class=\"cc-phone\">" + r.phone + "</div>" : "") + "<div class=\"cc-plan\">" + r.plan + "</div></td>" +
           "<td><div class=\"ca-addr\">" + r.address + "</div>" + accessHtml + "</td>" +
           "<td>" + mealsHtml + "</td>" +
           "<td>" + notesCell + "</td>" +

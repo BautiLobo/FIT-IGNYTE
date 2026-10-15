@@ -546,6 +546,10 @@ tbody tr:hover{background:#1e1e1e}
 .chef-flags .nw{background:var(--amber);color:#000;border-radius:4px;padding:1px 7px;font-weight:900;white-space:nowrap}
 .chef-flags.sm{font-size:clamp(11px,.85vw,16px);margin-top:3px}
 .chef-dish.done .chef-flags{text-decoration:none}
+.chef-xbtn{display:flex;align-items:center;gap:4px;width:fit-content;margin-top:4px;background:#222;border:1px solid #3a3a3a;color:#bbb;border-radius:999px;padding:clamp(2px,.25vw,5px) clamp(9px,.7vw,14px);font-family:'DM Sans',sans-serif;font-size:clamp(12px,.9vw,17px);font-weight:700;line-height:1.2;cursor:pointer;white-space:nowrap}
+.chef-xbtn.warn{border-color:#7f1d1d;color:#fca5a5}
+.chef-xbtn.on{background:#2e2e2e;color:#fff}
+.chef-xbtn .ar{opacity:.7}
 .chef-row .fl{color:#fca5a5;font-size:clamp(13px,1.05vw,20px);letter-spacing:1px}
 .chef-row .ok{color:var(--green);font-size:clamp(14px,1.2vw,22px);letter-spacing:1px}
 .chef-dish.big{background:#2a1010;border-left-color:#dc2626}
@@ -2876,6 +2880,11 @@ export default function App() {
   const kdsDetailRef = useRef(null);
   useEffect(() => { kdsDetailRef.current = kdsDetail; }, [kdsDetail]);
   const toggleKdsLang = () => setKdsLang(l => { const n = l === "zh" ? "en" : "zh"; try { localStorage.setItem("kds_lang", n); } catch { /* sin storage */ } return n; });
+  // Chef Display: extras de cada plato (clientes, alergias, notas) plegados
+  // detrás de un botón. Key `<cook>_<dish id>` → abierto/cerrado; sin key
+  // manda el default: abiertos en el monitor, cerrados en el celular (en
+  // pantalla chica tapaban los platos).
+  const [chefFlagsOpen, setChefFlagsOpen] = useState({});
   const [sbOpen,    setSbOpen]    = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [loaded,    setLoaded]    = useState(false);
@@ -5640,6 +5649,32 @@ export default function App() {
         const smallLeft = leftBy("SMALL");
         const H = hero >= 0 ? chef[hero] : null;
         const N = next >= 0 ? chef[next] : null;
+        const flagsDefault = typeof window !== "undefined" && window.innerWidth > 820;
+        const flagsKey = (g, d) => `${g.cook}_${d.id}`;
+        const flagsOpen = (g, d) => chefFlagsOpen[flagsKey(g, d)] ?? flagsDefault;
+        // Botón con el resumen (clientes · ⚠ · ✎ · ⭐) y, abierto, el detalle.
+        // stopPropagation: tocar el plato lo marca cocinado, el botón no.
+        const dishFlags = (g, d, sm) => {
+          if (!d.flags.length) return null;
+          const open = flagsOpen(g, d);
+          const al = d.flags.filter(x=>x.allergies).length;
+          const nt = d.flags.filter(x=>x.note).length;
+          const nw = d.flags.some(x=>x.isNew);
+          return <>
+            <button className={`chef-xbtn${open?" on":""}${al?" warn":""}`}
+                    onClick={e=>{ e.stopPropagation(); setChefFlagsOpen(p=>({ ...p, [flagsKey(g,d)]: !open })); }}>
+              👤 {d.flags.length}{al>0&&<> · ⚠ {al}</>}{nt>0&&<> · ✎ {nt}</>}{nw&&<> · ⭐</>} <span className="ar">{open?"▴":"▾"}</span>
+            </button>
+            {open&&d.flags.map((x,k)=>(
+              <span className={`chef-flags${sm?" sm":""}`} key={k}>
+                {!sm&&x.qty>1&&<b>{x.qty}× </b>}<b>{x.client}</b>
+                {x.isNew&&<span className="nw">{T.newClient}</span>}
+                {x.allergies&&<span className="al">⚠ {x.allergies}</span>}
+                {x.note&&<span className="nt">✎ {x.note}</span>}
+              </span>
+            ))}
+          </>;
+        };
         const heroSub = !H ? "" : mode === "now" ? T.startedAgo(kdsNow - H.cookMin) : mode === "up" ? T.inMin(H.cookMin - kdsNow)
           : mode === "sel" && isToday ? (H.cookMin <= kdsNow ? T.startedAgo(kdsNow - H.cookMin) : T.inMin(H.cookMin - kdsNow)) : "";
         return (
@@ -5694,14 +5729,7 @@ export default function App() {
                           <span className="info">
                             <span className="n">{dishName(d)}</span>
                             {d.size&&<span className="sz">{T.size[d.size]}</span>}
-                            {d.flags.map((x,k)=>(
-                              <span className="chef-flags" key={k}>
-                                {x.qty>1&&<b>{x.qty}× </b>}<b>{x.client}</b>
-                                {x.isNew&&<span className="nw">{T.newClient}</span>}
-                                {x.allergies&&<span className="al">⚠ {x.allergies}</span>}
-                                {x.note&&<span className="nt">✎ {x.note}</span>}
-                              </span>
-                            ))}
+                            {dishFlags(H, d, false)}
                           </span>
                           {isDone(H,d)&&<span className="ck">✓</span>}
                         </div>
@@ -5731,14 +5759,7 @@ export default function App() {
                             <span className="q">{d.qty}</span>
                             <span className={`d ${(d.size||"").toLowerCase()}`}/>
                             <span className="n">{dishName(d)}
-                              {d.flags.map((x,k)=>(
-                                <span className="chef-flags sm" key={k}>
-                                  <b>{x.client}</b>
-                                  {x.isNew&&<span className="nw">{T.newClient}</span>}
-                                  {x.allergies&&<span className="al">⚠ {x.allergies}</span>}
-                                  {x.note&&<span className="nt">✎ {x.note}</span>}
-                                </span>
-                              ))}
+                              {dishFlags(N, d, true)}
                             </span>
                           </div>
                         ))}

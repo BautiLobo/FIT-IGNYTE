@@ -574,6 +574,14 @@ tbody tr:hover{background:#1e1e1e}
 .chef-ln .d.big{background:#dc2626}.chef-ln .d.small{background:#16a34a}
 .chef-ln .n{font-size:clamp(14px,1.25vw,24px);font-weight:600;color:#ddd;line-height:1.2;overflow-wrap:anywhere}
 .chef-day .chef-side-hd{background:#111;color:#999}
+.kds-btn.on{background:#fff;border-color:#fff;color:#000}
+.chef-tot{position:fixed;top:clamp(8px,1vw,16px);right:clamp(8px,1vw,16px);width:min(520px,calc(100vw - 16px));max-height:calc(100% - 16px);display:flex;flex-direction:column;background:#0d0d0d;border:1px solid #333;border-radius:10px;box-shadow:0 16px 40px rgba(0,0,0,.7);overflow:hidden}
+.chef-tot .chef-side-hd{background:#16263b;color:#cfe3ff;align-items:center}
+.chef-tot .chef-side-hd .kds-btn{margin-left:4px}
+.chef-tot-body{overflow-y:auto;padding:clamp(6px,.6vw,12px) clamp(12px,1.1vw,22px)}
+.chef-tot .chef-ln{border-bottom:1px solid #1a1a1a}
+.chef-tot .chef-ln .n{flex:1;min-width:0}
+.chef-tot .chef-ln .of{font-family:"Rajdhani",sans-serif;font-weight:700;color:#777;font-size:clamp(14px,1.1vw,20px);white-space:nowrap}
 .chef-day{flex:1;min-height:0;display:flex;flex-direction:column}
 .chef-day-list{flex:1;min-height:0;overflow-y:auto}
 .chef-row{display:flex;align-items:center;gap:clamp(10px,1vw,20px);padding:clamp(7px,.65vw,13px) clamp(14px,1.3vw,26px);border-bottom:1px solid #161616;font-family:"Rajdhani",sans-serif;font-weight:700}
@@ -715,6 +723,7 @@ const KDS_TXT = {
     fullDay:"Full day", leftLabel:"plates left", nothingNext:"Nothing after this",
     chefDone:"NOTHING LEFT TO COOK",
     hideSide:"◧ Hide side", showSide:"◧ Show side",
+    dayTotalsBtn:"Σ Day total", dayTotals:"Day total",
     date:d=>fmtDateTab(d),
   },
   zh: {
@@ -740,6 +749,7 @@ const KDS_TXT = {
     fullDay:"全天", leftLabel:"剩余份数", nothingNext:"之后没有了",
     chefDone:"今天没有要做的了",
     hideSide:"◧ 隐藏侧栏", showSide:"◧ 显示侧栏",
+    dayTotalsBtn:"Σ 全天总数", dayTotals:"全天总数",
     date:d=>{ try { return new Date(d+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"}); } catch { return d||"—"; } },
   },
 };
@@ -3013,6 +3023,11 @@ export default function App() {
   // para dejarle toda la pantalla a los platos. Se recuerda por dispositivo.
   const [chefSide, setChefSide] = useState(() => { try { return localStorage.getItem("chef_side") !== "0"; } catch { return true; } });
   const toggleChefSide = () => setChefSide(v => { try { localStorage.setItem("chef_side", v ? "0" : "1"); } catch { /* sin storage */ } return !v; });
+  // Menú "Total del día" del Chef Display: cada plato sumado entre todos los
+  // cooking times. Se abre y cierra con un botón de la barra de arriba.
+  const [chefTotals, setChefTotals] = useState(false);
+  const chefTotalsRef = useRef(false);
+  useEffect(() => { chefTotalsRef.current = chefTotals; }, [chefTotals]);
   const [sbOpen,    setSbOpen]    = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [loaded,    setLoaded]    = useState(false);
@@ -3845,6 +3860,7 @@ export default function App() {
     const onKey = e => {
       if (e.key !== "Escape") return;
       if (kdsDetailRef.current) setKdsDetail(null);
+      else if (chefTotalsRef.current) setChefTotals(false);
       else { setShowKDS(false); setShowChef(false); }
     };
     window.addEventListener("keydown", onKey);
@@ -4175,8 +4191,41 @@ export default function App() {
     // fecha de hoy en el header).
     const dayName = fmtDateTab(deliveryDay);
     const dateStr = fmtDate(deliveryDay);
+    // Dentro de cada cooking time, las paradas con la misma dirección van
+    // juntas (si no, con 20 pedidos a la misma hora quedaban en hojas
+    // distintas y los chefs se confundían). Cada grupo
+    // se ubica por su entrega más temprana y adentro sigue por hora. Sin
+    // dirección no se agrupa: cada una es su propio grupo.
+    // La clave es calle + número, no el texto entero: los clientes escriben
+    // la misma dirección con y sin "上海市XX区", con espacios entre cada
+    // caracter, con el nombre del edificio adelante, etc. Primero se busca la
+    // calle en chino (2 caracteres antes de 路/村 + número: 淞行路323), si no
+    // en inglés (Jinhui road 1501 / 1501 Jinhui road). Junta torres distintas
+    // del mismo complejo (789号1号楼 y 2号楼), que es lo que se quiere para
+    // repartir. Chino contra inglés de la misma calle no se reconoce.
+    const addrKey = c => {
+      const s = (c.address || "").toLowerCase().replace(/[\s,，.。、:：\-]/g, "");
+      if (!s || s === "tbc") return null;
+      const zh = s.match(/([一-鿿]{2}[路村])(\d+)/);
+      if (zh) return `zh:${zh[1]}${zh[2]}`;
+      const en = s.match(/(\d+)(?:lane|long|no)?([a-z]{3,}?)(?:road|rd)/) || s.match(/([a-z]{3,}?)(?:road|rd)(?:no)?(\d+)/);
+      if (en) return /^\d/.test(en[1]) ? `en:${en[2]}${en[1]}` : `en:${en[1]}${en[2]}`;
+      return s;
+    };
+    const byAddress = slots => {
+      const groups = [];
+      const idx = {};
+      slots.forEach(x => {
+        const k = addrKey(x.client);
+        if (k && idx[k] != null) groups[idx[k]].push(x);
+        else { if (k) idx[k] = groups.length; groups.push([x]); }
+      });
+      return groups;
+    };
     const rows = Object.entries(delivery).flatMap(([cook, slots]) =>
-      slots.map(({client:c, slot}, i) => ({
+      byAddress(slots).flatMap((grp, gi) => grp.map(x => ({ ...x, grp: `${cook}_${gi}`, key: addrKey(x.client) })))
+      .map(({client:c, slot, grp, key}, i) => ({
+        grp, key,
         num: i+1,
         time: slot.time || "TBD",
         cookTime: cook,
@@ -4199,6 +4248,31 @@ export default function App() {
         isNew: firstMealSlotIds.has(slot.id),
       }))
     );
+    // Color alterno por grupo de dirección: cambia cuando cambia el grupo.
+    // Una dirección con 2+ pedidos en la hoja lleva una letra (A, B, C…, sin
+    // repetir; después de Z sigue AA, AB…) y un color de barra que rota, para
+    // distinguir dos grupos pegados aunque se imprima en blanco y negro. La
+    // letra es por dirección en TODA la hoja: si la misma dirección también
+    // aparece en otro cooking time, ahí lleva la misma letra (sin moverla de
+    // su cooking time) y la etiqueta dice en qué otras horas está.
+    const byKey = {};
+    rows.forEach(r => { if (r.key) (byKey[r.key] = byKey[r.key] || []).push(r); });
+    const letters = {};
+    let letter = 0;
+    rows.forEach((r, i) => {
+      const prev = rows[i-1];
+      r.start = !prev || prev.grp !== r.grp;
+      r.alt = i > 0 && (r.start ? !prev.alt : prev.alt);
+      const same = r.key ? byKey[r.key] : [r];
+      r.total = same.length;
+      if (r.total > 1) {
+        if (letters[r.key] == null) letters[r.key] = ++letter;
+        const n = letters[r.key];
+        r.letter = (n > 26 ? String.fromCharCode(64 + Math.floor((n - 1) / 26)) : "") + String.fromCharCode(65 + (n - 1) % 26);
+        r.color = ["#2563eb", "#9333ea", "#0d9488", "#ea580c", "#db2777"][(n - 1) % 5];
+        r.otherCooks = [...new Set(same.map(x => x.cookTime))].filter(t => t !== r.cookTime);
+      }
+    });
 
     const html = `<!DOCTYPE html>
 <html>
@@ -4233,8 +4307,17 @@ export default function App() {
     thead tr { background: #1a1a1a; }
     th { color: #fff; padding: 6px 5px; text-align: left; font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; white-space: normal; line-height: 1.25; }
 
-    tbody tr:nth-child(odd)  td { background: #ffffff; }
-    tbody tr:nth-child(even) td { background: #f0f2f5; }
+    /* Rayado por dirección, no por fila: la misma dirección comparte color. */
+    tbody tr td { background: #ffffff; }
+    tbody tr.alt td { background: #f0f2f5; }
+    /* Grupo de la misma dirección: línea gruesa donde empieza y donde
+       termina, filas de adentro separadas con punteado, barra de color. */
+    tbody tr.gstart td { border-top: 2.5px solid #111; }
+    tbody tr.same:not(.gend) td { border-bottom: 1px dashed #bbb; }
+    tbody tr.gend td { border-bottom: 2.5px solid #111; }
+    .same-tag { display: inline-block; margin-top: 3px; color: #fff; font-weight: 900; font-size: 8px; letter-spacing: .5px; padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+    .same-also { margin-top: 2px; font-weight: 900; font-size: 8px; letter-spacing: .4px; white-space: nowrap; }
+    .grp-letter { display: block; margin: 3px auto 0; width: 18px; height: 18px; line-height: 18px; border-radius: 50%; color: #fff; font-weight: 900; font-size: 11px; text-align: center; }
     tbody tr { page-break-inside: avoid; }
 
     td { padding: 8px 7px; border-bottom: 1px solid #dde1e8; vertical-align: top; word-wrap: break-word; line-height: 1.35; }
@@ -4320,12 +4403,21 @@ export default function App() {
                 : "";
             })()
           : "<span class=\"dash\">&mdash;</span>";
-        return (r.isNew ? "<tr class=\"new-client\">" : "<tr>") +
-          "<td class=\"cn-num\">" + (i+1) + "</td>" +
+        const next = rows[i+1];
+        const multi = r.total > 1;
+        const cls = [r.alt ? "alt" : "", multi ? "same" : "",
+                     multi && r.start ? "gstart" : "", multi && (!next || next.grp !== r.grp) ? "gend" : "",
+                     r.isNew ? "new-client" : ""].filter(Boolean).join(" ");
+        const sameHtml = multi ? "<div class=\"same-tag\" style=\"background:" + r.color + "\">" + r.letter + " · SAME LOCATION ×" + r.total + "</div>" +
+          (r.otherCooks.length ? "<div class=\"same-also\" style=\"color:" + r.color + "\">ALSO COOK " + r.otherCooks.join(", ") + "</div>" : "") : "";
+        const letterHtml = multi ? "<span class=\"grp-letter\" style=\"background:" + r.color + "\">" + r.letter + "</span>" : "";
+        const bar = multi ? " style=\"box-shadow: inset 5px 0 0 " + r.color + "\"" : "";
+        return (cls ? "<tr class=\"" + cls + "\">" : "<tr>") +
+          "<td class=\"cn-num\"" + bar + ">" + (i+1) + letterHtml + "</td>" +
           "<td class=\"ct-time\">" + r.time + "</td>" +
           "<td class=\"cct-time\">" + r.cookTime + "</td>" +
           "<td><div class=\"cc-name\">" + r.name + "</div>" + (r.isNew ? "<div class=\"new-tag\">NEW</div>" : "") + (r.phone ? "<div class=\"cc-phone\">" + r.phone + "</div>" : "") + "<div class=\"cc-plan\">" + r.plan + "</div></td>" +
-          "<td><div class=\"ca-addr\">" + r.address + "</div>" + accessHtml + "</td>" +
+          "<td><div class=\"ca-addr\">" + r.address + "</div>" + sameHtml + accessHtml + "</td>" +
           "<td>" + mealsHtml + "</td>" +
           "<td>" + notesCell + "</td>" +
           "<td style=\"text-align:center;font-weight:600;font-size:10px\">" + (r.cutlery ? "Yes" : "No") + "</td>" +
@@ -5793,6 +5885,20 @@ export default function App() {
         const smallLeft = leftBy("SMALL");
         const H = hero >= 0 ? chef[hero] : null;
         const N = next >= 0 ? chef[next] : null;
+        // Total del día por plato (todas las horas juntas). "Hechos" son los
+        // marcados cocinados en cada hora, así el número que queda es real.
+        const dayTotals = (() => {
+          const byId = {};
+          chef.forEach(g => g.dishes.forEach(d => {
+            const t = byId[d.id] || (byId[d.id] = { ...d, qty: 0, done: 0 });
+            t.qty += d.qty;
+            if (isDone(g, d)) t.done += d.qty;
+          }));
+          const rank = s => s === "BIG" ? 0 : s === "SMALL" ? 1 : 2;
+          return Object.values(byId).sort((a, b) => rank(a.size) - rank(b.size) || b.qty - a.qty || a.name.localeCompare(b.name));
+        })();
+        const dayQty = dayTotals.reduce((n, d) => n + d.qty, 0);
+        const dayDone = dayTotals.reduce((n, d) => n + d.done, 0);
         const flagsDefault = typeof window !== "undefined" && window.innerWidth > 820;
         const flagsKey = (g, d) => `${g.cook}_${d.id}`;
         const flagsOpen = (g, d) => chefFlagsOpen[flagsKey(g, d)] ?? flagsDefault;
@@ -5841,6 +5947,7 @@ export default function App() {
               ))}
               <button className="kds-btn" onClick={toggleKdsLang}>🌐 {T.lang}</button>
               {!isStandaloneApp()&&<button className="kds-btn" onClick={()=>canFullscreen()?toggleFullscreen():setKdsFsHint(true)}>{T.fullscreen}</button>}
+              {chef.length>0&&<button className={`kds-btn${chefTotals?" on":""}`} onClick={()=>setChefTotals(v=>!v)}>{T.dayTotalsBtn}</button>}
               <button className="kds-btn" onClick={toggleChefSide}>{chefSide?T.hideSide:T.showSide}</button>
               <button className="kds-btn" onClick={()=>setShowChef(false)}>{T.exit}</button>
             </div>
@@ -5932,6 +6039,31 @@ export default function App() {
                     </div>
                   </div>
                 </div>}
+              </div>
+            )}
+
+            {chefTotals&&chef.length>0&&(
+              <div className="kds-pop-ov" onClick={()=>setChefTotals(false)}>
+                <div className="chef-tot" onClick={e=>e.stopPropagation()}>
+                  <div className="chef-side-hd">
+                    <span>{T.dayTotals}</span>
+                    <span className="r">{dayQty-dayDone} / {dayQty} {T.plates}</span>
+                    <button className="kds-btn" onClick={()=>setChefTotals(false)}>✕</button>
+                  </div>
+                  <div className="chef-tot-body">
+                    {dayTotals.map(d=>{
+                      const rest = d.qty - d.done;
+                      return (
+                        <div className={`chef-ln${rest===0?" done":""}`} key={d.id} style={{cursor:"default"}}>
+                          <span className="q">{rest}</span>
+                          <span className={`d ${(d.size||"").toLowerCase()}`}/>
+                          <span className="n">{dishName(d)}</span>
+                          {d.done>0&&<span className="of">/ {d.qty}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             )}
           </div>

@@ -10,6 +10,7 @@ import {
   signIn, signOut, getSession, onAuthChange, manageStaff, getFirstCycleClientIds,
   getPendingOrders, getRejectedOrders, getApprovedOrders, approveOrder, rejectOrder, reApproveOrder, deleteNewOrder,
   getCoaches, createCoach, deleteCoach,
+  getDiscountCodes, createDiscountCodes, deleteDiscountCode,
   getPendingAddressChanges, approveAddressChange, rejectAddressChange,
   getNotifications, sendNotification, deleteNotification,
   getMealWeeklyStats,
@@ -2648,6 +2649,126 @@ const TEAM_ROLES = [
   {id:"admin",    lbl:"Admin",    desc:"Full access"},
   {id:"delivery", lbl:"Delivery", desc:"Delivery Sheet + Kitchen/Chef Display only"},
 ];
+// Códigos de descuento de un solo uso para RENOVAR desde la app. Los de coach
+// (arriba en Referrals) son otra cosa: solo altas nuevas, reutilizables.
+function DiscountCodes({ clients }) {
+  const [codes, setCodes] = useState(null);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({count:"1", kind:"percent", value:"10", note:""});
+  const [creating, setCreating] = useState(false);
+  const [justCreated, setJustCreated] = useState([]);
+  const [showUsed, setShowUsed] = useState(false);
+
+  const load = async () => {
+    try { setCodes(await getDiscountCodes()); setError(""); }
+    catch (e) { setError(e.message); setCodes([]); }
+  };
+  useEffect(() => {
+    let cancelled = false;
+    getDiscountCodes()
+      .then(c => { if (!cancelled) setCodes(c); })
+      .catch(e => { if (!cancelled) { setError(e.message); setCodes([]); } });
+    return () => { cancelled = true; };
+  }, []);
+
+  const count = Math.floor(Number(form.count));
+  const value = Number(form.value);
+  const valid = count >= 1 && count <= 100 && value > 0 && (form.kind !== "percent" || value <= 100);
+  const create = async e => {
+    e.preventDefault();
+    if (!valid) return;
+    setCreating(true);
+    try {
+      const rows = await createDiscountCodes(count, form.kind, value, form.note.trim());
+      setJustCreated(rows.map(r => r.code));
+      await load();
+    } catch (e) { setError(e.message.includes("unique") ? "Code collision, try again." : e.message); }
+    finally { setCreating(false); }
+  };
+  const remove = async c => {
+    if (!window.confirm(`Delete code ${c.code}?`)) return;
+    try { await deleteDiscountCode(c.id); await load(); }
+    catch (e) { setError(e.message); }
+  };
+  const copy = text => navigator.clipboard?.writeText(text).catch(() => {});
+
+  const fmt = c => c.kind === "percent" ? `${Number(c.value)}% off` : `¥${Number(c.value)} off`;
+  const clientName = id => clients.find(x => x.id === id)?.name || `#${id}`;
+  const visible = (codes || []).filter(c => showUsed || !c.used_at);
+  const usedCount = (codes || []).filter(c => c.used_at).length;
+  const lblStyle = {fontSize:10,color:"var(--muted)",textTransform:"uppercase",letterSpacing:.5};
+  const codeStyle = {fontFamily:"monospace",background:"var(--s3)",padding:"2px 8px",borderRadius:4,fontSize:12,color:"var(--red)",border:"1px solid var(--bdr2)"};
+  return <>
+    <div className="sec-title" style={{marginTop:32}}>One-Time Discount Codes</div>
+    <div style={{fontSize:11,color:"var(--dim)",marginBottom:12}}>
+      Each code works once, only when a client renews in the app. Coach codes are not accepted at renewal. A code is spent when the payment goes through.
+    </div>
+    <form onSubmit={create} style={{display:"flex",gap:10,marginBottom:16,alignItems:"flex-end",flexWrap:"wrap"}}>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <label style={lblStyle}>How many</label>
+        <input className="inp" type="number" min="1" max="100" style={{width:80}} value={form.count} onChange={e=>setForm(f=>({...f,count:e.target.value}))}/>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <label style={lblStyle}>Type</label>
+        <select className="fltr" value={form.kind} onChange={e=>setForm(f=>({...f,kind:e.target.value}))}>
+          <option value="percent">% off</option>
+          <option value="amount">¥ off</option>
+        </select>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <label style={lblStyle}>{form.kind==="percent"?"Percent":"Yuan"}</label>
+        <input className="inp" type="number" min="1" max={form.kind==="percent"?100:undefined} style={{width:90}} value={form.value} onChange={e=>setForm(f=>({...f,value:e.target.value}))}/>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <label style={lblStyle}>Note (optional)</label>
+        <input className="inp" style={{width:220}} placeholder="e.g. Instagram giveaway" value={form.note} onChange={e=>setForm(f=>({...f,note:e.target.value}))}/>
+      </div>
+      <button className="btn btn-r" type="submit" disabled={creating||!valid}>
+        {creating?"Generating…":"+ Generate"}
+      </button>
+    </form>
+    {justCreated.length>0&&(
+      <div style={{background:"var(--s2)",border:"1px solid var(--bdr2)",borderRadius:8,padding:12,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <span style={{fontSize:12,color:"var(--green)"}}>✓ {justCreated.length} code{justCreated.length!==1?"s":""} generated</span>
+          <span style={{display:"flex",gap:6}}>
+            <button className="btn btn-g btn-sm" onClick={()=>copy(justCreated.join("\n"))}>Copy all</button>
+            <button className="btn btn-g btn-sm" onClick={()=>setJustCreated([])}>Close</button>
+          </span>
+        </div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{justCreated.map(c=><span key={c} style={codeStyle}>{c}</span>)}</div>
+      </div>
+    )}
+    {error&&<div className="alert-bar" style={{marginBottom:16}}>⚠️ {error}</div>}
+    <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"var(--muted)",marginBottom:8,cursor:"pointer"}}>
+      <input type="checkbox" checked={showUsed} onChange={e=>setShowUsed(e.target.checked)}/> Show used codes ({usedCount})
+    </label>
+    {codes===null?(
+      <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">Loading…</div></div>
+    ):visible.length===0?(
+      <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No {showUsed?"":"unused "}codes</div><div className="empty-state-sub">Generate some above</div></div>
+    ):(
+      <div className="tbl-wrap"><table>
+        <thead><tr><th>Code</th><th>Discount</th><th>Note</th><th>Status</th><th>Created</th><th></th></tr></thead>
+        <tbody>
+          {visible.map(c=>(
+            <tr key={c.id}>
+              <td><span style={codeStyle}>{c.code}</span> <button className="btn btn-g btn-xs" onClick={()=>copy(c.code)}>Copy</button></td>
+              <td style={{color:"#fff"}}>{fmt(c)}</td>
+              <td style={{color:"var(--muted)",fontSize:11}}>{c.note||"—"}</td>
+              <td style={{fontSize:11}}>{c.used_at
+                ?<span style={{color:"var(--dim)"}}>Used by {clientName(c.used_by_client_id)} · {new Date(c.used_at).toLocaleDateString()}</span>
+                :<span style={{color:"var(--green)"}}>Unused</span>}</td>
+              <td style={{color:"var(--dim)",fontSize:10}}>{new Date(c.created_at).toLocaleDateString()}</td>
+              <td>{!c.used_at&&<button className="btn btn-g btn-sm" onClick={()=>remove(c)}>Delete</button>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table></div>
+    )}
+  </>;
+}
+
 function TeamAccess({ currentUserId }) {
   const [users, setUsers] = useState(null);
   const [error, setError] = useState("");
@@ -5067,6 +5188,7 @@ export default function App() {
                   </tbody>
                 </table></div>
               )}
+              <DiscountCodes clients={clients}/>
             </>}
 
             {/* ═══ NOTIFICATIONS ═══════════════════════ */}

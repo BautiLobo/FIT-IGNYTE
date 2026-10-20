@@ -546,6 +546,25 @@ export async function updateCoachCommission(id, commission_per_referral) {
   return check(await supabase.from("coaches").update({ commission_per_referral }).eq("id", id).select().single(), "updateCoachCommission");
 }
 
+// ── CÓDIGOS DE DESCUENTO (un solo uso, solo renovaciones) ─────
+// Los valida y cobra create-payment; se marcan usados con un trigger cuando
+// el pago queda 'paid'. Ver supabase/migrations/20261020000000_discount_codes.sql.
+const DISCOUNT_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sin 0/O/1/I
+function randomDiscountCode(len = 8) {
+  const bytes = crypto.getRandomValues(new Uint8Array(len));
+  return Array.from(bytes, b => DISCOUNT_CODE_CHARS[b % DISCOUNT_CODE_CHARS.length]).join("");
+}
+export async function getDiscountCodes() {
+  return check(await supabase.from("discount_codes").select("*").order("created_at", { ascending: false }), "getDiscountCodes") || [];
+}
+export async function createDiscountCodes(count, kind, value, note) {
+  const rows = Array.from({ length: count }, () => ({ code: randomDiscountCode(), kind, value, note }));
+  return check(await supabase.from("discount_codes").insert(rows).select(), "createDiscountCodes");
+}
+export async function deleteDiscountCode(id) {
+  check(await supabase.from("discount_codes").delete().eq("id", id).is("used_at", null), "deleteDiscountCode");
+}
+
 // ── PAYMENTS (solo lectura -- toda escritura pasa por las Edge Functions) ──
 export async function getPaidPayments() {
   return check(await supabase

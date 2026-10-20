@@ -3770,6 +3770,25 @@ export default function App() {
   const navTo = t => { if (isStaff && t !== "delivery") return; setTab(t); setSbOpen(false); };
 
   // ── Meal slot handlers
+  // Los inputs de hora/nota guardan en cada tecla y los requests (más con el
+  // proxy de China) pueden llegar desordenados: "10:03" pisaba a "10:30" en la
+  // base. Cola por fila: un guardado a la vez y, si hay varios esperando, solo
+  // va el último.
+  const slotSaveQueue = useRef({});
+  const queueSlotSave = (key, save) => {
+    const q = slotSaveQueue.current[key] ||= { busy: false, next: null };
+    q.next = save;
+    if (q.busy) return;
+    q.busy = true;
+    (async () => {
+      while (q.next) {
+        const run = q.next; q.next = null;
+        try { await run(); flash(); } catch(e){ console.error(e); }
+      }
+      q.busy = false;
+    })();
+  };
+
   const addSlot = async (clientId, day) => {
     const existingSlots = meals[clientId]?.[day] || [];
     const nextSlot = existingSlots.length + 1;
@@ -3790,10 +3809,11 @@ export default function App() {
       [clientId]: { ...p[clientId], [day]: (p[clientId]?.[day]||[]).filter(s=>s.id!==slotId) }
     }));
     if (slot?.slot) {
-      try {
+      // Por la misma cola: si no, un guardado en vuelo puede revivir la fila.
+      queueSlotSave(`${clientId}|${day}|${slot.slot}`, async () => {
         const {deleteMealSelection} = await import("./lib/supabase");
         await deleteMealSelection(clientId, day, slot.slot);
-      } catch(e){ console.error(e); }
+      });
     }
   };
 
@@ -3804,27 +3824,24 @@ export default function App() {
     setMeals(p => ({ ...p, [clientId]: { ...p[clientId], [day]: updated } }));
     const slot = updated.find(s=>s.id===slotId);
     if (!slot) return;
-    try {
-      await upsertMealSelection(clientId, day, slot.slot||1, {
+    queueSlotSave(`${clientId}|${day}|${slot.slot||1}`, () =>
+      upsertMealSelection(clientId, day, slot.slot||1, {
         mealIds:      slot.meals    || [],
         deliveryTime: slot.time     || "",
         cookTime:     slot.cookTime || "",
         snackId:      slot.snackId  || null,
         note:         slot.note     || "",
         sauceIds:     slot.sauceIds || [],
-      });
-      flash();
-    } catch(e){ console.error(e); }
+      }));
   };
 
   const updatePendingSlotCookTime = async (clientId, day, slotId, value) => {
     setPendingMeals(p => ({ ...p, [clientId]: { ...p[clientId],
       [day]: (p[clientId]?.[day]||[]).map(s => s.id === slotId ? {...s, cookTime: value} : s) } }));
-    try {
+    queueSlotSave(`pending|${slotId}`, async () => {
       const {updatePendingCookTime} = await import("./lib/supabase");
       await updatePendingCookTime(slotId, value);
-      flash();
-    } catch(e){ console.error(e); }
+    });
   };
 
   const updateSlotMeal = async (clientId, day, slotId, mealIndex, value) => {
@@ -3837,17 +3854,15 @@ export default function App() {
     setMeals(p => ({ ...p, [clientId]: { ...p[clientId], [day]: updated } }));
     const slot = updated.find(s=>s.id===slotId);
     if (!slot) return;
-    try {
-      await upsertMealSelection(clientId, day, slot.slot||1, {
+    queueSlotSave(`${clientId}|${day}|${slot.slot||1}`, () =>
+      upsertMealSelection(clientId, day, slot.slot||1, {
         mealIds:      slot.meals    || [],
         deliveryTime: slot.time     || "",
         cookTime:     slot.cookTime || "",
         snackId:      slot.snackId  || null,
         note:         slot.note     || "",
         sauceIds:     slot.sauceIds || [],
-      });
-      flash();
-    } catch(e){ console.error(e); }
+      }));
   };
 
   const addMealToSlot = (clientId, day, slotId) => {

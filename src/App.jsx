@@ -468,11 +468,17 @@ tbody tr:hover{background:#1e1e1e}
 .kds-col-hd .s{font-size:clamp(11px,1.05vw,21px);opacity:.88;white-space:nowrap}
 .kds-now  .kds-col-hd{background:var(--red);color:#fff}
 .kds-next .kds-col-hd{background:#16263b;color:#9ecbff}
-.kds-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(8px,.95vw,18px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(250px,21vw,380px),1fr));gap:clamp(8px,.85vw,16px);align-content:start;grid-auto-rows:max-content}
+.kds-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(8px,.95vw,18px);display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(250px,21vw,380px),1fr));gap:clamp(8px,.85vw,16px);align-content:start;grid-auto-rows:max-content;grid-auto-flow:row dense}
 .kds-card{background:#141414;border:1px solid #262626;border-left:6px solid var(--red);border-radius:8px;cursor:pointer;user-select:none;overflow:hidden;transition:opacity .15s,background .15s}
 .kds-next .kds-card{border-left-color:#3b82f6}
 .kds-card.done{opacity:.25;background:#0a0a0a}
 .kds-card.new{border-left-color:var(--amber);box-shadow:0 0 0 2px var(--amber)}
+.kds-grpbox{border:4px solid;border-radius:12px;overflow:hidden;background:#0b0b0b}
+.kds-grpbox-hd{display:flex;align-items:center;gap:clamp(8px,.8vw,14px);padding:clamp(4px,.4vw,8px) clamp(10px,.9vw,16px);color:#fff}
+.kds-grpbox-hd .lt{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:clamp(20px,1.8vw,34px);line-height:1}
+.kds-grpbox-hd .ad{flex:1;min-width:0;font-weight:700;font-size:clamp(14px,1.15vw,22px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kds-grpbox-hd .ct{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:clamp(18px,1.5vw,28px)}
+.kds-grpbox-body{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:clamp(8px,.85vw,16px);padding:clamp(8px,.8vw,14px)}
 .kds-tk-new{flex-basis:100%;align-self:flex-start;width:fit-content;background:var(--amber);color:#000;border-radius:5px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);font-size:clamp(13px,1.1vw,22px);font-weight:900;letter-spacing:.8px;white-space:nowrap}
 .kds-pop-new{display:inline-block;margin-bottom:8px}
 .kds-tk-hd{display:flex;align-items:center;flex-wrap:wrap;gap:clamp(6px,.6vw,12px) clamp(8px,.8vw,16px);padding:clamp(8px,.7vw,14px) clamp(10px,.95vw,20px);background:#1d1d1d;border-bottom:1px solid #2a2a2a}
@@ -853,41 +859,74 @@ function CookTimeBar({ times, sel, onSel, nowMin, isToday, T }) {
   );
 }
 
-function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en" }) {
+function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en", groupOf = {} }) {
   const T = KDS_TXT[lang];
+  const card = t => {
+    const key  = `k_${t.id}`;
+    const done = !!checks[key];
+    return (
+      <div key={t.id} className={`kds-card${done?" done":""}${t.isNew?" new":""}`} onClick={e=>onOpen({ ...t, rect: e.currentTarget.getBoundingClientRect() })}>
+        <div className="kds-tk-hd">
+          <span className="kds-tk-name">{t.client}</span>
+          <span className="kds-tk-out">🚚 {t.out}</span>
+          <span className={`kds-tk-cut ${t.cutlery?"yes":"no"}`}>🍴 {t.cutlery?T.yes:T.no}</span>
+          {t.isNew&&<span className="kds-tk-new">{T.newClient}</span>}
+        </div>
+        <div className="kds-tk-body">
+          {t.meals.map(m=>(
+            <div className="kds-line" key={m.id}>
+              <span className="q">{m.qty}×</span>
+              <span className="n">{lang==="zh"&&m.nameZh?m.nameZh:m.name}{m.size&&<span className={`sz sz-${m.size.toLowerCase()}`}>{T.size[m.size]}</span>}</span>
+            </div>
+          ))}
+          {t.allergies&&<span className="kds-tag al">⚠ {t.allergies}</span>}
+          {t.note&&<span className="kds-tag nt">✎ {t.note}</span>}
+        </div>
+      </div>
+    );
+  };
+  // Tickets seguidos del mismo grupo de dirección → un segmento (ya vienen
+  // juntos, ver kds). Los sueltos son segmentos de uno sin grupo.
+  // El recuadro ocupa solo las columnas de sus tarjetas: hace falta saber
+  // cuántas columnas armó el grid (auto-fill, depende del ancho).
+  const bodyRef = useRef(null);
+  const [cols, setCols] = useState(1);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const measure = () => setCols(Math.max(1, getComputedStyle(el).gridTemplateColumns.split(" ").length));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const segments = [];
+  bucket.tickets.forEach(t => {
+    const g = groupOf[t.id], last = segments[segments.length - 1];
+    if (g && last?.g === g) last.items.push(t);
+    else segments.push({ g, items: [t] });
+  });
   return (
     <div className={`kds-col kds-${kind}`}>
       <div className="kds-col-hd">
         <span className="t">{title}</span>
         <span className="s">{T.portions(bucket.portions)} · {T.stops(bucket.stops)}</span>
       </div>
-      <div className="kds-body">
+      <div className="kds-body" ref={bodyRef}>
         {bucket.tickets.length===0 ? (
           <div className="kds-empty">{emptyText}</div>
-        ) : bucket.tickets.map(t => {
-          const key  = `k_${t.id}`;
-          const done = !!checks[key];
-          return (
-            <div key={t.id} className={`kds-card${done?" done":""}${t.isNew?" new":""}`} onClick={e=>onOpen({ ...t, rect: e.currentTarget.getBoundingClientRect() })}>
-              <div className="kds-tk-hd">
-                <span className="kds-tk-name">{t.client}</span>
-                <span className="kds-tk-out">🚚 {t.out}</span>
-                <span className={`kds-tk-cut ${t.cutlery?"yes":"no"}`}>🍴 {t.cutlery?T.yes:T.no}</span>
-                {t.isNew&&<span className="kds-tk-new">{T.newClient}</span>}
-              </div>
-              <div className="kds-tk-body">
-                {t.meals.map(m=>(
-                  <div className="kds-line" key={m.id}>
-                    <span className="q">{m.qty}×</span>
-                    <span className="n">{lang==="zh"&&m.nameZh?m.nameZh:m.name}{m.size&&<span className={`sz sz-${m.size.toLowerCase()}`}>{T.size[m.size]}</span>}</span>
-                  </div>
-                ))}
-                {t.allergies&&<span className="kds-tag al">⚠ {t.allergies}</span>}
-                {t.note&&<span className="kds-tag nt">✎ {t.note}</span>}
-              </div>
+        ) : segments.map(sg => sg.g ? (
+          // Paradas a la misma dirección (mismo grupo, ver addrGroups): un
+          // recuadro del color del grupo que las encierra, con la dirección.
+          <div className="kds-grpbox" key={sg.g.letter} style={{borderColor:sg.g.color, gridColumn:`span ${Math.min(sg.items.length, cols)}`, "--n":Math.min(sg.items.length, cols)}}>
+            <div className="kds-grpbox-hd" style={{background:sg.g.color}}>
+              <span className="lt">{sg.g.letter}</span>
+              <span className="ad">📍 {sg.g.items[0].client.address}</span>
+              <span className="ct">×{sg.items.length}</span>
             </div>
-          );
-        })}
+            <div className="kds-grpbox-body">{sg.items.map(card)}</div>
+          </div>
+        ) : card(sg.items[0]))}
       </div>
     </div>
   );
@@ -3714,6 +3753,12 @@ export default function App() {
     }));
     return out;
   }, [delivery]);
+  // slot id → { letter, color } de su grupo, para pintar las tarjetas del KDS.
+  const addrGroupOf = useMemo(() => {
+    const m = {};
+    addrGroups.forEach(g => g.items.forEach(({ slot }) => { m[slot.id] = g; }));
+    return m;
+  }, [addrGroups]);
 
   // Primera comida de cada cliente nuevo (nunca renovó): su fecha más
   // temprana con entrega -- calculada con mealSlotsForDate, igual que la
@@ -3829,7 +3874,15 @@ export default function App() {
         };
       })
       .filter(t => t.meals.length > 0)
-      .sort((a, b) => a.cook.localeCompare(b.cook) || a.out.localeCompare(b.out) || a.client.localeCompare(b.client));
+      .sort((a, b) => a.cook.localeCompare(b.cook) || a.out.localeCompare(b.out) || a.client.localeCompare(b.client))
+      // Las de la misma dirección (mismo grupo, ver addrGroups) van juntas,
+      // en el lugar de la primera del grupo, como en el PDF.
+      .reduce((acc, t) => {
+        const g = addrGroupOf[t.id];
+        const at = g ? acc.findLastIndex(x => addrGroupOf[x.id] === g) : -1;
+        if (at >= 0) acc.splice(at + 1, 0, t); else acc.push(t);
+        return acc;
+      }, []);
 
     // idx fuera de la lista (no hay batch siguiente al último) => columna vacía.
     const bucket = idx => {
@@ -3867,7 +3920,7 @@ export default function App() {
       later: { stops: laterTickets.length, portions: laterTickets.reduce((n, t) => n + t.portions, 0) },
       tbd:  { stops: ticketsOf(tbd).length },
     };
-  }, [delivery, deliveryDay, kdsNow, batchTimes, mealLibraryState, cookSel, firstMealSlotIds]);
+  }, [delivery, deliveryDay, kdsNow, batchTimes, mealLibraryState, cookSel, firstMealSlotIds, addrGroupOf]);
 
   // ── Chef Display: por cada hora de cocina (las mismas claves de
   // `delivery`), cuántos platos de cada comida hay que hacer, sumando todos
@@ -5822,7 +5875,7 @@ export default function App() {
             {kds.sel?(
             <div className="kds-cols" style={{gridTemplateColumns:"1fr"}}>
               <KdsBucket kind="now"  title={T.colCook(kds.sel.now.label)} bucket={kds.sel.now}
-                         checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNow} lang={kdsLang}/>
+                         checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNow} lang={kdsLang} groupOf={addrGroupOf}/>
             </div>
             ):<>
             {kds.now.portions===0&&kds.later.portions===0&&latePortions===0?(
@@ -5833,7 +5886,7 @@ export default function App() {
             ):(
             <div className="kds-cols" style={{gridTemplateColumns:"1fr"}}>
               <KdsBucket kind="now"  title={T.colNow(kds.now.label||"—")}   bucket={kds.now}
-                         checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNow} lang={kdsLang}/>
+                         checks={checks} onOpen={setKdsDetail} emptyText={T.emptyNow} lang={kdsLang} groupOf={addrGroupOf}/>
             </div>
             )}
             </>}

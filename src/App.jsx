@@ -581,6 +581,18 @@ tbody tr:hover{background:#1e1e1e}
 .chef-tot-body{overflow-y:auto;padding:clamp(6px,.6vw,12px) clamp(12px,1.1vw,22px)}
 .chef-tot .chef-ln{border-bottom:1px solid #1a1a1a}
 .chef-tot .chef-ln .n{flex:1;min-width:0}
+.kds-grps .chef-side-hd{background:#2a1f0a;color:#fcd34d}
+.kds-grp-ct{font-family:"Rajdhani",sans-serif;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#888;font-size:clamp(12px,1vw,18px);margin:clamp(8px,.8vw,14px) 0 6px}
+.kds-grp{background:#141414;border:1px solid #262626;border-left:6px solid #555;border-radius:8px;padding:clamp(6px,.6vw,12px) clamp(10px,.9vw,16px);margin-bottom:clamp(6px,.6vw,10px)}
+.kds-grp-hd{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.kds-grp-hd .lt{flex-shrink:0;width:1.6em;height:1.6em;line-height:1.6em;border-radius:50%;color:#fff;font-weight:900;text-align:center;font-size:clamp(14px,1.1vw,20px)}
+.kds-grp-hd .ad{flex:1;min-width:0;color:#ddd;font-size:clamp(13px,1vw,18px);line-height:1.3;overflow-wrap:anywhere;white-space:pre-line}
+.kds-grp-hd .ct{flex-shrink:0;font-family:"Rajdhani",sans-serif;font-weight:700;color:#aaa;font-size:clamp(16px,1.3vw,24px)}
+.kds-grp-ln{display:flex;align-items:baseline;gap:12px;padding:3px 0;border-top:1px solid #1f1f1f}
+.kds-grp-ln .tm{flex-shrink:0;color:var(--amber);font-family:"Rajdhani",sans-serif;font-weight:700;font-size:clamp(16px,1.3vw,24px);font-variant-numeric:tabular-nums}
+.kds-grp-ln .nm{flex:1;min-width:0;color:#fff;font-weight:600;font-size:clamp(15px,1.2vw,22px);overflow-wrap:anywhere}
+.kds-grp-ln .ok{color:var(--green);font-weight:900}
+.kds-grp-ln.done{opacity:.35}
 .chef-tot .chef-ln .of{font-family:"Rajdhani",sans-serif;font-weight:700;color:#777;font-size:clamp(14px,1.1vw,20px);white-space:nowrap}
 .chef-day{flex:1;min-height:0;display:flex;flex-direction:column}
 .chef-day-list{flex:1;min-height:0;overflow-y:auto}
@@ -699,6 +711,45 @@ tbody tr:hover{background:#1e1e1e}
 // Textos fijos del KDS en inglés y chino. Lo que viene de la base (nombre de
 // comida) usa name_zh si está cargado; nombres de cliente, alergias y notas
 // son texto libre y se muestran tal cual.
+// Dentro de cada cooking time, las paradas con la misma dirección van
+// juntas (si no, con 20 pedidos a la misma hora quedaban en hojas
+// distintas y los chefs se confundían). Cada grupo
+// se ubica por su entrega más temprana y adentro sigue por hora. Sin
+// dirección no se agrupa: cada una es su propio grupo.
+// La clave es calle + número, no el texto entero: los clientes escriben
+// la misma dirección con y sin "上海市XX区", con espacios entre cada
+// caracter, con el nombre del edificio adelante, etc. Primero se busca la
+// calle en chino (2 caracteres antes de 路/村 + número: 淞行路323), si no
+// en inglés (Jinhui road 1501 / 1501 Jinhui road). Junta torres distintas
+// del mismo complejo (789号1号楼 y 2号楼), que es lo que se quiere para
+// repartir. Chino contra inglés de la misma calle no se reconoce.
+const addrKey = c => {
+  const s = (c.address || "").toLowerCase().replace(/[\s,，.。、:：\-]/g, "");
+  if (!s || s === "tbc") return null;
+  const zh = s.match(/([一-鿿]{2}[路村])(\d+)/);
+  if (zh) return `zh:${zh[1]}${zh[2]}`;
+  const en = s.match(/(\d+)(?:lane|long|no)?([a-z]{3,}?)(?:road|rd)/) || s.match(/([a-z]{3,}?)(?:road|rd)(?:no)?(\d+)/);
+  if (en) return /^\d/.test(en[1]) ? `en:${en[2]}${en[1]}` : `en:${en[1]}${en[2]}`;
+  return s;
+};
+const byAddress = slots => {
+  const groups = [];
+  const idx = {};
+  slots.forEach(x => {
+    const k = addrKey(x.client);
+    if (k && idx[k] != null) groups[idx[k]].push(x);
+    else { if (k) idx[k] = groups.length; groups.push([x]); }
+  });
+  return groups;
+};
+// Letra (A, B, C…; después de Z sigue AA, AB…) y color del grupo n (desde 1).
+// La usan el PDF del Delivery Sheet y el menú de grupos del Kitchen Display,
+// así la misma dirección tiene la misma letra en los dos.
+const addrGroupTag = n => ({
+  letter: (n > 26 ? String.fromCharCode(64 + Math.floor((n - 1) / 26)) : "") + String.fromCharCode(65 + (n - 1) % 26),
+  color: ["#2563eb", "#9333ea", "#0d9488", "#ea580c", "#db2777"][(n - 1) % 5],
+});
+
 const KDS_TXT = {
   en: {
     live:"● Live · Shanghai", preview:"Preview · not today",
@@ -724,6 +775,7 @@ const KDS_TXT = {
     chefDone:"NOTHING LEFT TO COOK",
     hideSide:"◧ Hide side", showSide:"◧ Show side",
     dayTotalsBtn:"Σ Day total", dayTotals:"Day total",
+    groupsBtn:n=>`📍 Same address (${n})`, groups:"Same address",
     date:d=>fmtDateTab(d),
   },
   zh: {
@@ -750,6 +802,7 @@ const KDS_TXT = {
     chefDone:"今天没有要做的了",
     hideSide:"◧ 隐藏侧栏", showSide:"◧ 显示侧栏",
     dayTotalsBtn:"Σ 全天总数", dayTotals:"全天总数",
+    groupsBtn:n=>`📍 同一地址 (${n})`, groups:"同一地址",
     date:d=>{ try { return new Date(d+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"}); } catch { return d||"—"; } },
   },
 };
@@ -3025,6 +3078,9 @@ export default function App() {
   const toggleChefSide = () => setChefSide(v => { try { localStorage.setItem("chef_side", v ? "0" : "1"); } catch { /* sin storage */ } return !v; });
   // Menú "Total del día" del Chef Display: cada plato sumado entre todos los
   // cooking times. Se abre y cierra con un botón de la barra de arriba.
+  const [kdsGroups, setKdsGroups] = useState(false);
+  const kdsGroupsRef = useRef(false);
+  useEffect(() => { kdsGroupsRef.current = kdsGroups; }, [kdsGroups]);
   const [chefTotals, setChefTotals] = useState(false);
   const chefTotalsRef = useRef(false);
   useEffect(() => { chefTotalsRef.current = chefTotals; }, [chefTotals]);
@@ -3641,6 +3697,16 @@ export default function App() {
     return g;
   }, [deliveryClients, meals, pendingMeals, deliveryDay, mealLibraryState]);
 
+  // Grupos de 2+ paradas a la misma dirección dentro de un cooking time, en
+  // el mismo orden que el PDF (así las letras coinciden con la hoja impresa).
+  const addrGroups = useMemo(() => {
+    const out = [];
+    Object.entries(delivery).forEach(([cook, slots]) => byAddress(slots).forEach(items => {
+      if (items.length > 1) out.push({ cook, ...addrGroupTag(out.length + 1), items });
+    }));
+    return out;
+  }, [delivery]);
+
   // Primera comida de cada cliente nuevo (nunca renovó): su fecha más
   // temprana con entrega -- calculada con mealSlotsForDate, igual que la
   // hoja -- y dentro de ese día la entrega más temprana. Set de slot ids.
@@ -3861,6 +3927,7 @@ export default function App() {
       if (e.key !== "Escape") return;
       if (kdsDetailRef.current) setKdsDetail(null);
       else if (chefTotalsRef.current) setChefTotals(false);
+      else if (kdsGroupsRef.current) setKdsGroups(false);
       else { setShowKDS(false); setShowChef(false); }
     };
     window.addEventListener("keydown", onKey);
@@ -4191,39 +4258,8 @@ export default function App() {
     // fecha de hoy en el header).
     const dayName = fmtDateTab(deliveryDay);
     const dateStr = fmtDate(deliveryDay);
-    // Dentro de cada cooking time, las paradas con la misma dirección van
-    // juntas (si no, con 20 pedidos a la misma hora quedaban en hojas
-    // distintas y los chefs se confundían). Cada grupo
-    // se ubica por su entrega más temprana y adentro sigue por hora. Sin
-    // dirección no se agrupa: cada una es su propio grupo.
-    // La clave es calle + número, no el texto entero: los clientes escriben
-    // la misma dirección con y sin "上海市XX区", con espacios entre cada
-    // caracter, con el nombre del edificio adelante, etc. Primero se busca la
-    // calle en chino (2 caracteres antes de 路/村 + número: 淞行路323), si no
-    // en inglés (Jinhui road 1501 / 1501 Jinhui road). Junta torres distintas
-    // del mismo complejo (789号1号楼 y 2号楼), que es lo que se quiere para
-    // repartir. Chino contra inglés de la misma calle no se reconoce.
-    const addrKey = c => {
-      const s = (c.address || "").toLowerCase().replace(/[\s,，.。、:：\-]/g, "");
-      if (!s || s === "tbc") return null;
-      const zh = s.match(/([一-鿿]{2}[路村])(\d+)/);
-      if (zh) return `zh:${zh[1]}${zh[2]}`;
-      const en = s.match(/(\d+)(?:lane|long|no)?([a-z]{3,}?)(?:road|rd)/) || s.match(/([a-z]{3,}?)(?:road|rd)(?:no)?(\d+)/);
-      if (en) return /^\d/.test(en[1]) ? `en:${en[2]}${en[1]}` : `en:${en[1]}${en[2]}`;
-      return s;
-    };
-    const byAddress = slots => {
-      const groups = [];
-      const idx = {};
-      slots.forEach(x => {
-        const k = addrKey(x.client);
-        if (k && idx[k] != null) groups[idx[k]].push(x);
-        else { if (k) idx[k] = groups.length; groups.push([x]); }
-      });
-      return groups;
-    };
     const rows = Object.entries(delivery).flatMap(([cook, slots]) =>
-      byAddress(slots).flatMap((grp, gi) => grp.map(x => ({ ...x, grp: `${cook}_${gi}`, key: addrKey(x.client) })))
+      byAddress(slots).flatMap((grp, gi) => grp.map(x => ({ ...x, grp: `${cook}_${gi}`, key: addrKey(x.client) && `${cook}|${addrKey(x.client)}` })))
       .map(({client:c, slot, grp, key}, i) => ({
         grp, key,
         num: i+1,
@@ -4251,10 +4287,10 @@ export default function App() {
     // Color alterno por grupo de dirección: cambia cuando cambia el grupo.
     // Una dirección con 2+ pedidos en la hoja lleva una letra (A, B, C…, sin
     // repetir; después de Z sigue AA, AB…) y un color de barra que rota, para
-    // distinguir dos grupos pegados aunque se imprima en blanco y negro. La
-    // letra es por dirección en TODA la hoja: si la misma dirección también
-    // aparece en otro cooking time, ahí lleva la misma letra (sin moverla de
-    // su cooking time) y la etiqueta dice en qué otras horas está.
+    // distinguir dos grupos pegados aunque se imprima en blanco y negro. Solo
+    // se agrupa dentro del mismo cooking time: la misma dirección en otro
+    // cooking time es otro grupo con otra letra (la letra no se repite en la
+    // hoja).
     const byKey = {};
     rows.forEach(r => { if (r.key) (byKey[r.key] = byKey[r.key] || []).push(r); });
     const letters = {};
@@ -4267,10 +4303,7 @@ export default function App() {
       r.total = same.length;
       if (r.total > 1) {
         if (letters[r.key] == null) letters[r.key] = ++letter;
-        const n = letters[r.key];
-        r.letter = (n > 26 ? String.fromCharCode(64 + Math.floor((n - 1) / 26)) : "") + String.fromCharCode(65 + (n - 1) % 26);
-        r.color = ["#2563eb", "#9333ea", "#0d9488", "#ea580c", "#db2777"][(n - 1) % 5];
-        r.otherCooks = [...new Set(same.map(x => x.cookTime))].filter(t => t !== r.cookTime);
+        Object.assign(r, addrGroupTag(letters[r.key]));
       }
     });
 
@@ -4316,7 +4349,6 @@ export default function App() {
     tbody tr.same:not(.gend) td { border-bottom: 1px dashed #bbb; }
     tbody tr.gend td { border-bottom: 2.5px solid #111; }
     .same-tag { display: inline-block; margin-top: 3px; color: #fff; font-weight: 900; font-size: 8px; letter-spacing: .5px; padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
-    .same-also { margin-top: 2px; font-weight: 900; font-size: 8px; letter-spacing: .4px; white-space: nowrap; }
     .grp-letter { display: block; margin: 3px auto 0; width: 18px; height: 18px; line-height: 18px; border-radius: 50%; color: #fff; font-weight: 900; font-size: 11px; text-align: center; }
     tbody tr { page-break-inside: avoid; }
 
@@ -4408,8 +4440,7 @@ export default function App() {
         const cls = [r.alt ? "alt" : "", multi ? "same" : "",
                      multi && r.start ? "gstart" : "", multi && (!next || next.grp !== r.grp) ? "gend" : "",
                      r.isNew ? "new-client" : ""].filter(Boolean).join(" ");
-        const sameHtml = multi ? "<div class=\"same-tag\" style=\"background:" + r.color + "\">" + r.letter + " · SAME LOCATION ×" + r.total + "</div>" +
-          (r.otherCooks.length ? "<div class=\"same-also\" style=\"color:" + r.color + "\">ALSO COOK " + r.otherCooks.join(", ") + "</div>" : "") : "";
+        const sameHtml = multi ? "<div class=\"same-tag\" style=\"background:" + r.color + "\">" + r.letter + " · SAME LOCATION ×" + r.total + "</div>" : "";
         const letterHtml = multi ? "<span class=\"grp-letter\" style=\"background:" + r.color + "\">" + r.letter + "</span>" : "";
         const bar = multi ? " style=\"box-shadow: inset 5px 0 0 " + r.color + "\"" : "";
         return (cls ? "<tr class=\"" + cls + "\">" : "<tr>") +
@@ -5770,6 +5801,7 @@ export default function App() {
                   <div className="kds-kpi-l">{k.l}</div>
                 </div>
               ))}
+              {addrGroups.length>0&&<button className={`kds-btn${kdsGroups?" on":""}`} onClick={()=>setKdsGroups(v=>!v)}>{T.groupsBtn(addrGroups.length)}</button>}
               <button className="kds-btn" onClick={toggleKdsLang}>🌐 {T.lang}</button>
               {!isStandaloneApp()&&<button className="kds-btn" onClick={()=>canFullscreen()?toggleFullscreen():setKdsFsHint(true)}>{T.fullscreen}</button>}
               <button className="kds-btn" onClick={()=>setShowKDS(false)}>{T.exit}</button>
@@ -5802,6 +5834,39 @@ export default function App() {
             {kds.tbd.stops>0&&(
               <div className="kds-foot">
                 <span style={{color:"var(--amber)"}}>⚠ <b style={{color:"var(--amber)"}}>{kds.tbd.stops}</b> {T.tbdWarn(kds.tbd.stops)}</span>
+              </div>
+            )}
+
+            {kdsGroups&&addrGroups.length>0&&(
+              <div className="kds-pop-ov" onClick={()=>setKdsGroups(false)}>
+                <div className="chef-tot kds-grps" onClick={e=>e.stopPropagation()}>
+                  <div className="chef-side-hd">
+                    <span>{T.groups}</span>
+                    <span className="r">{addrGroups.length}</span>
+                    <button className="kds-btn" onClick={()=>setKdsGroups(false)}>✕</button>
+                  </div>
+                  <div className="chef-tot-body">
+                    {addrGroups.map((g,gi)=>(
+                      <div key={g.letter}>
+                        {(gi===0||addrGroups[gi-1].cook!==g.cook)&&<div className="kds-grp-ct">{T.colCook(g.cook)}</div>}
+                        <div className="kds-grp" style={{borderLeftColor:g.color}}>
+                          <div className="kds-grp-hd">
+                            <span className="lt" style={{background:g.color}}>{g.letter}</span>
+                            <span className="ad">{g.items[0].client.address}</span>
+                            <span className="ct">×{g.items.length}</span>
+                          </div>
+                          {g.items.map(({client:c, slot})=>(
+                            <div className={`kds-grp-ln${checks[`k_${slot.id}`]?" done":""}`} key={slot.id}>
+                              <span className="tm">{slot.time||"TBD"}</span>
+                              <span className="nm">{c.name}</span>
+                              {checks[`k_${slot.id}`]&&<span className="ok">✓</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 

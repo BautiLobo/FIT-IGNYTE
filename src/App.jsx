@@ -475,9 +475,9 @@ tbody tr:hover{background:#1e1e1e}
 .kds-card.new{border-left-color:var(--amber);box-shadow:0 0 0 2px var(--amber)}
 .kds-grpbox{border:2px solid;border-radius:12px;overflow:hidden;background:#0b0b0b}
 .kds-grpbox-hd{display:flex;align-items:baseline;gap:clamp(6px,.6vw,10px);padding:clamp(4px,.35vw,7px) clamp(10px,.9vw,16px) 0}
-.kds-grpbox-hd .lt{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:clamp(16px,1.3vw,24px);line-height:1}
-.kds-grpbox-hd .ad{flex:1;min-width:0;color:#999;font-weight:600;font-size:clamp(12px,.95vw,17px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kds-grpbox-hd .ct{font-family:'Rajdhani',sans-serif;font-weight:700;color:#999;font-size:clamp(14px,1.1vw,20px)}
+.kds-grpbox-hd .lt{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:clamp(24px,2.2vw,42px);line-height:1}
+.kds-grpbox-hd .ad{flex:1;min-width:0;color:#bbb;font-weight:600;font-size:clamp(16px,1.45vw,28px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kds-grpbox-hd .ct{font-family:'Rajdhani',sans-serif;font-weight:700;color:#bbb;font-size:clamp(20px,1.7vw,32px)}
 .kds-grpbox-body{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:clamp(8px,.85vw,16px);padding:clamp(6px,.6vw,10px) clamp(8px,.8vw,14px) clamp(8px,.8vw,14px)}
 .kds-grpbox .kds-card:not(.new){border-left:1px solid #262626}
 .kds-tk-new{flex-basis:100%;align-self:flex-start;width:fit-content;background:var(--amber);color:#000;border-radius:5px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);font-size:clamp(13px,1.1vw,22px);font-weight:900;letter-spacing:.8px;white-space:nowrap}

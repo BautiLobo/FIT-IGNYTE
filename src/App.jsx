@@ -473,12 +473,13 @@ tbody tr:hover{background:#1e1e1e}
 .kds-next .kds-card{border-left-color:#3b82f6}
 .kds-card.done{opacity:.25;background:#0a0a0a}
 .kds-card.new{border-left-color:var(--amber);box-shadow:0 0 0 2px var(--amber)}
-.kds-grpbox{border:4px solid;border-radius:12px;overflow:hidden;background:#0b0b0b}
-.kds-grpbox-hd{display:flex;align-items:center;gap:clamp(8px,.8vw,14px);padding:clamp(4px,.4vw,8px) clamp(10px,.9vw,16px);color:#fff}
-.kds-grpbox-hd .lt{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:clamp(20px,1.8vw,34px);line-height:1}
-.kds-grpbox-hd .ad{flex:1;min-width:0;font-weight:700;font-size:clamp(14px,1.15vw,22px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kds-grpbox-hd .ct{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:clamp(18px,1.5vw,28px)}
-.kds-grpbox-body{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:clamp(8px,.85vw,16px);padding:clamp(8px,.8vw,14px)}
+.kds-grpbox{border:2px solid;border-radius:12px;overflow:hidden;background:#0b0b0b}
+.kds-grpbox-hd{display:flex;align-items:baseline;gap:clamp(6px,.6vw,10px);padding:clamp(4px,.35vw,7px) clamp(10px,.9vw,16px) 0}
+.kds-grpbox-hd .lt{font-family:'Rajdhani',sans-serif;font-weight:700;font-size:clamp(16px,1.3vw,24px);line-height:1}
+.kds-grpbox-hd .ad{flex:1;min-width:0;color:#999;font-weight:600;font-size:clamp(12px,.95vw,17px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kds-grpbox-hd .ct{font-family:'Rajdhani',sans-serif;font-weight:700;color:#999;font-size:clamp(14px,1.1vw,20px)}
+.kds-grpbox-body{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:clamp(8px,.85vw,16px);padding:clamp(6px,.6vw,10px) clamp(8px,.8vw,14px) clamp(8px,.8vw,14px)}
+.kds-grpbox .kds-card:not(.new){border-left:1px solid #262626}
 .kds-tk-new{flex-basis:100%;align-self:flex-start;width:fit-content;background:var(--amber);color:#000;border-radius:5px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);font-size:clamp(13px,1.1vw,22px);font-weight:900;letter-spacing:.8px;white-space:nowrap}
 .kds-pop-new{display:inline-block;margin-bottom:8px}
 .kds-tk-hd{display:flex;align-items:center;flex-wrap:wrap;gap:clamp(6px,.6vw,12px) clamp(8px,.8vw,16px);padding:clamp(8px,.7vw,14px) clamp(10px,.95vw,20px);background:#1d1d1d;border-bottom:1px solid #2a2a2a}
@@ -919,9 +920,9 @@ function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en"
           // Paradas a la misma dirección (mismo grupo, ver addrGroups): un
           // recuadro del color del grupo que las encierra, con la dirección.
           <div className="kds-grpbox" key={sg.g.letter} style={{borderColor:sg.g.color, gridColumn:`span ${Math.min(sg.items.length, cols)}`, "--n":Math.min(sg.items.length, cols)}}>
-            <div className="kds-grpbox-hd" style={{background:sg.g.color}}>
-              <span className="lt">{sg.g.letter}</span>
-              <span className="ad">📍 {sg.g.items[0].client.address}</span>
+            <div className="kds-grpbox-hd">
+              <span className="lt" style={{color:sg.g.color}}>{sg.g.letter}</span>
+              <span className="ad">{sg.g.items[0].client.address}</span>
               <span className="ct">×{sg.items.length}</span>
             </div>
             <div className="kds-grpbox-body">{sg.items.map(card)}</div>

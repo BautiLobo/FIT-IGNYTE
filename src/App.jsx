@@ -453,6 +453,7 @@ tbody tr:hover{background:#1e1e1e}
    (vuelve al scrollear hacia arriba) para dejarle la pantalla a los tickets. */
 .kds-head{flex-shrink:0;overflow:hidden;max-height:160px;transition:max-height .25s ease}
 .kds-head.hide{max-height:0}
+.kds-head-tab{position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:6;background:#1a1a1a;border:1px solid #444;border-top:none;border-radius:0 0 10px 10px;color:#ddd;font-size:clamp(16px,1.3vw,24px);line-height:1;padding:4px 22px 6px;cursor:pointer;opacity:.85}
 .kds-body,.chef-hero-body,.chef-next-body,.chef-day-list,.chef-main{overscroll-behavior:contain}
 .kds-top{display:flex;align-items:center;flex-wrap:wrap;gap:clamp(8px,1vw,18px);padding:clamp(4px,.45vw,8px) clamp(12px,1.4vw,24px);background:#0d0d0d;border-bottom:2px solid var(--red)}
 .kds-clock{font-family:'Rajdhani',sans-serif;font-size:clamp(22px,2.3vw,42px);font-weight:700;line-height:1;letter-spacing:1px;color:#fff;font-variant-numeric:tabular-nums}
@@ -578,7 +579,7 @@ tbody tr:hover{background:#1e1e1e}
 .chef-tot{position:fixed;top:clamp(8px,1vw,16px);right:clamp(8px,1vw,16px);width:min(520px,calc(100vw - 16px));max-height:calc(100% - 16px);display:flex;flex-direction:column;background:#0d0d0d;border:1px solid #333;border-radius:10px;box-shadow:0 16px 40px rgba(0,0,0,.7);overflow:hidden}
 .chef-tot .chef-side-hd{background:#16263b;color:#cfe3ff;align-items:center}
 .chef-tot .chef-side-hd .kds-btn{margin-left:4px}
-.chef-tot-body{overflow-y:auto;padding:clamp(6px,.6vw,12px) clamp(12px,1.1vw,22px)}
+.chef-tot-body{flex:1;min-height:0;overflow-y:auto;padding:clamp(6px,.6vw,12px) clamp(12px,1.1vw,22px)}
 .chef-tot .chef-ln{border-bottom:1px solid #1a1a1a}
 .chef-tot .chef-ln .n{flex:1;min-width:0}
 .kds-grps .chef-side-hd{background:#2a1f0a;color:#fcd34d}
@@ -3040,9 +3041,16 @@ export default function App() {
     document.querySelectorAll(".kds-body,.chef-hero-body,.chef-next-body,.chef-day-list,.chef-main")
       .forEach(el => st.tops.set(el, { top: el.scrollTop, ch: el.clientHeight }));
   };
+  // Al abrir o cerrar KDS/Chef el encabezado arranca visible (si quedaba
+  // escondido de la vez anterior, no había botón de salir).
+  useEffect(() => { setKdsHeader(false); }, [showKDS, showChef]);
   const onKdsScroll = e => {
     const el = e.target;
     if (!(el instanceof Element)) return;
+    // El scroll adentro de un menú (grupos, total del día) no es el de la
+    // pantalla: si contaba, escondía el encabezado y con poco contenido
+    // atrás no había forma de volver a sacarlo.
+    if (el.closest(".kds-pop-ov")) return;
     const st = kdsScroll.current;
     const top = el.scrollTop;
     const ch = el.clientHeight;
@@ -5784,6 +5792,7 @@ export default function App() {
           .reduce((n,t)=>n+t.portions,0);
         return (
           <div className="kds" onScrollCapture={onKdsScroll}>
+            {kdsHdrHidden&&<button className="kds-head-tab" onClick={()=>setKdsHeader(false)} aria-label="Show header">▾</button>}
             <div className={`kds-head${kdsHdrHidden?" hide":""}`} onTransitionEnd={onKdsHeadTransitionEnd}>
             <div className="kds-top">
               <div className="kds-clock">{kds.isToday?clock:"--:--"}</div>
@@ -5992,6 +6001,7 @@ export default function App() {
         };
         return (
           <div className="kds" onScrollCapture={onKdsScroll}>
+            {kdsHdrHidden&&<button className="kds-head-tab" onClick={()=>setKdsHeader(false)} aria-label="Show header">▾</button>}
             <div className={`kds-head${kdsHdrHidden?" hide":""}`} onTransitionEnd={onKdsHeadTransitionEnd}>
             <div className="kds-top">
               <div className="kds-clock">{isToday?clock:"--:--"}</div>

@@ -3574,7 +3574,12 @@ export default function App() {
   }, [cookTimes, customItems, loaded]);
 
   // ── Derived
-  const active   = useMemo(() => clients.filter(c=>getRealStatus(c.startDate,c.expiryDate)==="Active"), [clients]);
+  // Un alta aprobada sin pagar ('Pending Payment') puede tener fechas igual
+  // (start_date lo pone approveOrder, expiry_date lo pone save-meal-selections
+  // si entró a home) -- getRealStatus solo mira fechas y la contaba como
+  // Active. Se excluye por status, no por `paid`: hay clientes manuales
+  // activos con paid=false que el staff sigue con el botón "Unpaid".
+  const active   = useMemo(() => clients.filter(c=>c.status!=="Pending Payment" && getRealStatus(c.startDate,c.expiryDate)==="Active"), [clients]);
   const unpaid   = useMemo(() => active.filter(c=>!c.paid), [active]);
   const renewDue = useMemo(() => active.filter(c=>{ const d=daysUntil(c.expiryDate); return d>=0&&d<=1; }), [active]);
   const overdue  = useMemo(() => active.filter(c=>daysUntil(c.expiryDate)<0), [active]);
@@ -3635,9 +3640,11 @@ export default function App() {
     return m ? m.name : id;
   };
 
-  // Active + Upcoming clients — used by Kitchen Prep and Delivery Sheet
+  // Active + Upcoming clients — used by Kitchen Prep, Delivery Sheet, KDS/Chef,
+  // Shopping List y Accounting. Sin los 'Pending Payment' (ver `active`):
+  // no se cocina ni se reparte a quien todavía no pagó, tenga fechas o no.
   const deliveryClients = useMemo(
-    () => clients.filter(c => ["Active","Upcoming"].includes(clientRealStatus(c))),
+    () => clients.filter(c => c.status !== "Pending Payment" && ["Active","Upcoming"].includes(clientRealStatus(c))),
     [clients, clientRealStatus]
   );
 

@@ -182,14 +182,53 @@ export async function setMenuRotationOrder(order) {
   await upsertSetting("menu_rotation_order", JSON.stringify(order));
 }
 
-export async function getCurrentWeekIndex() {
-  const settings = await getSettings(["menu_rotation_anchor", "menu_rotation_order"]);
-  const anchor = settings.menu_rotation_anchor ? new Date(settings.menu_rotation_anchor + "T00:00:00") : new Date();
-  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
-  const weeksSinceAnchor = Math.floor((Date.now() - anchor.getTime()) / msPerWeek);
-  const slot = ((weeksSinceAnchor % 2) + 2) % 2;
-  const order = parseRotationOrder(settings.menu_rotation_order);
+// Fecha local (no UTC) como YYYY-MM-DD.
+function localIsoDate(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Menú vigente para una fecha: rota por MES, igual que el mini-program
+// (app.js → getWeekIndexForDay). Un "mes de menú" empieza el primer día
+// hábil (lun-vie) del mes; el índice alterna order[0]/order[1] según los
+// meses de menú transcurridos desde `anchor`. Antes el admin alternaba por
+// semana y en algunos meses mostraba/validaba el otro menú.
+export function getWeekIndexForDay(dateStr, anchor, order) {
+  if (!anchor || !order || order.length !== 2) return 1;
+
+  const firstBusinessDayOfMonth = (year, month) => {
+    const d = new Date(year, month, 1);
+    const dow = d.getDay();
+    const offset = dow === 0 ? 1 : dow === 6 ? 2 : 0;
+    return new Date(year, month, 1 + offset);
+  };
+  // Si la fecha cae antes del primer día hábil del mes, es del mes anterior.
+  const menuMonthOf = (date) => {
+    const y = date.getFullYear();
+    const m = date.getMonth();
+    if (date < firstBusinessDayOfMonth(y, m)) {
+      return m === 0 ? { year: y - 1, month: 11 } : { year: y, month: m - 1 };
+    }
+    return { year: y, month: m };
+  };
+
+  const anchorMenu = menuMonthOf(new Date(anchor + "T00:00:00"));
+  const targetMenu = menuMonthOf(new Date(dateStr + "T00:00:00"));
+  const monthsSinceAnchor = (targetMenu.year - anchorMenu.year) * 12 + (targetMenu.month - anchorMenu.month);
+  const slot = ((monthsSinceAnchor % 2) + 2) % 2;
   return order[slot];
+}
+
+async function getRotationSettings() {
+  const settings = await getSettings(["menu_rotation_anchor", "menu_rotation_order"]);
+  return {
+    anchor: settings.menu_rotation_anchor || localIsoDate(),
+    order:  parseRotationOrder(settings.menu_rotation_order),
+  };
+}
+
+export async function getCurrentWeekIndex() {
+  const { anchor, order } = await getRotationSettings();
+  return getWeekIndexForDay(localIsoDate(), anchor, order);
 }
 
 
@@ -437,10 +476,14 @@ export async function approveOrder(order, deliveryFee) {
 
   let clientId;
   if (existing) {
+    // Cliente viejo que se vuelve a registrar: queda como alta sin pagar
+    // (paid=false) y sin tocar expiry_date -- las fechas las escribe
+    // complete-payment al pagar. Antes se le ponía el expiry_date del pedido
+    // nuevo con el start_date viejo y podía aparecer en cocina sin pagar.
     clientId = existing.id;
     check(await supabase.from("clients").update({
       ...clientFields,
-      expiry_date: order.expiry_date || null,
+      paid: false,
     }).eq("id", clientId), "approveOrder:updateClient");
   } else {
     const created = check(await supabase.from("clients").insert({
@@ -453,14 +496,17 @@ export async function approveOrder(order, deliveryFee) {
 
   // El pedido pudo quedar esperando aprobación varios días -- el menú rota
   // mensualmente, así que las comidas que el cliente eligió al registrarse
-  // pueden ya no estar en la rotación vigente. Se filtran acá contra el
-  // menú actual antes de guardarlas (mismo criterio que ya usa el
-  // mini-program en edit-meals.js para el caso análogo de una renovación
-  // demorada) para no dejar meal_ids fantasma en meal_selections.
+  // pueden ya no estar en la rotación vigente. Se filtran acá antes de
+  // guardarlas para no dejar meal_ids fantasma en meal_selections, pero
+  // contra el menú de CADA fecha de entrega (el que el MP le mostró para
+  // ese día), no contra el de hoy: si no, un pedido que cruza de mes, o
+  // con la rotación del admin desfasada, perdía comidas válidas en silencio.
+  // Las claves viejas mon..fri no tienen fecha: usan el menú de hoy.
   const planTier = order.plan_id
     ? check(await supabase.from("plans").select("tier").eq("id", order.plan_id).maybeSingle(), "approveOrder:findPlanTier")?.tier
     : null;
-  const weekIndex = await getCurrentWeekIndex();
+  const { anchor: rotAnchor, order: rotOrder } = await getRotationSettings();
+  const todayIso = localIsoDate();
 
   // `order.meals` viene keyed por fecha real ISO (mini-program nuevo) o por
   // etiqueta mon..fri (versión vieja, que sigue en celulares con el paquete
@@ -477,6 +523,7 @@ export async function approveOrder(order, deliveryFee) {
 
     let mealIds = slot.meal_ids || [];
     if (planTier && mealIds.length > 0) {
+      const weekIndex = getWeekIndexForDay(isDate ? key : todayIso, rotAnchor, rotOrder);
       const menuRow = check(
         await supabase.from("menu").select("meals_json").eq("day", dayName).eq("tier", planTier).eq("week_index", weekIndex).maybeSingle(),
         "approveOrder:findCurrentMenu"
@@ -672,6 +719,10 @@ export async function pushNotify(clientId, writer, content) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         client_id: clientId,
+        // Discovery, no home: discovery manda a cada uno a su pantalla
+        // (pago, aprobado, home...). Sin `page`, wx-notify abre home y un
+        // alta sin pagar entraba directo.
+        page: "pages/discovery/index",
         template_id: "A7o5PTcftFBe1nYsidWchFofz2z_DN9Whn_96H60x2M",
         data: {
           name1:  { value: String(writer).slice(0,10) },

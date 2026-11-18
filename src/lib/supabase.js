@@ -235,11 +235,23 @@ export async function getCurrentWeekIndex() {
 // ── MEAL SELECTIONS ──────────────────────────────────────────
 export async function getMealSelections() {
   // Join with meal_library to get full meal objects
-  const data = check(
-    await supabase.from("meal_selections")
-      .select("*, snack:snack_id(id,name,kcal,protein,carbs,fat,is_snack)"),
-    "getMealSelections"
-  );
+  // PostgREST corta en 1000 filas por request: sin paginar, desde que la
+  // tabla pasó las 1000 (17/11) el admin perdía filas al azar y mostraba
+  // "No deliveries added yet" a clientes con entregas. Se pide de a 1000,
+  // ordenado por id para que las páginas no se pisen.
+  const PAGE = 1000;
+  const data = [];
+  for (let from = 0; ; from += PAGE) {
+    const page = check(
+      await supabase.from("meal_selections")
+        .select("*, snack:snack_id(id,name,kcal,protein,carbs,fat,is_snack)")
+        .order("id")
+        .range(from, from + PAGE - 1),
+      "getMealSelections"
+    );
+    data.push(...(page || []));
+    if (!page || page.length < PAGE) break;
+  }
   // Index by client_id -> delivery_date -> array of slots
   const out = {};
   for (const row of (data || [])) {

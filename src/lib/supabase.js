@@ -81,8 +81,16 @@ export async function getClients() {
     wechatOpenid:   c.wechat_openid   || "",
     statusNote:     c.status_note     || "",
     cutlery:        c.cutlery         ?? false,
+    etaMin:         c.delivery_eta_min ?? null,
+    etaMax:         c.delivery_eta_max ?? null,
   }));
 }
+// Minutos del tiempo estimado de entrega: "" / null / inválido → null.
+const etaInt = v => {
+  if (v === "" || v == null) return null;
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
 export async function upsertClient(client) {
   const mapped = {
     name:           client.name,
@@ -109,6 +117,8 @@ export async function upsertClient(client) {
     wechat_openid:  client.wechatOpenid   || "",
     status_note:    client.statusNote     || "",
     cutlery:        client.cutlery        ?? false,
+    delivery_eta_min: etaInt(client.etaMin),
+    delivery_eta_max: etaInt(client.etaMax),
   };
   if (client.id) mapped.id = client.id;
   return check(await supabase.from("clients").upsert(mapped).select().single(), "upsertClient");
@@ -447,9 +457,9 @@ export async function getApprovedOrders() {
 export async function deleteNewOrder(id) {
   check(await supabase.from("new_orders").delete().eq("id", id), "deleteNewOrder");
 }
-export async function reApproveOrder(order, deliveryFee) {
+export async function reApproveOrder(order, deliveryFee, eta) {
   await supabase.from("new_orders").update({ status: "pending", note: "" }).eq("id", order.id);
-  return approveOrder({...order, status:"pending", note:""}, deliveryFee);
+  return approveOrder({...order, status:"pending", note:""}, deliveryFee, eta);
 }
 
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -467,7 +477,9 @@ function weekdayNameForDate(dateStr) {
 // `deliveryFee` is what the admin entered in the approve popup (¥/week) --
 // it's saved on both the order (audit trail) and the client (canonical,
 // reused automatically for this client's future renewals until edited).
-export async function approveOrder(order, deliveryFee) {
+// `eta` = { min, max } en minutos (tiempo estimado de entrega), opcional:
+// si viene vacío no se toca el que el cliente ya tuviera.
+export async function approveOrder(order, deliveryFee, eta) {
   const existing = order.phone
     ? check(await supabase.from("clients").select("id").eq("phone", order.phone).maybeSingle(), "approveOrder:findClient")
     : null;
@@ -485,6 +497,10 @@ export async function approveOrder(order, deliveryFee) {
     wechat_openid:  order.wechat_openid  || "",
     delivery_fee:   deliveryFee,
   };
+  if (etaInt(eta?.min) && etaInt(eta?.max)) {
+    clientFields.delivery_eta_min = etaInt(eta.min);
+    clientFields.delivery_eta_max = etaInt(eta.max);
+  }
 
   let clientId;
   if (existing) {

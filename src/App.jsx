@@ -93,7 +93,7 @@ const BLANK_CLIENT = {
   planId:"", planName:"", status:"Active",
   startDate:"", expiryDate:"", paid:false,
   goal:"", allergies:"", customizations:"", ltv:0, weeks:0,
-  deliveryFee:null,
+  deliveryFee:null, etaMin:null, etaMax:null,
 };
 const BLANK_PLAN = { id:"", name:"", name_zh:"", kcal:0, meals:1, price:0, tier:"", tier_zh:"", color:"#38BDF8" };
 
@@ -243,6 +243,22 @@ function getRealStatus(startDate, expiryDate) {
 // cliente en el MP para ese día) y la fija del perfil, las dos. Antes era
 // `slot.note || customizations`, así que con nota de entrega la del perfil
 // no se veía nunca. Si dicen lo mismo, va una sola.
+// Tiempo estimado de entrega del cliente ("30–40 min"), o "" si no tiene.
+function fmtEta(c) {
+  const a = Number(c?.etaMin), b = Number(c?.etaMax);
+  if (!(a > 0) || !(b > 0)) return "";
+  return a === b ? `${a} min` : `${a}–${b} min`;
+}
+// Valida un par desde/hasta escrito a mano. Vacíos los dos = sin estimado.
+function parseEta(minStr, maxStr) {
+  const s1 = String(minStr ?? "").trim(), s2 = String(maxStr ?? "").trim();
+  if (!s1 && !s2) return { ok: true, min: null, max: null };
+  const a = Number(s1), b = Number(s2);
+  if (!s1 || !s2 || !Number.isInteger(a) || !Number.isInteger(b) || a <= 0 || b < a)
+    return { ok: false };
+  return { ok: true, min: a, max: b };
+}
+
 function deliveryNotes(slot, client) {
   const clean = s => { const v = (s || "").trim(); return v && v !== "—" ? v : ""; };
   const nt = clean(slot?.note);
@@ -490,6 +506,8 @@ tbody tr:hover{background:#1e1e1e}
 .kds-tk-cut.yes{background:#16a34a;color:#fff}
 .kds-tk-cut.no{background:#2a2a2a;color:#aaa;border:1px solid #444}
 .kds-card.done .kds-tk-cut{opacity:.4}
+.kds-tk-eta{flex-shrink:0;border-radius:6px;padding:clamp(2px,.25vw,5px) clamp(8px,.7vw,14px);background:#2a2a2a;color:#e5e5e5;border:1px solid #444;font-size:clamp(15px,1.2vw,24px);font-weight:800;line-height:1.1;white-space:nowrap;font-variant-numeric:tabular-nums}
+.kds-card.done .kds-tk-eta{opacity:.4}
 .kds-tk-body{padding:clamp(8px,.8vw,16px) clamp(10px,.95vw,20px)}
 .kds-line{display:flex;align-items:baseline;gap:clamp(6px,.5vw,10px);padding:clamp(5px,.4vw,8px) 0;border-bottom:1px solid #222}
 .kds-line:last-of-type{border-bottom:none}
@@ -870,6 +888,7 @@ function KdsBucket({ kind, title, bucket, checks, onOpen, emptyText, lang = "en"
         <div className="kds-tk-hd">
           <span className="kds-tk-name">{t.client}</span>
           <span className="kds-tk-out">🚚 {t.out}</span>
+          {t.eta&&<span className="kds-tk-eta">⏱ {t.eta}</span>}
           <span className={`kds-tk-cut ${t.cutlery?"yes":"no"}`}>🍴 {t.cutlery?T.yes:T.no}</span>
           {t.isNew&&<span className="kds-tk-new">{T.newClient}</span>}
         </div>
@@ -3164,6 +3183,8 @@ export default function App() {
   const [orderDeleteBusyId,  setOrderDeleteBusyId]   = useState(null);
   const [orderToApprove,     setOrderToApprove]      = useState(null);
   const [approveFeeInput,    setApproveFeeInput]     = useState("");
+  const [approveEtaMin,      setApproveEtaMin]       = useState("");
+  const [approveEtaMax,      setApproveEtaMax]       = useState("");
   const [coaches,            setCoaches]            = useState([]);
   const [coachForm,          setCoachForm]          = useState({name:"",code:""});
   const [coachBusy,          setCoachBusy]          = useState(false);
@@ -3343,10 +3364,16 @@ export default function App() {
     finally { setNotifBusy(false); }
   };
 
-  const handleApproveOrder = (order) => {
+  // Si el pedido es de un cliente que ya existe (mismo teléfono) y ya tenía
+  // tiempo estimado, se precarga para no tener que volver a escribirlo.
+  const openApprove = (order) => {
     setApproveFeeInput(order.delivery_fee != null ? String(order.delivery_fee) : "");
+    const known = order.phone ? clients.find(c => c.phone === order.phone) : null;
+    setApproveEtaMin(known?.etaMin != null ? String(known.etaMin) : "");
+    setApproveEtaMax(known?.etaMax != null ? String(known.etaMax) : "");
     setOrderToApprove(order);
   };
+  const handleApproveOrder = openApprove;
   const handleRejectOrder = async (order) => {
     const note = prompt("Reason for rejection (optional):") || "";
     setOrdersBusyId(order.id);
@@ -3354,10 +3381,7 @@ export default function App() {
     catch (e) { console.error(e); alert("Could not reject order."); }
     finally { setOrdersBusyId(null); }
   };
-  const handleReApproveOrder = (order) => {
-    setApproveFeeInput(order.delivery_fee != null ? String(order.delivery_fee) : "");
-    setOrderToApprove(order);
-  };
+  const handleReApproveOrder = openApprove;
   // Borrar un pedido del historial (Approved/Rejected) es irreversible y no
   // deshace nada más -- si el pedido ya fue aprobado, el cliente que se creó
   // en `clients` NO se toca, así que se pide confirmación varias veces (y con
@@ -3394,10 +3418,15 @@ export default function App() {
       alert("Enter a valid delivery fee.");
       return;
     }
+    const eta = parseEta(approveEtaMin, approveEtaMax);
+    if (!eta.ok) {
+      alert("Estimated delivery time: enter both minutes (e.g. 30 and 40), the second one not smaller than the first, or leave both empty.");
+      return;
+    }
     setOrdersBusyId(order.id);
     try {
-      if (order.status === "rejected") await reApproveOrder(order, fee);
-      else await approveOrder(order, fee);
+      if (order.status === "rejected") await reApproveOrder(order, fee, eta);
+      else await approveOrder(order, fee, eta);
       await refreshOrders();
       setOrderToApprove(null);
     } catch (e) { console.error(e); alert("Could not approve order."); }
@@ -3882,6 +3911,7 @@ export default function App() {
           address: r.client.address || "",
           access: r.client.access || "",
           cutlery: !!r.client.cutlery,
+          eta: fmtEta(r.client),
           isNew: firstMealSlotIds.has(r.slot.id),
         };
       })
@@ -4169,6 +4199,10 @@ export default function App() {
 
   const saveClient = async () => {
     if (!clientForm.name.trim()) return;
+    if (!parseEta(clientForm.etaMin, clientForm.etaMax).ok) {
+      alert("Estimated delivery time: enter both minutes (e.g. 30 and 40), the second one not smaller than the first, or leave both empty.");
+      return;
+    }
     try {
       // Ensure planId is set correctly (clientForm might have plan as object from spread)
       const formToSave = {
@@ -4192,6 +4226,8 @@ export default function App() {
         acqChannel:   rawSaved.acq_channel     || "",
         wechatOpenid: rawSaved.wechat_openid   || "",
         statusNote:   rawSaved.status_note     || "",
+        etaMin:       rawSaved.delivery_eta_min ?? null,
+        etaMax:       rawSaved.delivery_eta_max ?? null,
       };
       if (editClientId) {
         setClients(p=>p.map(c=>c.id===editClientId?saved:c));
@@ -4354,6 +4390,7 @@ export default function App() {
         notes: deliveryNotes(slot, c),
         allergies: c.allergies || "",
         cutlery: c.cutlery || false,
+        eta: fmtEta(c),
         isNew: firstMealSlotIds.has(slot.id),
       }))
     );
@@ -4400,11 +4437,11 @@ export default function App() {
     /* ── Table ── */
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     col.cn  { width: 3%; }
-    col.ct  { width: 6%; }
+    col.ct  { width: 8%; }
     col.cct { width: 8%; }
     col.cc  { width: 13%; }
     col.ca  { width: 16%; }
-    col.cm  { width: 26%; }
+    col.cm  { width: 24%; }
     col.cs  { width: 10%; }
     col.cno { width: 18%; }
     col.ccut{ width: 6%; }
@@ -4430,6 +4467,7 @@ export default function App() {
     /* ── Cell styles ── */
     .cn-num  { font-weight: 900; font-size: 14px; color: #bbb; text-align: center; vertical-align: middle; }
     .ct-time { font-weight: 800; font-size: 12px; color: #e8342a; white-space: nowrap; vertical-align: middle; }
+    .ct-eta { display: inline-block; margin-top: 4px; background: #111; color: #fff; font-weight: 900; font-size: 11px; padding: 2px 5px; border-radius: 3px; white-space: nowrap; line-height: 1.2; }
     .cct-time { font-weight: 800; font-size: 12px; color: #b45309; white-space: nowrap; vertical-align: middle; }
     .cc-name { font-weight: 800; font-size: 11.5px; }
     .cc-phone { font-size: 9.5px; color: #444; margin-top: 2px; font-weight: 600; }
@@ -4518,7 +4556,7 @@ export default function App() {
         const bar = multi ? " style=\"box-shadow: inset 5px 0 0 " + r.color + "\"" : "";
         return (cls ? "<tr class=\"" + cls + "\">" : "<tr>") +
           "<td class=\"cn-num\"" + bar + ">" + (i+1) + letterHtml + "</td>" +
-          "<td class=\"ct-time\">" + r.time + "</td>" +
+          "<td class=\"ct-time\">" + r.time + (r.eta ? "<div><span class=\"ct-eta\">" + r.eta + "</span></div>" : "") + "</td>" +
           "<td class=\"cct-time\">" + r.cookTime + "</td>" +
           "<td><div class=\"cc-name\">" + r.name + "</div>" + (r.isNew ? "<div class=\"new-tag\">NEW</div>" : "") + (r.phone ? "<div class=\"cc-phone\">" + r.phone + "</div>" : "") + "<div class=\"cc-plan\">" + r.plan + "</div></td>" +
           "<td><div class=\"ca-addr\">" + r.address + "</div>" + sameHtml + accessHtml + "</td>" +
@@ -4937,6 +4975,7 @@ export default function App() {
                         <PlanBadge planName={clientPlanName(c)} plans={plans}/>
                         {clientRealStatus(c)==="Upcoming"&&
                           <span className="bx bx-a" style={{fontSize:9}}>Upcoming · starts {fmtDate(pendingRenewalStartByClient[c.id] || c.startDate)}</span>}
+                        {fmtEta(c)&&<span className="bx bx-gr" style={{fontSize:10}} title="Estimated delivery time">⏱ {fmtEta(c)}</span>}
                         {c.customizations&&<span style={{fontSize:10,color:"#fcd34d"}}>⚠️ {c.customizations}</span>}
                         <button
                           onClick={()=>toggleCutlery(c.id)}
@@ -5209,7 +5248,10 @@ export default function App() {
                           {firstMealSlotIds.has(slot.id)&&<div style={{width:"fit-content",marginTop:4,background:"var(--amber)",color:"#000",borderRadius:4,padding:"2px 7px",fontSize:10,fontWeight:800,letterSpacing:.5,whiteSpace:"nowrap"}}>⭐ NEW CLIENT · 1ST MEAL</div>}
                         </td>
                         <td style={{whiteSpace:"nowrap"}}><PlanBadge planName={clientPlanName(c)} plans={plans}/></td>
-                        <td style={{whiteSpace:"nowrap",fontWeight:600,color:"var(--amber)"}}>🛵 {slot.time||"TBD"}</td>
+                        <td style={{whiteSpace:"nowrap",fontWeight:600,color:"var(--amber)"}}>
+                          🛵 {slot.time||"TBD"}
+                          {fmtEta(c)&&<div style={{fontSize:10,fontWeight:500,color:"var(--muted)",marginTop:2}}>⏱ {fmtEta(c)}</div>}
+                        </td>
                         <td style={{color:"var(--muted)",wordBreak:"break-word"}}>{c.address||"TBC"}</td>
                         <td style={{color:"var(--muted)",fontSize:10}}>{c.access||"—"}</td>
                         <td>
@@ -5625,6 +5667,13 @@ export default function App() {
                   <div className="fl fg-full"><label>Address</label><input className="inp" value={clientForm.address||""} onChange={e=>cfld("address",e.target.value)} placeholder="288 Nanjing Rd, 801B"/></div>
                   <div className="fl fg-full"><label>Building Access</label><input className="inp" value={clientForm.access||""} onChange={e=>cfld("access",e.target.value)} placeholder="e.g. Leave at door, ring doorbell..."/></div>
                   <div className="fl"><label>Delivery Fee (¥/week)</label><input className="inp" type="number" value={clientForm.deliveryFee ?? ""} onChange={e=>cfld("deliveryFee",e.target.value)} placeholder="e.g. 35"/></div>
+                  <div className="fl"><label>Estimated Delivery Time (min)</label>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <input className="inp" type="number" min="1" value={clientForm.etaMin ?? ""} onChange={e=>cfld("etaMin",e.target.value)} placeholder="30"/>
+                      <span style={{color:"var(--muted)"}}>–</span>
+                      <input className="inp" type="number" min="1" value={clientForm.etaMax ?? ""} onChange={e=>cfld("etaMax",e.target.value)} placeholder="40"/>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -5699,6 +5748,14 @@ export default function App() {
                     onChange={e=>setApproveFeeInput(e.target.value)}
                     placeholder="e.g. 35"
                   />
+                </div>
+                <div className="fl fg-full">
+                  <label>Estimated Delivery Time (min)</label>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <input className="inp" type="number" min="1" value={approveEtaMin} onChange={e=>setApproveEtaMin(e.target.value)} placeholder="30"/>
+                    <span style={{color:"var(--muted)"}}>–</span>
+                    <input className="inp" type="number" min="1" value={approveEtaMax} onChange={e=>setApproveEtaMax(e.target.value)} placeholder="40"/>
+                  </div>
                 </div>
               </div>
             </div>
@@ -5955,6 +6012,7 @@ export default function App() {
                 ["🔑", t.access || "—"],
                 ["📞", t.phone || "—"],
                 ["🍴", t.cutlery ? T.yes : T.no],
+                ...(t.eta ? [["⏱", t.eta]] : []),
               ];
               // Popup encima de la tarjeta tocada (misma esquina, un poco más
               // ancho), con el resto de la pantalla en gris. Se corre lo justo

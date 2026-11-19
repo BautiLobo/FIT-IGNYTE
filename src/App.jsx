@@ -3654,10 +3654,14 @@ export default function App() {
   const upcomingDates = useMemo(() => collectUpcomingDates(meals, pendingMeals), [meals, pendingMeals]);
 
   // Cuántos clientes tienen al menos una entrega (actual o pendiente) por fecha.
+  // Sin los 'Pending Payment': no se listan en Meal Selections, así que
+  // tampoco cuentan en el número del tab.
   const mealClientCountByDate = useMemo(() => {
+    const unpaid = new Set(clients.filter(c => c.status === "Pending Payment").map(c => String(c.id)));
     const byDate = {};
     [meals, pendingMeals].forEach(byClient => {
       Object.entries(byClient || {}).forEach(([cid, dates]) => {
+        if (unpaid.has(String(cid))) return;
         Object.keys(dates || {}).forEach(d => {
           if ((dates[d] || []).length > 0) (byDate[d] = byDate[d] || new Set()).add(cid);
         });
@@ -3666,7 +3670,7 @@ export default function App() {
     const out = {};
     Object.keys(byDate).forEach(d => { out[d] = byDate[d].size; });
     return out;
-  }, [meals, pendingMeals]);
+  }, [clients, meals, pendingMeals]);
 
   const goMealWindow = (delta) => {
     const next = Math.max(0, mealWindow + delta);
@@ -4889,7 +4893,9 @@ export default function App() {
                 // pending_meal_selections) para esa fecha exacta, o si el día cae dentro
                 // de su ventana de planificación aunque todavía no haya elegido nada ahí.
                 const hasAnyPending = c => Object.keys(pendingMeals[c.id] || {}).length > 0;
-                const planningClients = clients.filter(c => getRealStatus(c.startDate, c.expiryDate) !== "Inactive" || hasAnyPending(c));
+                // Los 'Pending Payment' no se muestran: hasta que paguen no se
+                // cocina ni se reparte nada para ellos (igual que la Delivery Sheet).
+                const planningClients = clients.filter(c => c.status !== "Pending Payment" && (getRealStatus(c.startDate, c.expiryDate) !== "Inactive" || hasAnyPending(c)));
                 const earliestTime = c => (meals[c.id]?.[mealDay]||[]).reduce((min,s) => {
                   const t = s.time||"";
                   return t && (!min || t<min) ? t : min;

@@ -527,6 +527,7 @@ tbody tr:hover{background:#1e1e1e}
 .kds-pop-row .v{color:#fff;font-weight:500;overflow-wrap:anywhere}
 .kds-pop-done{width:100%;margin-top:12px;border:none;border-radius:6px;cursor:pointer;padding:12px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;font-size:clamp(16px,1.25vw,22px);background:var(--green);color:#000}
 .kds-pop-done.on{background:#2a2a2a;color:#ccc}
+.kds-pop-print{background:#fff;color:#000;margin-top:8px}
 .kds-tag{display:block;border-radius:4px;padding:clamp(3px,.3vw,7px) clamp(7px,.6vw,13px);margin-top:7px;font-size:clamp(11px,1vw,20px);font-weight:600;line-height:1.35;overflow-wrap:anywhere}
 .kds-tag.al{background:#3b1111;color:#fca5a5}
 .kds-tag.nt{background:#31240a;color:#fcd34d}
@@ -791,7 +792,7 @@ const KDS_TXT = {
     portions:n=>`${n} portion${n!==1?"s":""}`, stops:n=>`${n} stop${n!==1?"s":""}`,
     ready:"ready ✓", pc:n=>`${n} pc`, batch:"Batch", size:{BIG:"BIG",SMALL:"SMALL"},
     yes:"Cutlery", no:"No cutlery", newClient:"⭐ NEW CLIENT · 1ST MEAL",
-    markReady:"✓ Mark ready", unmark:"↺ Not ready",
+    markReady:"✓ Mark ready", unmark:"↺ Not ready", printLabel:"🖨 Print label",
     tbdWarn:n=>`stop${n!==1?"s":""} with no delivery time set — not shown in any hour`,
     chefTitle:"Chef · what to cook", plates:"plates", platesTotal:n=>`plate${n!==1?"s":""} today`,
     cookNowTag:"Cook now", nextTag:"Next", noTimeTag:"No time",
@@ -818,7 +819,7 @@ const KDS_TXT = {
     portions:n=>`${n} 份`, stops:n=>`${n} 单`,
     ready:"已完成 ✓", pc:n=>`${n} 份`, batch:"批次", size:{BIG:"大份",SMALL:"小份"},
     yes:"要餐具", no:"不要餐具", newClient:"⭐ 新客户 · 第一餐",
-    markReady:"✓ 标记完成", unmark:"↺ 取消完成",
+    markReady:"✓ 标记完成", unmark:"↺ 取消完成", printLabel:"🖨 打印标签",
     tbdWarn:()=>"单未设置送达时间 — 不在任何时段显示",
     chefTitle:"厨师 · 要做什么", plates:"份", platesTotal:()=>"今天共计",
     cookNowTag:"现在做", nextTag:"下一个", noTimeTag:"未定时间",
@@ -3913,6 +3914,7 @@ export default function App() {
           cutlery: !!r.client.cutlery,
           eta: fmtEta(r.client),
           isNew: firstMealSlotIds.has(r.slot.id),
+          raw: { client: r.client, slot: r.slot },
         };
       })
       .filter(t => t.meals.length > 0)
@@ -4359,6 +4361,83 @@ export default function App() {
     } catch(e){ console.error(e); }
   };
 
+  // ── Etiqueta de bolsa para impresora térmica de 80mm (Xprinter y similares).
+  // Una por pedido: se imprime desde un iframe oculto con el diálogo de
+  // impresión del sistema, así que la impresora tiene que estar instalada en
+  // el equipo (driver en la PC / app de impresión en la tablet). Ancho útil
+  // del papel de 80mm = 72mm; solo negro, por eso todo va en negrita.
+  const printBagLabel = (c, slot) => {
+    const esc = v => String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const clean = v => { const x = String(v ?? "").trim(); return x && x !== "—" ? x : ""; };
+    const d = new Date(deliveryDay + "T00:00:00");
+    const dateStr = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }).toUpperCase();
+    const meals = (slot.meals || []).filter(id => id && String(id).trim() && id !== "—").map((id, mi) => {
+      const lib = mealLibraryRef.current.find(m => m.id === id);
+      const sauceId = (slot.sauceIds || [])[mi];
+      return {
+        tier: (lib?.tier || "").toUpperCase(),
+        size: mealSize(lib?.tier),
+        name: mealName(id) || id,
+        sauce: sauceId ? mealName(sauceId) : "",
+      };
+    });
+    const snack = slot.snackId ? mealName(slot.snackId) : clean(slot.snack);
+    const notes = deliveryNotes(slot, c);
+    const allergies = clean(c.allergies);
+    const eta = fmtEta(c);
+    const isNew = firstMealSlotIds.has(slot.id);
+    const line = '<div class="hr"></div>';
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Label</title><style>
+  @page { size: 80mm auto; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+  body { width: 72mm; padding: 2mm 1mm 6mm; font-family: "Courier New", Menlo, "PingFang SC", "Microsoft YaHei", monospace; font-size: 13px; font-weight: 700; line-height: 1.3; }
+  .hr { border-top: 2px solid #000; margin: 6px 0; }
+  .c { text-align: center; }
+  .brand { font-size: 20px; font-weight: 900; letter-spacing: 3px; }
+  .new { display: inline-block; border: 2px solid #000; padding: 1px 6px; margin-top: 4px; font-size: 12px; }
+  .big { font-size: 17px; font-weight: 900; }
+  .phone { font-size: 18px; font-weight: 900; letter-spacing: .5px; }
+  .k { font-size: 11px; }
+  .sec { margin-top: 6px; }
+  .meal { display: flex; gap: 6px; margin-top: 6px; }
+  .meal .n { flex-shrink: 0; }
+  .meal .t { font-size: 11px; }
+  .meal .nm { font-size: 14px; }
+  .meal .sc { font-size: 12px; }
+  .alg { border: 2px solid #000; padding: 3px 5px; margin-top: 6px; font-size: 14px; }
+  .addr { font-size: 15px; font-weight: 900; word-break: break-all; }
+</style></head><body>
+  ${line}<div class="c brand">FIT IGNYTE</div>${isNew ? '<div class="c"><span class="new">NEW CLIENT · 1ST MEAL</span></div>' : ""}${line}
+  <div>${esc(dateStr)}</div>
+  <div class="sec"><span class="k">CUSTOMER:</span><br/><span class="big">${esc(c.name)}</span></div>
+  <div><span class="k">CLIENT:</span> #${esc(c.id)}</div>
+  <div class="sec"><span class="k">DELIVERY:</span> <span class="big">${esc(slot.time || "TBD")}</span>${eta ? ` <span class="k">(${esc(eta)})</span>` : ""}</div>
+  ${c.phone ? `<div><span class="k">PHONE:</span> <span class="phone">${esc(c.phone)}</span></div>` : ""}
+  ${line}<div class="c big">MEALS: ${meals.length}</div>${line}
+  ${meals.map((m, i) => `<div class="meal"><span class="n">${i + 1}.</span><div>${m.tier ? `<div class="t">${esc(m.tier)}${m.size ? " · " + m.size : ""}</div>` : ""}<div class="nm">${esc(m.name)}</div>${m.sauce ? `<div class="sc">+ ${esc(m.sauce)}</div>` : ""}</div></div>`).join("")}
+  ${snack ? `<div class="sec"><span class="k">SNACK:</span> ${esc(snack)}</div>` : ""}
+  ${allergies ? `<div class="alg">⚠ ALLERGIES: ${esc(allergies)}</div>` : ""}
+  <div class="sec"><span class="k">CUTLERY:</span> ${c.cutlery ? "YES" : "NO"}</div>
+  ${notes.length ? `<div class="sec"><span class="k">NOTES:</span>${notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
+  ${line}
+  <div class="k">ADDRESS:</div>
+  <div class="addr">${esc([clean(c.address) || "TBC", clean(c.district)].filter(Boolean).join(" · "))}</div>
+  ${clean(c.access) ? `<div class="sec"><span class="k">ACCESS:</span> ${esc(c.access)}</div>` : ""}
+  ${line}
+</body></html>`;
+    // Iframe oculto: un toque = diálogo de impresión, sin abrir pestañas.
+    const old = document.getElementById("bag-label-frame");
+    if (old) old.remove();
+    const f = document.createElement("iframe");
+    f.id = "bag-label-frame";
+    f.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+    document.body.appendChild(f);
+    const doc = f.contentWindow.document;
+    doc.open(); doc.write(html); doc.close();
+    setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { console.error(e); } }, 250);
+  };
+
   // ── Print / Save as PDF delivery sheet (supports Chinese characters)
   const printDelivery = () => {
     // deliveryDay ya es la fecha real elegida en el tab -- antes esto
@@ -4470,7 +4549,7 @@ export default function App() {
     .ct-eta { display: inline-block; margin-top: 4px; background: #111; color: #fff; font-weight: 900; font-size: 11px; padding: 2px 5px; border-radius: 3px; white-space: nowrap; line-height: 1.2; }
     .cct-time { font-weight: 800; font-size: 12px; color: #b45309; white-space: nowrap; vertical-align: middle; }
     .cc-name { font-weight: 800; font-size: 11.5px; }
-    .cc-phone { font-size: 12.5px; color: #111; margin-top: 3px; font-weight: 800; letter-spacing: 0.2px; }
+    .cc-phone { font-size: 12.5px; color: #111; margin-top: 3px; font-weight: 800; letter-spacing: 0.2px; white-space: nowrap; }
     .cc-plan { font-size: 9px; color: #777; margin-top: 2px; }
     .ca-addr { font-size: 10.5px; font-weight: 600; }
     .ca-acc  { font-size: 9.5px; color: #444; margin-top: 3px; font-style: italic; font-weight: 600; }
@@ -5229,14 +5308,14 @@ export default function App() {
                   <div className="tbl-wrap"><table className="del-tbl" style={{tableLayout:"fixed",width:"100%"}}>
                     <colgroup>
                       <col style={{width:"3%"}}/>
-                      <col style={{width:"11%"}}/>
+                      <col style={{width:"15%"}}/>
                       <col style={{width:"13%"}}/>
                       <col style={{width:"6%"}}/>
                       <col style={{width:"16%"}}/>
-                      <col style={{width:"10%"}}/>
-                      <col style={{width:"17%"}}/>
+                      <col style={{width:"9%"}}/>
+                      <col style={{width:"16%"}}/>
                       <col style={{width:"5%"}}/>
-                      <col style={{width:"12%"}}/>
+                      <col style={{width:"10%"}}/>
                       <col style={{width:"7%"}}/>
                     </colgroup>
                     <thead><tr><th>#</th><th>Client</th><th>Plan</th><th>Delivery</th><th>Address</th><th>Access</th><th>Meals</th><th>Cutlery</th><th>Note</th><th>Done</th></tr></thead>
@@ -5245,7 +5324,7 @@ export default function App() {
                         <td style={{color:"var(--dim)",whiteSpace:"nowrap"}}>{i+1}</td>
                         <td style={{color:"#fff",fontWeight:500,wordBreak:"break-word"}}>
                           {c.name}
-                          {c.phone&&<div style={{marginTop:3,fontSize:14,fontWeight:700,color:"#fff",letterSpacing:.2}}>📞 {c.phone}</div>}
+                          {c.phone&&<div style={{marginTop:3,fontSize:14,fontWeight:700,color:"#fff",letterSpacing:.2,whiteSpace:"nowrap"}}>{c.phone}</div>}
                           {firstMealSlotIds.has(slot.id)&&<div style={{width:"fit-content",marginTop:4,background:"var(--amber)",color:"#000",borderRadius:4,padding:"2px 7px",fontSize:10,fontWeight:800,letterSpacing:.5,whiteSpace:"nowrap"}}>⭐ NEW CLIENT · 1ST MEAL</div>}
                         </td>
                         <td style={{whiteSpace:"nowrap"}}><PlanBadge planName={clientPlanName(c)} plans={plans}/></td>
@@ -5264,7 +5343,8 @@ export default function App() {
                         <td style={{color:"#fcd34d",fontSize:10}}>{(()=>{ const ns = deliveryNotes(slot, c); return ns.length ? ns.map((n,i)=><div key={i}>{n}</div>) : "—"; })()}</td>
                         <td style={{whiteSpace:"nowrap"}}>{isStaff
                           ? <span className={`bx ${checks["d_"+slot.id]?"bx-g":"bx-gr"}`}>{checks["d_"+slot.id]?"✓ Done":"Pending"}</span>
-                          : <button className={`bx bx-clk ${checks["d_"+slot.id]?"bx-g":"bx-gr"}`} onClick={()=>toggleCheck("d_"+slot.id)}>{checks["d_"+slot.id]?"✓ Done":"Pending"}</button>}</td>
+                          : <button className={`bx bx-clk ${checks["d_"+slot.id]?"bx-g":"bx-gr"}`} onClick={()=>toggleCheck("d_"+slot.id)}>{checks["d_"+slot.id]?"✓ Done":"Pending"}</button>}
+                          <div><button className="bx bx-clk" style={{marginTop:6,background:"#fff",color:"#000"}} title="Print bag label" onClick={()=>printBagLabel(c, slot)}>🖨 Label</button></div></td>
                       </tr>
                     ))}</tbody>
                   </table></div>
@@ -6019,7 +6099,7 @@ export default function App() {
               // ancho), con el resto de la pantalla en gris. Se corre lo justo
               // para no salirse de la pantalla.
               const r = t.rect;
-              const W = Math.max(r.width + 24, 400), H = 280;
+              const W = Math.max(r.width + 24, 400), H = 340;
               const left = Math.max(8, Math.min(r.left - 12, window.innerWidth - W - 8));
               const top  = Math.max(8, Math.min(r.top - 12, window.innerHeight - H - 8));
               return (
@@ -6036,6 +6116,7 @@ export default function App() {
                     <button className={`kds-pop-done${done?" on":""}`} onClick={()=>{ toggleCheck(key); setKdsDetail(null); }}>
                       {done ? T.unmark : T.markReady}
                     </button>
+                    {t.raw&&<button className="kds-pop-done kds-pop-print" onClick={()=>printBagLabel(t.raw.client, t.raw.slot)}>{T.printLabel}</button>}
                   </div>
                 </div>
               );

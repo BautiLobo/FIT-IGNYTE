@@ -4470,7 +4470,7 @@ export default function App() {
     .ct-eta { display: inline-block; margin-top: 4px; background: #111; color: #fff; font-weight: 900; font-size: 11px; padding: 2px 5px; border-radius: 3px; white-space: nowrap; line-height: 1.2; }
     .cct-time { font-weight: 800; font-size: 12px; color: #b45309; white-space: nowrap; vertical-align: middle; }
     .cc-name { font-weight: 800; font-size: 11.5px; }
-    .cc-phone { font-size: 9.5px; color: #444; margin-top: 2px; font-weight: 600; }
+    .cc-phone { font-size: 12.5px; color: #111; margin-top: 3px; font-weight: 800; letter-spacing: 0.2px; }
     .cc-plan { font-size: 9px; color: #777; margin-top: 2px; }
     .ca-addr { font-size: 10.5px; font-weight: 600; }
     .ca-acc  { font-size: 9.5px; color: #444; margin-top: 3px; font-style: italic; font-weight: 600; }
@@ -5245,6 +5245,7 @@ export default function App() {
                         <td style={{color:"var(--dim)",whiteSpace:"nowrap"}}>{i+1}</td>
                         <td style={{color:"#fff",fontWeight:500,wordBreak:"break-word"}}>
                           {c.name}
+                          {c.phone&&<div style={{marginTop:3,fontSize:14,fontWeight:700,color:"#fff",letterSpacing:.2}}>📞 {c.phone}</div>}
                           {firstMealSlotIds.has(slot.id)&&<div style={{width:"fit-content",marginTop:4,background:"var(--amber)",color:"#000",borderRadius:4,padding:"2px 7px",fontSize:10,fontWeight:800,letterSpacing:.5,whiteSpace:"nowrap"}}>⭐ NEW CLIENT · 1ST MEAL</div>}
                         </td>
                         <td style={{whiteSpace:"nowrap"}}><PlanBadge planName={clientPlanName(c)} plans={plans}/></td>

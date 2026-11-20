@@ -259,6 +259,105 @@ function parseEta(minStr, maxStr) {
   return { ok: true, min: a, max: b };
 }
 
+// BAG_LABEL_START
+// HTML de la etiqueta de bolsa (térmica 80mm, ancho útil 72mm). Función pura
+// para poder previsualizarla fuera de la app. Solo negro: los bloques
+// invertidos (fondo negro, texto blanco) una térmica los imprime bien.
+function bagLabelHtml(o) {
+  const esc = v => String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const meals = o.meals || [];
+  const notes = o.notes || [];
+  const item = (tags, name, sub) =>
+    `<div class="item"><span class="box"></span><div class="x">${tags ? `<div>${tags}</div>` : ""}<div class="nm">${esc(name)}</div>${sub ? `<div class="sc">+ ${esc(sub)}</div>` : ""}</div></div>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Label #${esc(o.id)}</title><style>
+  @page { size: 80mm auto; margin: 0; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+  body { width: 72mm; margin: 0 auto; padding: 3mm 0 8mm; font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 12px; line-height: 1.3; }
+  .hd { background: #000; color: #fff; text-align: center; padding: 8px 4px 7px; border-radius: 3px; }
+  .hd .b { font-size: 22px; font-weight: 900; letter-spacing: 5px; line-height: 1; }
+  .hd .s { font-size: 8.5px; font-weight: 700; letter-spacing: 3px; margin-top: 4px; }
+  .meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 7px; font-weight: 800; font-size: 12px; letter-spacing: .5px; }
+  .meta .id { font-size: 15px; font-weight: 900; }
+  .new { margin-top: 6px; border: 2px solid #000; text-align: center; font-weight: 900; font-size: 11px; letter-spacing: 2px; padding: 3px; }
+  .rule { border-top: 2px solid #000; margin: 8px 0; }
+  .dash { border-top: 1px dashed #000; margin: 8px 0; }
+  .lbl { font-size: 8.5px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; }
+  .when { display: flex; align-items: stretch; gap: 8px; }
+  .when .t { background: #000; color: #fff; font-size: 26px; font-weight: 900; line-height: 1; padding: 6px 8px; border-radius: 3px; letter-spacing: 1px; }
+  .when .r { display: flex; flex-direction: column; justify-content: center; }
+  .when .eta { font-size: 13px; font-weight: 800; margin-top: 2px; }
+  .name { font-size: 19px; font-weight: 900; line-height: 1.15; margin-top: 2px; word-break: break-word; }
+  .phone { font-size: 17px; font-weight: 900; letter-spacing: .5px; margin-top: 3px; white-space: nowrap; }
+  .oh { display: flex; justify-content: space-between; align-items: baseline; }
+  .oh .n { font-size: 13px; font-weight: 900; }
+  .item { display: flex; gap: 7px; padding: 6px 0; border-bottom: 1px dotted #000; }
+  .item:last-of-type { border-bottom: none; }
+  .box { flex-shrink: 0; width: 13px; height: 13px; border: 2px solid #000; margin-top: 2px; }
+  .item .x { flex: 1; min-width: 0; }
+  .tag { display: inline-block; background: #000; color: #fff; font-size: 8.5px; font-weight: 900; letter-spacing: 1px; padding: 1px 4px; border-radius: 2px; margin-right: 4px; }
+  .tier { font-size: 9px; font-weight: 800; letter-spacing: 1px; }
+  .item .nm { font-size: 14px; font-weight: 800; line-height: 1.2; margin-top: 2px; word-break: break-word; }
+  .item .sc { font-size: 11.5px; font-weight: 600; margin-top: 1px; }
+  .alg { background: #000; color: #fff; padding: 6px 7px; border-radius: 3px; margin-top: 8px; }
+  .alg .v { font-size: 14px; font-weight: 900; margin-top: 1px; }
+  .kv { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+  .pill { border: 2px solid #000; padding: 1px 9px; font-weight: 900; border-radius: 10px; font-size: 11px; letter-spacing: 1px; }
+  .pill.on { background: #000; color: #fff; }
+  .notes { margin-top: 7px; }
+  .notes .v { font-size: 12.5px; font-weight: 700; margin-top: 2px; }
+  .addr { font-size: 15px; font-weight: 900; line-height: 1.25; margin-top: 2px; word-break: break-all; }
+  .sub { font-size: 12px; font-weight: 700; margin-top: 3px; }
+  .ft { text-align: center; margin-top: 10px; }
+  .ft .a { font-size: 10px; font-weight: 800; letter-spacing: 2px; }
+  .ft .b { font-size: 8.5px; font-weight: 600; letter-spacing: 2px; margin-top: 3px; }
+</style></head><body>
+  <div class="hd"><div class="b">${esc(o.brand)}</div><div class="s">MEAL DELIVERY</div></div>
+  <div class="meta"><span>${esc(o.day)} · ${esc(o.date)}</span><span class="id">#${esc(o.id)}</span></div>
+  ${o.isNew ? `<div class="new">★ NEW CLIENT · FIRST MEAL ★</div>` : ""}
+  <div class="rule"></div>
+  <div class="when">
+    <div class="t">${esc(o.time)}</div>
+    <div class="r"><div class="lbl">Delivery time</div>${o.eta ? `<div class="eta">ETA ${esc(o.eta)}</div>` : ""}</div>
+  </div>
+  <div class="dash"></div>
+  <div class="lbl">Customer</div>
+  <div class="name">${esc(o.name)}</div>
+  ${o.phone ? `<div class="phone">${esc(o.phone)}</div>` : ""}
+  <div class="rule"></div>
+  <div class="oh"><span class="lbl">Order</span><span class="n">${meals.length} MEAL${meals.length === 1 ? "" : "S"}</span></div>
+  <div>
+  ${meals.map(m => item(
+    (m.size ? `<span class="tag">${esc(m.size)}</span>` : "") + (m.tier ? `<span class="tier">${esc(m.tier)}</span>` : ""),
+    m.name, m.sauce)).join("")}
+  ${o.snack ? item(`<span class="tag">SNACK</span>`, o.snack, "") : ""}
+  </div>
+  ${o.allergies ? `<div class="alg"><div class="lbl">⚠ Allergies</div><div class="v">${esc(o.allergies)}</div></div>` : ""}
+  <div class="kv"><span class="lbl">Cutlery</span><span class="pill${o.cutlery ? " on" : ""}">${o.cutlery ? "YES" : "NO"}</span></div>
+  ${notes.length ? `<div class="notes"><div class="lbl">Notes</div>${notes.map(n => `<div class="v">${esc(n)}</div>`).join("")}</div>` : ""}
+  <div class="rule"></div>
+  <div class="lbl">Deliver to</div>
+  <div class="addr">${esc(o.address)}</div>
+  ${o.district ? `<div class="sub">${esc(o.district)}</div>` : ""}
+  ${o.access ? `<div class="sub">Access: ${esc(o.access)}</div>` : ""}
+  <div class="rule"></div>
+  <div class="ft"><div class="a">THANK YOU · ENJOY YOUR MEAL</div><div class="b">${esc(o.brand)}</div></div>
+</body></html>`;
+}
+// BAG_LABEL_END
+
+// Rechazo de pedido: dos tipos, cada uno con su mensaje por defecto en
+// inglés y en chino (el cliente ve el de su idioma de WeChat). Los mismos
+// textos están en el i18n del MP como respaldo si el pedido no trae mensaje.
+const REJECT_TYPES = {
+  waitlist: { label: "Waitlist", desc: "We're full — put them on the waitlist",
+    msg: "We're currently at full capacity, so we've added you to our waitlist. We'll contact you as soon as a spot opens up.",
+    msgZh: "我们目前名额已满，已将您加入候补名单。一有空位，我们会第一时间联系您。" },
+  zone: { label: "Out of zone", desc: "We don't deliver to their area yet",
+    msg: "Please contact us and we'll confirm the delivery arrangement and fee",
+    msgZh: "请联系我们，我们会为您确认配送安排和费用" },
+};
+
 function deliveryNotes(slot, client) {
   const clean = s => { const v = (s || "").trim(); return v && v !== "—" ? v : ""; };
   const nt = clean(slot?.note);
@@ -3183,6 +3282,8 @@ export default function App() {
   const [ordersBusyId,       setOrdersBusyId]        = useState(null);
   const [orderDeleteBusyId,  setOrderDeleteBusyId]   = useState(null);
   const [orderToApprove,     setOrderToApprove]      = useState(null);
+  // Rechazo: { order, type, msg, msgZh }
+  const [orderToReject,      setOrderToReject]       = useState(null);
   const [approveFeeInput,    setApproveFeeInput]     = useState("");
   const [approveEtaMin,      setApproveEtaMin]       = useState("");
   const [approveEtaMax,      setApproveEtaMax]       = useState("");
@@ -3375,10 +3476,11 @@ export default function App() {
     setOrderToApprove(order);
   };
   const handleApproveOrder = openApprove;
-  const handleRejectOrder = async (order) => {
-    const note = prompt("Reason for rejection (optional):") || "";
+  const handleRejectOrder = (order) => setOrderToReject({ order, type: "waitlist", msg: REJECT_TYPES.waitlist.msg, msgZh: REJECT_TYPES.waitlist.msgZh });
+  const confirmRejectOrder = async () => {
+    const { order, type, msg, msgZh } = orderToReject;
     setOrdersBusyId(order.id);
-    try { await rejectOrder(order.id, note); await refreshOrders(); }
+    try { await rejectOrder(order.id, (msg || "").trim(), type, (msgZh || "").trim()); await refreshOrders(); setOrderToReject(null); }
     catch (e) { console.error(e); alert("Could not reject order."); }
     finally { setOrdersBusyId(null); }
   };
@@ -4367,10 +4469,8 @@ export default function App() {
   // el equipo (driver en la PC / app de impresión en la tablet). Ancho útil
   // del papel de 80mm = 72mm; solo negro, por eso todo va en negrita.
   const printBagLabel = (c, slot) => {
-    const esc = v => String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     const clean = v => { const x = String(v ?? "").trim(); return x && x !== "—" ? x : ""; };
     const d = new Date(deliveryDay + "T00:00:00");
-    const dateStr = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }).toUpperCase();
     const meals = (slot.meals || []).filter(id => id && String(id).trim() && id !== "—").map((id, mi) => {
       const lib = mealLibraryRef.current.find(m => m.id === id);
       const sauceId = (slot.sauceIds || [])[mi];
@@ -4386,46 +4486,15 @@ export default function App() {
     const allergies = clean(c.allergies);
     const eta = fmtEta(c);
     const isNew = firstMealSlotIds.has(slot.id);
-    const line = '<div class="hr"></div>';
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Label</title><style>
-  @page { size: 80mm auto; margin: 0; }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: #fff; color: #000; }
-  body { width: 72mm; padding: 2mm 1mm 6mm; font-family: "Courier New", Menlo, "PingFang SC", "Microsoft YaHei", monospace; font-size: 13px; font-weight: 700; line-height: 1.3; }
-  .hr { border-top: 2px solid #000; margin: 6px 0; }
-  .c { text-align: center; }
-  .brand { font-size: 20px; font-weight: 900; letter-spacing: 3px; }
-  .new { display: inline-block; border: 2px solid #000; padding: 1px 6px; margin-top: 4px; font-size: 12px; }
-  .big { font-size: 17px; font-weight: 900; }
-  .phone { font-size: 18px; font-weight: 900; letter-spacing: .5px; }
-  .k { font-size: 11px; }
-  .sec { margin-top: 6px; }
-  .meal { display: flex; gap: 6px; margin-top: 6px; }
-  .meal .n { flex-shrink: 0; }
-  .meal .t { font-size: 11px; }
-  .meal .nm { font-size: 14px; }
-  .meal .sc { font-size: 12px; }
-  .alg { border: 2px solid #000; padding: 3px 5px; margin-top: 6px; font-size: 14px; }
-  .addr { font-size: 15px; font-weight: 900; word-break: break-all; }
-</style></head><body>
-  ${line}<div class="c brand">FIT IGNYTE</div>${isNew ? '<div class="c"><span class="new">NEW CLIENT · 1ST MEAL</span></div>' : ""}${line}
-  <div>${esc(dateStr)}</div>
-  <div class="sec"><span class="k">CUSTOMER:</span><br/><span class="big">${esc(c.name)}</span></div>
-  <div><span class="k">CLIENT:</span> #${esc(c.id)}</div>
-  <div class="sec"><span class="k">DELIVERY:</span> <span class="big">${esc(slot.time || "TBD")}</span>${eta ? ` <span class="k">(${esc(eta)})</span>` : ""}</div>
-  ${c.phone ? `<div><span class="k">PHONE:</span> <span class="phone">${esc(c.phone)}</span></div>` : ""}
-  ${line}<div class="c big">MEALS: ${meals.length}</div>${line}
-  ${meals.map((m, i) => `<div class="meal"><span class="n">${i + 1}.</span><div>${m.tier ? `<div class="t">${esc(m.tier)}${m.size ? " · " + m.size : ""}</div>` : ""}<div class="nm">${esc(m.name)}</div>${m.sauce ? `<div class="sc">+ ${esc(m.sauce)}</div>` : ""}</div></div>`).join("")}
-  ${snack ? `<div class="sec"><span class="k">SNACK:</span> ${esc(snack)}</div>` : ""}
-  ${allergies ? `<div class="alg">⚠ ALLERGIES: ${esc(allergies)}</div>` : ""}
-  <div class="sec"><span class="k">CUTLERY:</span> ${c.cutlery ? "YES" : "NO"}</div>
-  ${notes.length ? `<div class="sec"><span class="k">NOTES:</span>${notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
-  ${line}
-  <div class="k">ADDRESS:</div>
-  <div class="addr">${esc([clean(c.address) || "TBC", clean(c.district)].filter(Boolean).join(" · "))}</div>
-  ${clean(c.access) ? `<div class="sec"><span class="k">ACCESS:</span> ${esc(c.access)}</div>` : ""}
-  ${line}
-</body></html>`;
+    const html = bagLabelHtml({
+      brand: "FIT IGNYTE",
+      day: d.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase(),
+      date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase(),
+      id: c.id, name: c.name, phone: clean(c.phone),
+      time: slot.time || "TBD", eta, isNew,
+      meals, snack, allergies, notes, cutlery: !!c.cutlery,
+      address: clean(c.address) || "TBC", district: clean(c.district), access: clean(c.access),
+    });
     // Iframe oculto: un toque = diálogo de impresión, sin abrir pestañas.
     const old = document.getElementById("bag-label-frame");
     if (old) old.remove();
@@ -5416,7 +5485,7 @@ export default function App() {
                 <div className="empty-state" style={{padding:"30px 20px"}}><div className="empty-state-title">No rejected orders</div></div>
               ):(
                 <div className="tbl-wrap" style={{marginBottom:24}}><table>
-                  <thead><tr><th>Client</th><th>Contact</th><th>Address</th><th>Plan</th><th>Goal / Allergies</th><th>Start Date</th><th>Rejected</th><th>Reason</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Client</th><th>Contact</th><th>Address</th><th>Plan</th><th>Goal / Allergies</th><th>Start Date</th><th>Rejected</th><th>Type / Message</th><th>Action</th></tr></thead>
                   <tbody>
                     {rejectedOrders.map(o=>(
                       <tr key={o.id}>
@@ -5427,7 +5496,13 @@ export default function App() {
                         <td style={{color:"var(--muted)",fontSize:11}}>{o.goal||"—"} / {o.allergies||"—"}</td>
                         <td style={{color:"var(--green)",fontSize:11,fontWeight:500,whiteSpace:"nowrap"}}>{o.start_date?fmtDate(o.start_date):"—"}</td>
                         <td style={{color:"var(--dim)",fontSize:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString():"—"}</td>
-                        <td style={{color:"#fcd34d",fontSize:10}}>{o.note||"—"}</td>
+                        <td style={{fontSize:10}}>
+                          {o.reject_type
+                            ? <span className={`bx ${o.reject_type==="waitlist"?"bx-a":"bx-gr"}`} style={{whiteSpace:"nowrap"}}>{REJECT_TYPES[o.reject_type]?.label||o.reject_type}</span>
+                            : null}
+                          <div style={{color:"#fcd34d",marginTop:o.reject_type?4:0}}>{o.note || (o.reject_type ? <span style={{color:"var(--dim)"}}>Default message</span> : "—")}</div>
+                          {o.note_zh&&<div style={{color:"#fcd34d",marginTop:2,opacity:.8}}>{o.note_zh}</div>}
+                        </td>
                         <td>
                           <div style={{display:"flex",gap:6}}>
                             <button className="btn btn-r btn-sm" disabled={ordersBusyId===o.id} onClick={()=>handleReApproveOrder(o)}>
@@ -5844,6 +5919,66 @@ export default function App() {
               <button className="btn btn-g" onClick={()=>setOrderToApprove(null)}>Cancel</button>
               <button className="btn btn-r" disabled={ordersBusyId===orderToApprove.id} onClick={confirmApproveOrder}>
                 {ordersBusyId===orderToApprove.id?"Working…":"Approve"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {orderToReject&&(
+        <div className="mo" onClick={e=>{if(e.target===e.currentTarget)setOrderToReject(null);}}>
+          <div className="mo-box" style={{maxWidth:460}}>
+            <div className="mo-hd">
+              <div className="mo-title">Reject Order</div>
+              <button className="btn btn-g btn-sm" onClick={()=>setOrderToReject(null)}>✕</button>
+            </div>
+            <div className="mo-body">
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:9,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Client</div>
+                <div style={{color:"#fff",fontWeight:500}}>{orderToReject.order.name}</div>
+                <div style={{color:"var(--muted)",fontSize:12,marginTop:2}}>{orderToReject.order.district} {orderToReject.order.address}</div>
+              </div>
+              <div style={{fontSize:9,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Type</div>
+              <div style={{display:"flex",gap:8,marginBottom:16}}>
+                {Object.entries(REJECT_TYPES).map(([k,rt])=>{
+                  const on = orderToReject.type===k;
+                  return (
+                    <button key={k} type="button"
+                      onClick={()=>setOrderToReject(p=>{
+                        // Al cambiar de tipo se cambia el texto, salvo que ya lo hayan editado.
+                        const keep = (v, d) => v.trim() && v !== d;
+                        return {...p, type:k,
+                          msg:   keep(p.msg,   REJECT_TYPES[p.type].msg)   ? p.msg   : rt.msg,
+                          msgZh: keep(p.msgZh, REJECT_TYPES[p.type].msgZh) ? p.msgZh : rt.msgZh};
+                      })}
+                      style={{flex:1,textAlign:"left",cursor:"pointer",padding:"10px 12px",borderRadius:8,
+                        background:on?"rgba(232,52,42,.12)":"var(--s2)",border:`1px solid ${on?"var(--red)":"var(--bdr2)"}`,color:"#fff"}}>
+                      <div style={{fontWeight:700,fontSize:13}}>{rt.label}</div>
+                      <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{rt.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="fl fg-full">
+                <label>Message — English</label>
+                <textarea className="inp" rows={3} style={{resize:"vertical",lineHeight:1.4}}
+                  value={orderToReject.msg} onChange={e=>setOrderToReject(p=>({...p, msg:e.target.value}))}/>
+              </div>
+              <div className="fl fg-full" style={{marginTop:10}}>
+                <label>Message — 中文</label>
+                <textarea className="inp" rows={3} style={{resize:"vertical",lineHeight:1.4}}
+                  value={orderToReject.msgZh} onChange={e=>setOrderToReject(p=>({...p, msgZh:e.target.value}))}/>
+              </div>
+              <div style={{fontSize:10,color:"var(--dim)",marginTop:6}}>
+                The client sees the one that matches their WeChat language.
+                {(orderToReject.msg!==REJECT_TYPES[orderToReject.type].msg||orderToReject.msgZh!==REJECT_TYPES[orderToReject.type].msgZh)&&
+                  <> <span style={{textDecoration:"underline",cursor:"pointer"}} onClick={()=>setOrderToReject(p=>({...p, msg:REJECT_TYPES[p.type].msg, msgZh:REJECT_TYPES[p.type].msgZh}))}>Reset both to default</span></>}
+              </div>
+            </div>
+            <div className="mo-ft">
+              <button className="btn btn-g" onClick={()=>setOrderToReject(null)}>Cancel</button>
+              <button className="btn btn-r" disabled={ordersBusyId===orderToReject.order.id} onClick={confirmRejectOrder}>
+                {ordersBusyId===orderToReject.order.id?"Working…":"Reject"}
               </button>
             </div>
           </div>

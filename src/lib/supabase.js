@@ -458,8 +458,10 @@ export async function deleteNewOrder(id) {
   check(await supabase.from("new_orders").delete().eq("id", id), "deleteNewOrder");
 }
 export async function reApproveOrder(order, deliveryFee, eta) {
-  await supabase.from("new_orders").update({ status: "pending", note: "" }).eq("id", order.id);
-  return approveOrder({...order, status:"pending", note:""}, deliveryFee, eta);
+  await supabase.from("new_orders").update({ status: "pending", note: "", note_zh: "" }).eq("id", order.id);
+  // Venía de la lista de espera: aviso de que se liberó un lugar (20 car.).
+  const text = order.reject_type === "waitlist" ? "Spot opened! Pay now" : undefined;
+  return approveOrder({...order, status:"pending", note:"", note_zh:""}, deliveryFee, eta, text);
 }
 
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -479,7 +481,8 @@ function weekdayNameForDate(dateStr) {
 // reused automatically for this client's future renewals until edited).
 // `eta` = { min, max } en minutos (tiempo estimado de entrega), opcional:
 // si viene vacío no se toca el que el cliente ya tuviera.
-export async function approveOrder(order, deliveryFee, eta) {
+// pushText: texto del aviso de WeChat (máx. 20 caracteres, ver abajo).
+export async function approveOrder(order, deliveryFee, eta, pushText = "Approved! Tap to pay") {
   const existing = order.phone
     ? check(await supabase.from("clients").select("id").eq("phone", order.phone).maybeSingle(), "approveOrder:findClient")
     : null;
@@ -574,12 +577,19 @@ export async function approveOrder(order, deliveryFee, eta) {
 
   check(await supabase.from("new_orders").update({ status: "approved", delivery_fee: deliveryFee }).eq("id", order.id), "approveOrder:markApproved");
 
-  await pushNotify(clientId, "FIT IGNYTE", "Order approved!");
+  // WeChat corta thing2 en 20 caracteres: "Approved! Tap to pay" entra justo.
+  await pushNotify(clientId, "FIT IGNYTE", pushText);
   return clientId;
 }
 
-export async function rejectOrder(id, note) {
-  check(await supabase.from("new_orders").update({ status: "rejected", note: note || "" }).eq("id", id), "rejectOrder");
+// type: 'waitlist' (cupo lleno) | 'zone' (no llegamos a su zona). `note`
+// (inglés) y `noteZh` (chino) son el mensaje que ve el cliente en el MP según
+// el idioma de su WeChat; vacío = texto por defecto del MP.
+export async function rejectOrder(id, note, type, noteZh) {
+  check(await supabase.from("new_orders").update({ status: "rejected", note: note || "", note_zh: noteZh || "", reject_type: type || "zone" }).eq("id", id), "rejectOrder");
+  // Lista de espera: aviso por WeChat. Todavía no hay fila en `clients`, así
+  // que wx-notify busca el openid en el pedido (order_id).
+  if (type === "waitlist") await pushNotify({ orderId: id }, "FIT IGNYTE", "Added to waitlist");
 }
 
 // ── ADDRESS CHANGES ──────────────────────────────────────────
@@ -740,13 +750,21 @@ export async function createNotification(clientId, title, message) {
 }
 // ── WECHAT PUSH ───────────────────────────────────────────────
 // Best-effort: never throws, never blocks the calling flow.
-export async function pushNotify(clientId, writer, content) {
+// Hora de Shanghai "YYYY-MM-DD HH:MM" para el campo time4 (antes iba en UTC
+// y el mensaje mostraba 8 horas menos).
+function shanghaiNow() {
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
+}
+// `target`: id de cliente, o { orderId } para un pedido que todavía no tiene
+// cliente (rechazo a lista de espera).
+export async function pushNotify(target, writer, content) {
   try {
+    const to = target && typeof target === "object" ? { order_id: target.orderId } : { client_id: target };
     await fetch(`${SUPABASE_URL}/functions/v1/wx-notify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        client_id: clientId,
+        ...to,
         // Discovery, no home: discovery manda a cada uno a su pantalla
         // (pago, aprobado, home...). Sin `page`, wx-notify abre home y un
         // alta sin pagar entraba directo.
@@ -755,7 +773,7 @@ export async function pushNotify(clientId, writer, content) {
         data: {
           name1:  { value: String(writer).slice(0,10) },
           thing2: { value: String(content).slice(0,20) },
-          time4:  { value: new Date().toISOString().slice(0,16).replace("T"," ") },
+          time4:  { value: shanghaiNow() },
         },
       }),
     });

@@ -3260,6 +3260,7 @@ export default function App() {
   const [showClientModal, setShowClientModal] = useState(false);
   const [editClientId,    setEditClientId]    = useState(null);
   const [clientForm,      setClientForm]      = useState({...BLANK_CLIENT});
+  const clientFormOriginalRef = useRef(null); // cliente al abrir el modal de edición (para mandar solo lo cambiado)
 
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [editPlanId,    setEditPlanId]    = useState(null);
@@ -4142,20 +4143,47 @@ export default function App() {
   }, [showKDS, showChef]);
 
   // ── Handlers
-  const togglePaid = async id => {
+  // Fila de `clients` (snake_case, recién leída de la DB) → forma del estado local.
+  const clientFromRow = (raw, fallback = {}) => {
+    const planObj = plans.find(p => p.id === raw.plan_id) || (fallback.planId === raw.plan_id ? fallback.planObj : null) || null;
+    return {
+      ...raw,
+      plan:         planObj?.name           || "",
+      planId:       raw.plan_id             || "",
+      planName:     planObj?.name           || "",
+      planObj,
+      startDate:    raw.start_date          || "",
+      expiryDate:   raw.expiry_date         || "",
+      deliveryTime: raw.delivery_time       || "",
+      deliveryFee:  raw.delivery_fee        ?? null,
+      amountPaid:   raw.amount_paid         || 0,
+      acqChannel:   raw.acq_channel         || "",
+      wechatOpenid: raw.wechat_openid       || "",
+      statusNote:   raw.status_note         || "",
+      cutlery:      raw.cutlery             ?? false,
+      etaMin:       raw.delivery_eta_min    ?? null,
+      etaMax:       raw.delivery_eta_max    ?? null,
+    };
+  };
+
+  // Toggle de una columna: solo se manda esa columna, y el cliente local se
+  // refresca con la fila que devuelve la DB (por si la pestaña estaba vieja).
+  const toggleClientField = async (id, field) => {
     const c = clients.find(x=>x.id===id);
     if (!c) return;
-    const updated = {...c, paid:!c.paid, planId: c.planId||c.plan_id||""};
+    const original = {...c, planId: c.planId||c.plan_id||""};
+    const updated = {...original, [field]: !c[field]};
     setClients(p=>p.map(x=>x.id===id?updated:x));
-    try { await upsertClient(updated); flash(); } catch(e){ console.error(e); }
+    const raw = await upsertClient(updated, original);
+    setClients(p=>p.map(x=>x.id===id?clientFromRow(raw, x):x));
+  };
+
+  const togglePaid = async id => {
+    try { await toggleClientField(id, "paid"); flash(); } catch(e){ console.error(e); }
   };
 
   const toggleCutlery = async id => {
-    const c = clients.find(x=>x.id===id);
-    if (!c) return;
-    const updated = {...c, cutlery:!c.cutlery, planId: c.planId||c.plan_id||""};
-    setClients(p=>p.map(x=>x.id===id?updated:x));
-    try { await upsertClient(updated); } catch(e){ console.error(e); }
+    try { await toggleClientField(id, "cutlery"); } catch(e){ console.error(e); }
   };
 
   const toggleCheck = async k => {
@@ -4298,7 +4326,7 @@ export default function App() {
 
   // ── Client modal
   const openAddClient  = () => { setEditClientId(null); setClientForm({...BLANK_CLIENT,startDate:todayIso()}); setShowClientModal(true); };
-  const openEditClient = c  => { setEditClientId(c.id); setClientForm({...c}); setShowClientModal(true); };
+  const openEditClient = c  => { clientFormOriginalRef.current = {...c}; setEditClientId(c.id); setClientForm({...c}); setShowClientModal(true); };
   const cfld = (k,v) => setClientForm(p=>({...p,[k]:v}));
 
   const saveClient = async () => {
@@ -4309,30 +4337,17 @@ export default function App() {
     }
     try {
       // Ensure planId is set correctly (clientForm might have plan as object from spread)
-      const formToSave = {
-        ...clientForm,
-        planId: clientForm.planId || (typeof clientForm.plan === "object" ? clientForm.plan?.id : "") || "",
-      };
-      const rawSaved = await upsertClient(formToSave);
-      // Find the plan object from our local plans list
-      const savedPlanObj = plans.find(p => p.id === formToSave.planId) || formToSave.planObj || null;
-      const saved = {
-        ...rawSaved,
-        plan:         savedPlanObj?.name       || formToSave.planName || "",
-        planId:       rawSaved.plan_id         || formToSave.planId   || "",
-        planName:     savedPlanObj?.name       || formToSave.planName || "",
-        planObj:      savedPlanObj,
-        startDate:    rawSaved.start_date      || "",
-        expiryDate:   rawSaved.expiry_date     || "",
-        deliveryTime: rawSaved.delivery_time   || "",
-        deliveryFee:  rawSaved.delivery_fee    ?? null,
-        amountPaid:   rawSaved.amount_paid     || 0,
-        acqChannel:   rawSaved.acq_channel     || "",
-        wechatOpenid: rawSaved.wechat_openid   || "",
-        statusNote:   rawSaved.status_note     || "",
-        etaMin:       rawSaved.delivery_eta_min ?? null,
-        etaMax:       rawSaved.delivery_eta_max ?? null,
-      };
+      const withPlanId = c => ({
+        ...c,
+        planId: c.planId || (typeof c.plan === "object" ? c.plan?.id : "") || "",
+      });
+      const formToSave = withPlanId(clientForm);
+      // Cliente tal como estaba al abrir la ficha: solo se mandan los campos
+      // que el staff cambió en el modal (no se pisan pagos/renovaciones que
+      // hayan entrado mientras la pestaña estaba abierta).
+      const original = editClientId ? clientFormOriginalRef.current : null;
+      const rawSaved = await upsertClient(formToSave, original ? withPlanId(original) : null);
+      const saved = clientFromRow(rawSaved, formToSave);
       if (editClientId) {
         setClients(p=>p.map(c=>c.id===editClientId?saved:c));
       } else {

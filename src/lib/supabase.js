@@ -91,8 +91,29 @@ const etaInt = v => {
   const n = Math.round(Number(v));
   return Number.isFinite(n) && n > 0 ? n : null;
 };
-export async function upsertClient(client) {
-  const mapped = {
+// `original` = cómo estaba el cliente cuando se abrió la ficha / se hizo el
+// toggle. Si viene, para un cliente existente se mandan SOLO las columnas que
+// cambiaron respecto de él: así un guardado desde una pestaña vieja no pisa lo
+// que escribieron complete-payment / el cron / el MP (fechas, plan, ltv...).
+export async function upsertClient(client, original = null) {
+  const mapped = mapClientRow(client);
+  if (client.id && original) {
+    const before = mapClientRow(original);
+    const changes = {};
+    for (const k of Object.keys(mapped)) {
+      if (JSON.stringify(mapped[k]) !== JSON.stringify(before[k])) changes[k] = mapped[k];
+    }
+    if (!Object.keys(changes).length) {
+      return check(await supabase.from("clients").select().eq("id", client.id).single(), "upsertClient");
+    }
+    return check(await supabase.from("clients").update(changes).eq("id", client.id).select().single(), "upsertClient");
+  }
+  if (client.id) mapped.id = client.id;
+  return check(await supabase.from("clients").upsert(mapped).select().single(), "upsertClient");
+}
+
+function mapClientRow(client) {
+  return {
     name:           client.name,
     phone:          client.phone          || "",
     language:       client.language       || "EN",
@@ -120,8 +141,6 @@ export async function upsertClient(client) {
     delivery_eta_min: etaInt(client.etaMin),
     delivery_eta_max: etaInt(client.etaMax),
   };
-  if (client.id) mapped.id = client.id;
-  return check(await supabase.from("clients").upsert(mapped).select().single(), "upsertClient");
 }
 export async function deleteClient(id) {
   check(await supabase.from("clients").delete().eq("id", id), "deleteClient");

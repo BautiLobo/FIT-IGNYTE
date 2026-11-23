@@ -4600,14 +4600,13 @@ export default function App() {
     /* ── Table ── */
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     col.cn  { width: 3%; }
-    col.ct  { width: 8%; }
-    col.cct { width: 8%; }
-    col.cc  { width: 13%; }
+    col.ct  { width: 10%; }
+    col.cct { width: 7%; }
+    col.cc  { width: 17%; }
     col.ca  { width: 16%; }
-    col.cm  { width: 24%; }
-    col.cs  { width: 10%; }
-    col.cno { width: 18%; }
-    col.ccut{ width: 6%; }
+    col.cm  { width: 21%; }
+    col.cno { width: 17%; }
+    col.ccut{ width: 5%; }
     col.ck  { width: 4%; }
 
     thead tr { background: #1a1a1a; }
@@ -4630,10 +4629,10 @@ export default function App() {
     /* ── Cell styles ── */
     .cn-num  { font-weight: 900; font-size: 14px; color: #bbb; text-align: center; vertical-align: middle; }
     .ct-time { font-weight: 800; font-size: 12px; color: #e8342a; white-space: nowrap; vertical-align: middle; }
-    .ct-eta { display: inline-block; margin-top: 4px; background: #111; color: #fff; font-weight: 900; font-size: 11px; padding: 2px 5px; border-radius: 3px; white-space: nowrap; line-height: 1.2; }
+    .ct-eta { display: inline-block; max-width: 100%; margin-top: 4px; background: #111; color: #fff; font-weight: 900; font-size: 10px; padding: 2px 4px; border-radius: 3px; line-height: 1.2; white-space: normal; }
     .cct-time { font-weight: 800; font-size: 12px; color: #b45309; white-space: nowrap; vertical-align: middle; }
     .cc-name { font-weight: 800; font-size: 11.5px; }
-    .cc-phone { font-size: 12.5px; color: #111; margin-top: 3px; font-weight: 800; letter-spacing: 0.2px; white-space: nowrap; }
+    .cc-phone { font-size: 12px; color: #111; margin-top: 3px; font-weight: 800; overflow-wrap: anywhere; }
     .cc-plan { font-size: 9px; color: #777; margin-top: 2px; }
     .ca-addr { font-size: 10.5px; font-weight: 600; }
     .ca-acc  { font-size: 9.5px; color: #444; margin-top: 3px; font-style: italic; font-weight: 600; }

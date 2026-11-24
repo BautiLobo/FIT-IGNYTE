@@ -263,17 +263,57 @@ function parseEta(minStr, maxStr) {
 // HTML de la etiqueta de bolsa (térmica 80mm, ancho útil 72mm). Función pura
 // para poder previsualizarla fuera de la app. Solo negro: los bloques
 // invertidos (fondo negro, texto blanco) una térmica los imprime bien.
-function bagLabelHtml(o) {
+// Recibe una etiqueta o una lista (todas las de un cooking time): cada una
+// va en su propia página, así la térmica corta el papel entre etiquetas.
+function bagLabelHtml(input) {
+  const list = Array.isArray(input) ? input : [input];
   const esc = v => String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  const meals = o.meals || [];
-  const notes = o.notes || [];
   const item = (tags, name, sub) =>
     `<div class="item"><span class="box"></span><div class="x">${tags ? `<div>${tags}</div>` : ""}<div class="nm">${esc(name)}</div>${sub ? `<div class="sc">+ ${esc(sub)}</div>` : ""}</div></div>`;
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Label #${esc(o.id)}</title><style>
+  const one = o => {
+    const meals = o.meals || [];
+    const notes = o.notes || [];
+    return `<div class="pg">
+  <div class="hd"><div class="b">${esc(o.brand)}</div><div class="s">MEAL DELIVERY</div></div>
+  <div class="meta"><span>${esc(o.day)} · ${esc(o.date)}</span><span class="id">#${esc(o.id)}</span></div>
+  ${o.isNew ? `<div class="new">★ NEW CLIENT · FIRST MEAL ★</div>` : ""}
+  <div class="rule"></div>
+  <div class="when">
+    <div class="t">${esc(o.time)}</div>
+    <div class="r"><div class="lbl">Delivery time</div>${o.eta ? `<div class="eta">ETA ${esc(o.eta)}</div>` : ""}</div>
+  </div>
+  <div class="dash"></div>
+  <div class="lbl">Customer</div>
+  <div class="name">${esc(o.name)}</div>
+  ${o.phone ? `<div class="phone">${esc(o.phone)}</div>` : ""}
+  <div class="rule"></div>
+  <div class="oh"><span class="lbl">Order</span><span class="n">${meals.length} MEAL${meals.length === 1 ? "" : "S"}</span></div>
+  <div>
+  ${meals.map(m => item(
+    (m.size ? `<span class="tag">${esc(m.size)}</span>` : "") + (m.tier ? `<span class="tier">${esc(m.tier)}</span>` : ""),
+    m.name, m.sauce)).join("")}
+  ${o.snack ? item(`<span class="tag">SNACK</span>`, o.snack, "") : ""}
+  </div>
+  ${o.allergies ? `<div class="alg"><div class="lbl">⚠ Allergies</div><div class="v">${esc(o.allergies)}</div></div>` : ""}
+  <div class="kv"><span class="lbl">Cutlery</span><span class="pill${o.cutlery ? " on" : ""}">${o.cutlery ? "YES" : "NO"}</span></div>
+  ${notes.length ? `<div class="notes"><div class="lbl">Notes</div>${notes.map(n => `<div class="v">${esc(n)}</div>`).join("")}</div>` : ""}
+  <div class="rule"></div>
+  <div class="lbl">Deliver to</div>
+  <div class="addr">${esc(o.address)}</div>
+  ${o.district ? `<div class="sub">${esc(o.district)}</div>` : ""}
+  ${o.access ? `<div class="sub">Access: ${esc(o.access)}</div>` : ""}
+  <div class="rule"></div>
+  <div class="ft"><div class="a">THANK YOU · ENJOY YOUR MEAL</div><div class="b">${esc(o.brand)}</div></div>
+</div>`;
+  };
+  const title = list.length === 1 ? `Label #${esc(list[0].id)}` : `Labels (${list.length})`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${title}</title><style>
   @page { size: 80mm auto; margin: 0; }
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   html, body { margin: 0; padding: 0; background: #fff; color: #000; }
-  body { width: 72mm; margin: 0 auto; padding: 3mm 0 8mm; font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 12px; line-height: 1.3; }
+  body { width: 72mm; margin: 0 auto; font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 12px; line-height: 1.3; }
+  .pg { padding: 3mm 0 8mm; break-after: page; page-break-after: always; }
+  .pg:last-child { break-after: auto; page-break-after: auto; }
   .hd { background: #000; color: #fff; text-align: center; padding: 8px 4px 7px; border-radius: 3px; }
   .hd .b { font-size: 22px; font-weight: 900; letter-spacing: 5px; line-height: 1; }
   .hd .s { font-size: 8.5px; font-weight: 700; letter-spacing: 3px; margin-top: 4px; }
@@ -311,38 +351,7 @@ function bagLabelHtml(o) {
   .ft { text-align: center; margin-top: 10px; }
   .ft .a { font-size: 10px; font-weight: 800; letter-spacing: 2px; }
   .ft .b { font-size: 8.5px; font-weight: 600; letter-spacing: 2px; margin-top: 3px; }
-</style></head><body>
-  <div class="hd"><div class="b">${esc(o.brand)}</div><div class="s">MEAL DELIVERY</div></div>
-  <div class="meta"><span>${esc(o.day)} · ${esc(o.date)}</span><span class="id">#${esc(o.id)}</span></div>
-  ${o.isNew ? `<div class="new">★ NEW CLIENT · FIRST MEAL ★</div>` : ""}
-  <div class="rule"></div>
-  <div class="when">
-    <div class="t">${esc(o.time)}</div>
-    <div class="r"><div class="lbl">Delivery time</div>${o.eta ? `<div class="eta">ETA ${esc(o.eta)}</div>` : ""}</div>
-  </div>
-  <div class="dash"></div>
-  <div class="lbl">Customer</div>
-  <div class="name">${esc(o.name)}</div>
-  ${o.phone ? `<div class="phone">${esc(o.phone)}</div>` : ""}
-  <div class="rule"></div>
-  <div class="oh"><span class="lbl">Order</span><span class="n">${meals.length} MEAL${meals.length === 1 ? "" : "S"}</span></div>
-  <div>
-  ${meals.map(m => item(
-    (m.size ? `<span class="tag">${esc(m.size)}</span>` : "") + (m.tier ? `<span class="tier">${esc(m.tier)}</span>` : ""),
-    m.name, m.sauce)).join("")}
-  ${o.snack ? item(`<span class="tag">SNACK</span>`, o.snack, "") : ""}
-  </div>
-  ${o.allergies ? `<div class="alg"><div class="lbl">⚠ Allergies</div><div class="v">${esc(o.allergies)}</div></div>` : ""}
-  <div class="kv"><span class="lbl">Cutlery</span><span class="pill${o.cutlery ? " on" : ""}">${o.cutlery ? "YES" : "NO"}</span></div>
-  ${notes.length ? `<div class="notes"><div class="lbl">Notes</div>${notes.map(n => `<div class="v">${esc(n)}</div>`).join("")}</div>` : ""}
-  <div class="rule"></div>
-  <div class="lbl">Deliver to</div>
-  <div class="addr">${esc(o.address)}</div>
-  ${o.district ? `<div class="sub">${esc(o.district)}</div>` : ""}
-  ${o.access ? `<div class="sub">Access: ${esc(o.access)}</div>` : ""}
-  <div class="rule"></div>
-  <div class="ft"><div class="a">THANK YOU · ENJOY YOUR MEAL</div><div class="b">${esc(o.brand)}</div></div>
-</body></html>`;
+</style></head><body>${list.map(one).join("")}</body></html>`;
 }
 // BAG_LABEL_END
 
@@ -4483,7 +4492,7 @@ export default function App() {
   // impresión del sistema, así que la impresora tiene que estar instalada en
   // el equipo (driver en la PC / app de impresión en la tablet). Ancho útil
   // del papel de 80mm = 72mm; solo negro, por eso todo va en negrita.
-  const printBagLabel = (c, slot) => {
+  const bagLabelData = (c, slot) => {
     const clean = v => { const x = String(v ?? "").trim(); return x && x !== "—" ? x : ""; };
     const d = new Date(deliveryDay + "T00:00:00");
     const meals = (slot.meals || []).filter(id => id && String(id).trim() && id !== "—").map((id, mi) => {
@@ -4501,7 +4510,7 @@ export default function App() {
     const allergies = clean(c.allergies);
     const eta = fmtEta(c);
     const isNew = firstMealSlotIds.has(slot.id);
-    const html = bagLabelHtml({
+    return {
       brand: "FIT IGNYTE",
       day: d.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase(),
       date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase(),
@@ -4509,8 +4518,19 @@ export default function App() {
       time: slot.time || "TBD", eta, isNew,
       meals, snack, allergies, notes, cutlery: !!c.cutlery,
       address: clean(c.address) || "TBC", district: clean(c.district), access: clean(c.access),
-    });
-    // Iframe oculto: un toque = diálogo de impresión, sin abrir pestañas.
+    };
+  };
+  // Cola de etiquetas: cada una es su propio trabajo de impresión, una detrás
+  // de otra (no un documento largo), así la térmica imprime y corta cada
+  // etiqueta por separado. Con Chrome --kiosk-printing salen de corrido sin
+  // diálogo; sin eso aparece un diálogo por etiqueta. Si se aprieta otro
+  // botón mientras imprime, se suma al final de la cola.
+  const labelQueueRef = useRef([]);
+  const labelBusyRef = useRef(false);
+  const runLabelQueue = () => {
+    const next = labelQueueRef.current.shift();
+    if (!next) { labelBusyRef.current = false; return; }
+    labelBusyRef.current = true;
     const old = document.getElementById("bag-label-frame");
     if (old) old.remove();
     const f = document.createElement("iframe");
@@ -4518,9 +4538,21 @@ export default function App() {
     f.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
     document.body.appendChild(f);
     const doc = f.contentWindow.document;
-    doc.open(); doc.write(html); doc.close();
-    setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { console.error(e); } }, 250);
+    doc.open(); doc.write(bagLabelHtml(next)); doc.close();
+    setTimeout(() => {
+      // print() bloquea hasta que el trabajo se manda (o se cierra el
+      // diálogo); recién ahí sigue la próxima.
+      try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { console.error(e); }
+      setTimeout(runLabelQueue, 400);
+    }, 250);
   };
+  const printBagLabels = entries => {
+    const list = entries.filter(e => (e.slot.meals || []).some(id => id && String(id).trim() && id !== "—"));
+    if (!list.length) return;
+    labelQueueRef.current.push(...list.map(e => bagLabelData(e.client, e.slot)));
+    if (!labelBusyRef.current) runLabelQueue();
+  };
+  const printBagLabel = (c, slot) => printBagLabels([{ client: c, slot }]);
 
   // ── Print / Save as PDF delivery sheet (supports Chinese characters)
   const printDelivery = () => {
@@ -5387,7 +5419,10 @@ export default function App() {
                 <div className="empty-state"><div className="empty-state-icon">🛵</div><div className="empty-state-title">No deliveries scheduled</div><div className="empty-state-sub">Add delivery slots in Meal Selections</div></div>
               ):Object.entries(delivery).map(([time,entries])=>(
                 <div className="del-grp" key={time}>
-                  <div className="del-time">👨‍🍳 Cook {time} — {entries.length} stop{entries.length>1?"s":""}</div>
+                  <div className="del-time" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,flexWrap:"wrap"}}>
+                    <span>👨‍🍳 Cook {time} — {entries.length} stop{entries.length>1?"s":""}</span>
+                    <button className="bx bx-clk" style={{background:"#fff",color:"#000"}} title={`Print the bag labels of all ${entries.length} stops of this cooking time`} onClick={()=>printBagLabels(entries)}>🖨 Print all labels ({entries.length})</button>
+                  </div>
                   <div className="tbl-wrap"><table className="del-tbl" style={{tableLayout:"fixed",width:"100%"}}>
                     <colgroup>
                       <col style={{width:"3%"}}/>

@@ -3898,6 +3898,14 @@ export default function App() {
     return g;
   }, [deliveryClients, meals, pendingMeals, deliveryDay, mealLibraryState]);
 
+  // slot id → número de fila (#) en la tabla de la Delivery Sheet, que se
+  // reinicia en cada cooking time. Es el número que va en la etiqueta de bolsa.
+  const deliveryRowNo = useMemo(() => {
+    const m = new Map();
+    Object.values(delivery).forEach(entries => entries.forEach((e, i) => m.set(e.slot.id, i + 1)));
+    return m;
+  }, [delivery]);
+
   // Grupos de 2+ paradas a la misma dirección dentro de un cooking time, en
   // el mismo orden que el PDF (así las letras coinciden con la hoja impresa).
   const addrGroups = useMemo(() => {
@@ -4514,7 +4522,7 @@ export default function App() {
       brand: "FIT IGNYTE",
       day: d.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase(),
       date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase(),
-      id: c.id, name: c.name, phone: clean(c.phone),
+      id: deliveryRowNo.get(slot.id) ?? c.id, name: c.name, phone: clean(c.phone),
       time: slot.time || "TBD", eta, isNew,
       meals, snack, allergies, notes, cutlery: !!c.cutlery,
       address: clean(c.address) || "TBC", district: clean(c.district), access: clean(c.access),

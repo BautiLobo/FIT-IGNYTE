@@ -275,8 +275,13 @@ function bagLabelHtml(input) {
     const notes = o.notes || [];
     return `<div class="pg">
   <div class="hd"><div class="b">${esc(o.brand)}</div><div class="s">MEAL DELIVERY</div></div>
-  <div class="meta"><span>${esc(o.day)} · ${esc(o.date)}</span><span class="id">#${esc(o.id)}</span></div>
+  <div class="meta"><span>${esc(o.day)} · ${esc(o.date)}</span></div>
   ${o.isNew ? `<div class="new">★ NEW CLIENT · FIRST MEAL ★</div>` : ""}
+  <div class="rule"></div>
+  <div class="lbl">Deliver to</div>
+  <div class="addr">${esc(o.address)}</div>
+  ${o.district ? `<div class="sub">${esc(o.district)}</div>` : ""}
+  ${o.access ? `<div class="sub">Access: ${esc(o.access)}</div>` : ""}
   <div class="rule"></div>
   <div class="when">
     <div class="t">${esc(o.time)}</div>
@@ -298,10 +303,7 @@ function bagLabelHtml(input) {
   <div class="kv"><span class="lbl">Cutlery</span><span class="pill${o.cutlery ? " on" : ""}">${o.cutlery ? "YES" : "NO"}</span></div>
   ${notes.length ? `<div class="notes"><div class="lbl">Notes</div>${notes.map(n => `<div class="v">${esc(n)}</div>`).join("")}</div>` : ""}
   <div class="rule"></div>
-  <div class="lbl">Deliver to</div>
-  <div class="addr">${esc(o.address)}</div>
-  ${o.district ? `<div class="sub">${esc(o.district)}</div>` : ""}
-  ${o.access ? `<div class="sub">Access: ${esc(o.access)}</div>` : ""}
+  <div class="num"><span class="lbl">Order</span><span class="id">#${esc(o.id)}</span></div>
   <div class="rule"></div>
   <div class="ft"><div class="a">THANK YOU · ENJOY YOUR MEAL</div><div class="b">${esc(o.brand)}</div></div>
 </div>`;
@@ -318,7 +320,8 @@ function bagLabelHtml(input) {
   .hd .b { font-size: 22px; font-weight: 900; letter-spacing: 5px; line-height: 1; }
   .hd .s { font-size: 8.5px; font-weight: 700; letter-spacing: 3px; margin-top: 4px; }
   .meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 7px; font-weight: 800; font-size: 12px; letter-spacing: .5px; }
-  .meta .id { font-size: 15px; font-weight: 900; }
+  .num { display: flex; justify-content: space-between; align-items: center; }
+  .num .id { font-size: 30px; font-weight: 900; line-height: 1; letter-spacing: 1px; }
   .new { margin-top: 6px; border: 2px solid #000; text-align: center; font-weight: 900; font-size: 11px; letter-spacing: 2px; padding: 3px; }
   .rule { border-top: 2px solid #000; margin: 8px 0; }
   .dash { border-top: 1px dashed #000; margin: 8px 0; }

@@ -3435,8 +3435,16 @@ export default function App() {
   // mostrar: durante la renovación pendiente, el plan que corresponde
   // mostrar es el NUEVO (pendingRenewalPlanByClient), no c.planName (sigue
   // siendo el viejo hasta que el cron aplica el cambio).
-  const clientPlanName = useCallback((c) => {
-    const pendingPlanId = pendingRenewalStartByClient[c.id] ? pendingRenewalPlanByClient[c.id] : null;
+  // Solo en el hueco: mientras el ciclo viejo sigue corriendo (renovación
+  // anticipada pagada antes de que venza), el plan vigente es el viejo.
+  // Antes se mostraba el nuevo apenas había un pago pendiente -- caso real:
+  // cliente con 1 comida/día en su semana actual figuraba con el plan de 2
+  // que había pagado para la semana siguiente. `dateStr` = el día que se
+  // está mirando (Delivery Sheet); por default, hoy.
+  const clientPlanName = useCallback((c, dateStr = todayIso()) => {
+    const pendingStart = pendingRenewalStartByClient[c.id];
+    const inNewCycle = pendingStart && (dateStr >= pendingStart || (c.expiryDate && dateStr > c.expiryDate));
+    const pendingPlanId = inNewCycle ? pendingRenewalPlanByClient[c.id] : null;
     if (pendingPlanId) {
       const p = plans.find(x => x.id === pendingPlanId);
       if (p) return p.name;
@@ -5456,7 +5464,7 @@ export default function App() {
                           {c.phone&&<div style={{marginTop:3,fontSize:14,fontWeight:700,color:"#fff",letterSpacing:.2,whiteSpace:"nowrap"}}>{c.phone}</div>}
                           {firstMealSlotIds.has(slot.id)&&<div style={{width:"fit-content",marginTop:4,background:"var(--amber)",color:"#000",borderRadius:4,padding:"2px 7px",fontSize:10,fontWeight:800,letterSpacing:.5,whiteSpace:"nowrap"}}>⭐ NEW CLIENT · 1ST MEAL</div>}
                         </td>
-                        <td style={{whiteSpace:"nowrap"}}><PlanBadge planName={clientPlanName(c)} plans={plans}/></td>
+                        <td style={{whiteSpace:"nowrap"}}><PlanBadge planName={clientPlanName(c, deliveryDay)} plans={plans}/></td>
                         <td style={{whiteSpace:"nowrap",fontWeight:600,color:"var(--amber)"}}>
                           🛵 {slot.time||"TBD"}
                           {fmtEta(c)&&<div style={{fontSize:10,fontWeight:500,color:"var(--muted)",marginTop:2}}>⏱ {fmtEta(c)}</div>}
